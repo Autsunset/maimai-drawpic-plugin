@@ -49,11 +49,12 @@ class OpenaiImage:
     """OpenAI 兼容图片接口封装。"""
 
     _MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
+    _VERSION_PATH_PATTERN = re.compile(r"/v\d+$", re.IGNORECASE)
 
     def __init__(
         self,
         api_key: str,
-        base_url: str = "https://api.openai.com",
+        base_url: str = "https://api.openai.com/v1",
         compatibility_mode: str = "images_api",
         logger: Any | None = None,
         request_timeout_seconds: int = 20,
@@ -69,10 +70,7 @@ class OpenaiImage:
         proxy_settings: HttpProxySettings | None = None,
     ) -> None:
         self.api_key = api_key
-        normalized_base_url = base_url.strip().rstrip("/") or "https://api.openai.com"
-        if normalized_base_url.endswith("/v1"):
-            normalized_base_url = normalized_base_url[:-3].rstrip("/")
-        self.base_url = normalized_base_url
+        self.base_url = self._normalize_base_url(base_url)
         self.compatibility_mode = normalize_openai_mode(compatibility_mode)
         self.logger = logger
         self.request_timeout_seconds = request_timeout_seconds
@@ -113,7 +111,7 @@ class OpenaiImage:
                     )
                 else:
                     response = await self._post_json(
-                        url=f"{self.base_url}/v1/images/generations",
+                        url=self._build_api_url("images/generations"),
                         payload=self._build_images_generation_payload(prompt=prompt, model=model, n=n),
                     )
                     images = await self._extract_images_auto(response)
@@ -151,7 +149,7 @@ class OpenaiImage:
                     )
                 else:
                     response = await self._post_edit_form_with_fallback(
-                        url=f"{self.base_url}/v1/images/edits",
+                        url=self._build_api_url("images/edits"),
                         model=model, prompt=prompt, image_bytes_list=image_bytes_list, n=n,
                     )
                     images = await self._extract_images_auto(response)
@@ -179,7 +177,7 @@ class OpenaiImage:
 
         try:
             response = await self._post_json(
-                url=f"{self.base_url}/v1/chat/completions", payload=payload,
+                url=self._build_api_url("chat/completions"), payload=payload,
             )
             self._raise_response_error(response)
             images = await self._extract_chat_completion_images(response)
@@ -233,7 +231,7 @@ class OpenaiImage:
             self._metadata_expires_at = time.monotonic() + 300
 
     async def _fetch_model_endpoint_types(self) -> Dict[str, List[str]]:
-        url = f"{self.base_url}/v1/models"
+        url = self._build_api_url("models")
         timeout = aiohttp.ClientTimeout(total=min(5, self.request_timeout_seconds))
         try:
             async with aiohttp.ClientSession(
@@ -269,6 +267,20 @@ class OpenaiImage:
         """判断是否为 GPT Image 系列模型。"""
 
         return "gpt-image" in model
+
+    @classmethod
+    def _normalize_base_url(cls, base_url: str) -> str:
+        """规范 API 根路径，并兼容旧配置中省略 /v1 的地址。"""
+
+        normalized_base_url = base_url.strip().rstrip("/") or "https://api.openai.com/v1"
+        if cls._VERSION_PATH_PATTERN.search(normalized_base_url):
+            return normalized_base_url
+        return f"{normalized_base_url}/v1"
+
+    def _build_api_url(self, path: str) -> str:
+        """在完整 API 根路径后追加 OpenAI 兼容接口路径。"""
+
+        return f"{self.base_url}/{path.lstrip('/')}"
 
     @staticmethod
     def _guess_mime_type(filename: str) -> str:

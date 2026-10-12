@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
+from urllib.parse import urljoin, urlsplit
 
 import aiohttp
 import base64
@@ -10,10 +11,22 @@ from ..core.image_utils import detect_mime_type
 from ..core.http_proxy import HttpProxySettings, read_response_bytes, read_response_json, read_response_text
 
 
+VolcengineModelFamily = Literal[
+    "seedream_5_pro",
+    "seedream_5_flash",
+    "seedream_5_lite",
+    "seedream_4_5",
+    "seedream_4_0",
+    "legacy_3",
+    "unknown",
+]
+
+
 class VolcengineImage:
     """火山引擎方舟图片接口封装。"""
 
-    _DEFAULT_ENDPOINT_URL = "https://ark.cn-beijing.volces.com/api/v3/images/generations"
+    _DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
+    _GENERATION_PATH = "images/generations"
 
     def __init__(
         self,
@@ -24,14 +37,22 @@ class VolcengineImage:
         model_size_overrides: dict[str, str] | None = None,
         model_endpoint_overrides: dict[str, str] | None = None,
         response_format: str = "url",
+        output_format: str = "",
+        sequential_image_generation: str = "disabled",
+        optimize_prompt_mode: str = "",
+        web_search_enabled: bool = False,
+        background: str = "",
+        layer_decomposition: bool = False,
         guidance_scale: float = 0.0,
         seed: int = -1,
         watermark: bool = False,
         max_images: int = 1,
         extra_parameters: dict[str, Any] | None = None,
         proxy_settings: HttpProxySettings | None = None,
+        base_url: str = _DEFAULT_BASE_URL,
     ) -> None:
         self.api_key = api_key
+        self.base_url = self._normalize_base_url(base_url)
         self.logger = logger
         self.request_timeout_seconds = request_timeout_seconds
         self.default_size = default_size.strip()
@@ -46,6 +67,12 @@ class VolcengineImage:
             if str(model).strip() and str(endpoint).strip()
         }
         self.response_format = response_format.strip()
+        self.output_format = output_format.strip().lower()
+        self.sequential_image_generation = sequential_image_generation.strip().lower()
+        self.optimize_prompt_mode = optimize_prompt_mode.strip().lower()
+        self.web_search_enabled = web_search_enabled
+        self.background = background.strip().lower()
+        self.layer_decomposition = layer_decomposition
         self.guidance_scale = float(guidance_scale)
         self.seed = int(seed)
         self.watermark = watermark
@@ -58,7 +85,12 @@ class VolcengineImage:
 
         response = await self._post_json(
             url=self._resolve_endpoint_url(model),
-            payload=self._build_payload(prompt=prompt, model=model, n=n),
+            payload=self._build_payload(
+                prompt=prompt,
+                model=model,
+                n=n,
+                source_image_count=0,
+            ),
         )
         return await self._extract_images(response)
 
@@ -68,41 +100,128 @@ class VolcengineImage:
         if not image_bytes_list:
             raise RuntimeError("没有可用于图生图的源图片")
 
-        response = await self._post_json_with_image_format_fallback(
+        image_data_urls = [
+            self._build_image_data_url(image_bytes)
+            for image_bytes in image_bytes_list
+        ]
+        payload = self._build_payload(
             prompt=prompt,
             model=model,
-            image_bytes_list=image_bytes_list,
             n=n,
+            source_image_count=len(image_data_urls),
+        )
+        payload["image"] = image_data_urls[0] if len(image_data_urls) == 1 else image_data_urls
+        response = await self._post_json(
+            url=self._resolve_endpoint_url(model),
+            payload=payload,
         )
         return await self._extract_images(response)
 
     def _resolve_endpoint_url(self, model: str) -> str:
-        """按模型解析火山接口地址，不要求用户配置全局 BaseURL。"""
+        """按基础地址和模型覆盖项解析图片生成接口地址。"""
 
         configured_endpoint = self.model_endpoint_overrides.get(model.strip(), "")
         if not configured_endpoint:
-            return self._DEFAULT_ENDPOINT_URL
+            return self._append_generation_path(self.base_url)
         if configured_endpoint.startswith(("http://", "https://")):
             return configured_endpoint.rstrip("/")
-        return f"https://ark.cn-beijing.volces.com/{configured_endpoint.strip('/')}"
+        if configured_endpoint.startswith("/") or configured_endpoint.startswith("api/"):
+            parsed_base_url = urlsplit(self.base_url)
+            origin = f"{parsed_base_url.scheme}://{parsed_base_url.netloc}/"
+            return urljoin(origin, configured_endpoint.lstrip("/"))
+        return urljoin(f"{self.base_url}/", configured_endpoint)
+
+    @classmethod
+    def _normalize_base_url(cls, base_url: str) -> str:
+        normalized_url = base_url.strip().rstrip("/")
+        if not normalized_url:
+            return cls._DEFAULT_BASE_URL
+        if not normalized_url.startswith(("http://", "https://")):
+            raise ValueError("火山引擎 base_url 必须以 http:// 或 https:// 开头")
+        return normalized_url
+
+    @classmethod
+    def _append_generation_path(cls, base_url: str) -> str:
+        if base_url.casefold().endswith(f"/{cls._GENERATION_PATH}"):
+            return base_url
+        return f"{base_url}/{cls._GENERATION_PATH}"
 
     def _resolve_size(self, model: str) -> str:
         """按模型名解析图片尺寸。"""
 
-        return self.model_size_overrides.get(model.strip(), self.default_size)
+        configured_size = self.model_size_overrides.get(model.strip(), self.default_size)
+        return configured_size.replace("*", "x").replace("×", "x")
 
     def _resolve_n(self, n: int) -> int:
         """解析最终请求图片数量。"""
 
         return min(max(int(n), 1), self.max_images)
 
-    def _build_payload(self, prompt: str, model: str, n: int) -> dict[str, Any]:
+    @staticmethod
+    def _resolve_model_family(model: str) -> VolcengineModelFamily:
+        """按官方模型 ID 识别参数能力；Endpoint ID 保持可配置透传。"""
+
+        normalized_model = model.strip().casefold()
+        if "seedream-5-0-pro" in normalized_model:
+            return "seedream_5_pro"
+        if "seedream-5-0-flash" in normalized_model:
+            return "seedream_5_flash"
+        if "seedream-5-0" in normalized_model:
+            return "seedream_5_lite"
+        if "seedream-4-5" in normalized_model:
+            return "seedream_4_5"
+        if "seedream-4-0" in normalized_model:
+            return "seedream_4_0"
+        if "seedream-3-0-t2i" in normalized_model or "seededit-3-0-i2i" in normalized_model:
+            return "legacy_3"
+        return "unknown"
+
+    @staticmethod
+    def _supports_sequential_generation(model_family: VolcengineModelFamily) -> bool:
+        return model_family in {"seedream_5_lite", "seedream_4_5", "seedream_4_0", "unknown"}
+
+    @staticmethod
+    def _supports_output_format(model_family: VolcengineModelFamily) -> bool:
+        return model_family in {"seedream_5_pro", "seedream_5_flash", "seedream_5_lite", "unknown"}
+
+    @staticmethod
+    def _supports_prompt_optimization(model_family: VolcengineModelFamily) -> bool:
+        return model_family in {
+            "seedream_5_pro",
+            "seedream_5_flash",
+            "seedream_5_lite",
+            "seedream_4_5",
+            "seedream_4_0",
+            "unknown",
+        }
+
+    @staticmethod
+    def _max_reference_images(model_family: VolcengineModelFamily) -> int | None:
+        if model_family in {"seedream_5_pro", "seedream_5_flash"}:
+            return 10
+        if model_family in {"seedream_5_lite", "seedream_4_5", "seedream_4_0"}:
+            return 14
+        return None
+
+    def _build_payload(
+        self,
+        prompt: str,
+        model: str,
+        n: int,
+        *,
+        source_image_count: int,
+    ) -> dict[str, Any]:
         """构建火山图片请求体。"""
 
+        model_family = self._resolve_model_family(model)
+        max_reference_images = self._max_reference_images(model_family)
+        if max_reference_images is not None and source_image_count > max_reference_images:
+            raise ValueError(
+                f"当前火山引擎模型最多支持 {max_reference_images} 张参考图：{model}"
+            )
         payload: dict[str, Any] = {
             "model": model,
             "prompt": prompt,
-            "n": self._resolve_n(n),
             "watermark": self.watermark,
         }
         size = self._resolve_size(model)
@@ -110,71 +229,104 @@ class VolcengineImage:
             payload["size"] = size
         if self.response_format:
             payload["response_format"] = self.response_format
-        if self.guidance_scale > 0:
+        if self.output_format and self._supports_output_format(model_family):
+            payload["output_format"] = self.output_format
+        if self.guidance_scale > 0 and model_family in {"legacy_3", "unknown"}:
             payload["guidance_scale"] = self.guidance_scale
-        if self.seed >= 0:
+        if self.seed >= 0 and model_family in {"legacy_3", "unknown"}:
             payload["seed"] = self.seed
-        payload.update(self.extra_parameters)
-        return payload
 
-    async def _post_json_with_image_format_fallback(
-        self,
-        *,
-        prompt: str,
-        model: str,
-        image_bytes_list: list[bytes],
-        n: int,
-    ) -> dict[str, Any]:
-        """图生图自动尝试多种火山/兼容网关常见图片字段形态。"""
-
-        image_data_urls = [self._build_image_data_url(image_bytes) for image_bytes in image_bytes_list]
-        image_content = [
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": image_data_url,
-                },
+        requested_image_count = self._resolve_n(n)
+        sequential_mode = self.sequential_image_generation
+        if requested_image_count > 1:
+            sequential_mode = "auto"
+        if sequential_mode == "auto" and self._supports_sequential_generation(model_family):
+            remaining_image_count = 15 - source_image_count
+            if remaining_image_count < 1:
+                raise ValueError("火山引擎组图要求参考图与输出图总数不超过 15 张")
+            max_generated_images = min(self.max_images, remaining_image_count)
+            if requested_image_count > 1:
+                max_generated_images = min(max_generated_images, requested_image_count)
+            payload["sequential_image_generation"] = "auto"
+            payload["sequential_image_generation_options"] = {
+                "max_images": max_generated_images,
             }
-            for image_data_url in image_data_urls
-        ]
-        base_payload = self._build_payload(prompt=prompt, model=model, n=n)
-        payload_candidates = [
-            ("single_image", {**base_payload, "image": image_data_urls[0]}),
-            ("single_image_url", {**base_payload, "image_url": image_data_urls[0]}),
-            ("image_urls", {**base_payload, "image_urls": image_data_urls}),
-            ("images", {**base_payload, "images": image_data_urls}),
-            (
-                "multimodal_messages",
-                {
-                    **base_payload,
-                    "messages": [
-                        {
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "text",
-                                    "text": prompt,
-                                },
-                                *image_content,
-                            ],
-                        }
-                    ],
-                },
-            ),
-        ]
-        attempt_errors: list[str] = []
-        for mode, payload in payload_candidates:
-            try:
-                self._log_info(
-                    "火山引擎图生图字段尝试: model=%s mode=%s image_count=%s",
+        elif requested_image_count > 1:
+            raise ValueError(f"当前火山引擎模型不支持组图生成：{model}")
+
+        if self.optimize_prompt_mode and self._supports_prompt_optimization(model_family):
+            optimize_mode = self.optimize_prompt_mode
+            if optimize_mode == "fast" and model_family in {
+                "seedream_5_flash",
+                "seedream_5_lite",
+                "seedream_4_5",
+            }:
+                optimize_mode = "standard"
+                self._log_warning(
+                    "火山引擎模型不支持 fast 提示词优化，已使用 standard: model=%s",
                     model,
-                    mode,
-                    len(image_bytes_list),
                 )
-                return await self._post_json(url=self._resolve_endpoint_url(model), payload=payload)
-            except Exception as exc:
-                attempt_errors.append(f"{mode}: {exc}")
-        raise RuntimeError("火山引擎图生图请求失败: " + " | ".join(attempt_errors))
+            payload["optimize_prompt_options"] = {"mode": optimize_mode}
+
+        if self.web_search_enabled and model_family in {"seedream_5_lite", "unknown"}:
+            payload["tools"] = [{"type": "web_search"}]
+
+        is_image_edit = source_image_count > 0
+        supports_advanced_edit = model_family in {
+            "seedream_5_pro",
+            "seedream_5_flash",
+            "unknown",
+        }
+        if is_image_edit and self.background and supports_advanced_edit:
+            payload["background"] = self.background
+        if is_image_edit and self.layer_decomposition and supports_advanced_edit:
+            payload["layer_decomposition"] = True
+
+        payload.update(self.extra_parameters)
+        if model_family not in {"legacy_3", "unknown"}:
+            payload.pop("guidance_scale", None)
+            payload.pop("seed", None)
+        if not self._supports_sequential_generation(model_family):
+            payload.pop("sequential_image_generation", None)
+            payload.pop("sequential_image_generation_options", None)
+        if not self._supports_output_format(model_family):
+            payload.pop("output_format", None)
+        if not self._supports_prompt_optimization(model_family):
+            payload.pop("optimize_prompt_options", None)
+        if model_family not in {"seedream_5_lite", "unknown"}:
+            payload.pop("tools", None)
+        if not is_image_edit or not supports_advanced_edit:
+            payload.pop("background", None)
+            payload.pop("layer_decomposition", None)
+
+        optimize_options = payload.get("optimize_prompt_options")
+        if (
+            isinstance(optimize_options, dict)
+            and optimize_options.get("mode") == "fast"
+            and model_family in {"seedream_5_flash", "seedream_5_lite", "seedream_4_5"}
+        ):
+            optimize_options["mode"] = "standard"
+            self._log_warning(
+                "火山引擎模型不支持 fast 提示词优化，已使用 standard: model=%s",
+                model,
+            )
+
+        # 方舟图片生成 Body 不支持 OpenAI Images API 的 n 字段；插件也不处理流式响应。
+        payload.pop("n", None)
+        stream_enabled = payload.pop("stream", False)
+        if stream_enabled:
+            raise ValueError("插件当前仅支持火山引擎非流式图片响应，请移除 stream=true")
+        if payload.get("sequential_image_generation") == "disabled":
+            payload.pop("sequential_image_generation", None)
+            payload.pop("sequential_image_generation_options", None)
+        if payload.get("background") == "transparent":
+            if payload.get("output_format") == "jpeg":
+                raise ValueError("火山引擎透明背景模式不能与 jpeg 输出格式同时使用")
+            if source_image_count != 1:
+                raise ValueError("火山引擎透明背景模式仅支持输入一张图片")
+        if payload.get("layer_decomposition") and source_image_count != 1:
+            raise ValueError("火山引擎图层拆分仅支持输入一张图片")
+        return payload
 
     def _build_headers(self) -> dict[str, str]:
         """构建请求头。"""
@@ -228,16 +380,9 @@ class VolcengineImage:
                     )
 
                 response_json = await read_response_json(response)
-                error_object = response_json.get("error")
-                error_code = response_json.get("code") or response_json.get("error_code")
-                if not error_code and isinstance(error_object, dict):
-                    error_code = error_object.get("code") or error_object.get("type")
-                if error_code:
-                    error_message = response_json.get("message") or "未知错误"
-                    if isinstance(error_object, dict):
-                        error_message = error_object.get("message") or error_object.get("param") or error_message
-                    elif isinstance(error_object, str):
-                        error_message = error_object
+                response_error = self._extract_response_error(response_json)
+                if response_error is not None:
+                    error_code, error_message = response_error
                     self._log_error(
                         "火山引擎图片接口业务失败: code=%s duration=%.2fs url=%s message=%s",
                         error_code,
@@ -250,20 +395,70 @@ class VolcengineImage:
                 self._log_info("火山引擎接口成功: status=%s duration=%.2fs", response.status, duration)
                 return response_json
 
+    @staticmethod
+    def _extract_response_error(response: dict[str, Any]) -> tuple[str, str] | None:
+        """提取顶层业务错误；兼容成功响应中存在空 error 的网关。"""
+
+        error_object = response.get("error")
+        error_code = response.get("code") or response.get("error_code")
+        if not error_code and isinstance(error_object, dict):
+            error_code = error_object.get("code") or error_object.get("type")
+        has_error_object = (
+            isinstance(error_object, dict) and bool(error_object)
+        ) or (
+            isinstance(error_object, str) and bool(error_object.strip())
+        )
+        if not error_code and not has_error_object:
+            return None
+
+        error_message = response.get("message") or "未知错误"
+        if isinstance(error_object, dict):
+            error_message = error_object.get("message") or error_object.get("param") or error_message
+        elif isinstance(error_object, str):
+            error_message = error_object
+        return str(error_code or "unknown_error"), str(error_message)
+
     async def _extract_images(self, response: dict[str, Any]) -> list[bytes]:
         """从火山引擎响应中提取图片。"""
 
         data = self._extract_response_items(response)
         image_bytes_list: list[bytes] = []
+        item_errors: list[str] = []
         for item in data:
+            item_error = self._extract_item_error(item)
+            if item_error:
+                item_errors.append(item_error)
+                continue
             extracted = await self._extract_image_bytes_from_item(item)
             if extracted is not None:
                 image_bytes_list.append(extracted)
 
         if not image_bytes_list:
-            self._log_error("火山引擎响应解析失败: 响应存在但没有可用图片数据")
-            raise RuntimeError("火山引擎响应中没有可用图片数据")
+            error_suffix = f"：{'；'.join(item_errors)}" if item_errors else ""
+            self._log_error("火山引擎响应解析失败: 响应存在但没有可用图片数据%s", error_suffix)
+            raise RuntimeError(f"火山引擎响应中没有可用图片数据{error_suffix}")
+        if item_errors:
+            self._log_warning(
+                "火山引擎组图部分生成失败: success_count=%s errors=%s",
+                len(image_bytes_list),
+                "；".join(item_errors),
+            )
         return image_bytes_list
+
+    @staticmethod
+    def _extract_item_error(item: Any) -> str:
+        """提取组图响应中单张图片的错误信息。"""
+
+        if not isinstance(item, dict):
+            return ""
+        error_object = item.get("error")
+        if isinstance(error_object, dict):
+            code = str(error_object.get("code") or "unknown_error")
+            message = str(error_object.get("message") or "未知错误")
+            return f"{code} - {message}"
+        if isinstance(error_object, str) and error_object.strip():
+            return error_object.strip()
+        return ""
 
     def _extract_response_items(self, response: dict[str, Any]) -> list[Any]:
         """提取响应中可能承载图片的条目列表。"""
@@ -364,3 +559,9 @@ class VolcengineImage:
 
         if self.logger is not None:
             self.logger.error(message, *args)
+
+    def _log_warning(self, message: str, *args: Any) -> None:
+        """记录警告日志。"""
+
+        if self.logger is not None:
+            self.logger.warning(message, *args)

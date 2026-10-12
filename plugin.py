@@ -1071,7 +1071,7 @@ class DrawpicPlugin(MaiBotPlugin):
         resolved_fallback_model = router.resolve_fallback_model(resolved_default_model)
         fallback_unavailable_reason = router.get_fallback_model_unavailable_reason(resolved_default_model)
         self.ctx.logger.info(
-            "麦麦绘图插件已加载: default_model=%s fallback_model=%s configured_fallback_model=%s fallback_unavailable_reason=%s timeout=%ss aliyun_models=%s openai_models=%s google_models=%s zhipu_models=%s volcengine_t2i_models=%s volcengine_i2i_models=%s siliconflow_models=%s novelai_models=%s prompt_review=%s image_review=%s session_pref_count=%s task_count=%s",
+            "麦麦绘图插件已加载: default_model=%s fallback_model=%s configured_fallback_model=%s fallback_unavailable_reason=%s timeout=%ss aliyun_models=%s openai_models=%s google_models=%s zhipu_models=%s volcengine_models=%s siliconflow_models=%s novelai_models=%s prompt_review=%s image_review=%s session_pref_count=%s task_count=%s",
             resolved_default_model,
             resolved_fallback_model or "未启用",
             self.config.general.fallback_model.strip() or "未配置",
@@ -1081,8 +1081,7 @@ class DrawpicPlugin(MaiBotPlugin):
             len(router.get_openai_models()),
             len(router.get_google_models()),
             len(router.get_zhipu_models()),
-            len(router.get_volcengine_t2i_models()),
-            len(router.get_volcengine_i2i_models()),
+            len(router.get_volcengine_models()),
             len(router.get_siliconflow_models()),
             len(router.get_novelai_models()),
             moderation_service.is_prompt_review_enabled(),
@@ -1118,7 +1117,7 @@ class DrawpicPlugin(MaiBotPlugin):
             resolved_fallback_model = router.resolve_fallback_model(resolved_default_model)
             fallback_unavailable_reason = router.get_fallback_model_unavailable_reason(resolved_default_model)
             self.ctx.logger.info(
-                "麦麦绘图插件配置已更新: scope=%s version=%s default_model=%s fallback_model=%s configured_fallback_model=%s fallback_unavailable_reason=%s timeout=%ss aliyun_models=%s openai_models=%s google_models=%s zhipu_models=%s volcengine_t2i_models=%s volcengine_i2i_models=%s siliconflow_models=%s novelai_models=%s prompt_review=%s image_review=%s task_count=%s",
+                "麦麦绘图插件配置已更新: scope=%s version=%s default_model=%s fallback_model=%s configured_fallback_model=%s fallback_unavailable_reason=%s timeout=%ss aliyun_models=%s openai_models=%s google_models=%s zhipu_models=%s volcengine_models=%s siliconflow_models=%s novelai_models=%s prompt_review=%s image_review=%s task_count=%s",
                 scope,
                 version,
                 resolved_default_model,
@@ -1130,8 +1129,7 @@ class DrawpicPlugin(MaiBotPlugin):
                 len(router.get_openai_models()),
                 len(router.get_google_models()),
                 len(router.get_zhipu_models()),
-                len(router.get_volcengine_t2i_models()),
-                len(router.get_volcengine_i2i_models()),
+                len(router.get_volcengine_models()),
                 len(router.get_siliconflow_models()),
                 len(router.get_novelai_models()),
                 moderation_service.is_prompt_review_enabled(),
@@ -1207,7 +1205,7 @@ class DrawpicPlugin(MaiBotPlugin):
         if not provider_name:
             raise ValueError(f"指定模型不可用：{resolved_model}")
         task_type = "edit_image" if normalized_source_images else "draw"
-        # 火山引擎文生图/图生图模型分离，提前检查时需用自动切换后的模型判断任务能力。
+        # 火山引擎使用统一模型列表，按模型名能力标记和全局黑名单提前校验。
         check_model = resolved_model
         if provider_name == "volcengine":
             try:
@@ -1414,7 +1412,7 @@ class DrawpicPlugin(MaiBotPlugin):
                     platform=platform_name,
                 )
                 return {"success": False, "message": f"指定模型不可用：{resolved_model}"}
-            # 火山引擎文生图/图生图模型分离，提前检查时需用自动切换后的模型判断图生图能力
+            # 火山引擎使用统一模型列表，按模型名能力标记和全局黑名单提前校验。
             check_model = resolved_model
             if provider_name == "volcengine":
                 try:
@@ -1906,7 +1904,7 @@ class DrawpicPlugin(MaiBotPlugin):
             return False, "模型不可用", 1
 
         # 部分平台或模型不支持图生图，提前给出清晰提示，且不创建后台任务。
-        # 火山引擎文生图/图生图模型分离，提前检查时需用自动切换后的模型判断图生图能力
+        # 火山引擎使用统一模型列表，按模型名能力标记和全局黑名单提前校验。
         check_model = resolved_model
         if provider_name == "volcengine":
             try:

@@ -253,7 +253,7 @@ def test_newapi_chat_generation_and_multi_source_edit_protocol() -> None:
     assert content[0] == {"type": "text", "text": "red hat"}
     assert content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,")
     assert content[2]["image_url"]["url"].startswith("data:image/png;base64,")
-    for item, source in zip(content[1:], sources):
+    for item, source in zip(content[1:], sources, strict=True):
         assert base64.b64decode(item["image_url"]["url"].split(",", 1)[1]) == source
 
 

@@ -85,6 +85,7 @@ from maimai_drawpic_pkg.core.task_store import DrawTaskStore  # noqa: E402
 from maimai_drawpic_pkg.core.texts import build_style_text  # noqa: E402
 from maimai_drawpic_pkg.core.usage_store import UserQuotaStore  # noqa: E402
 from maimai_drawpic_pkg.providers.novelai_platform import NovelAIImage  # noqa: E402
+from maimai_drawpic_pkg.providers.openai_platform import OpenaiImage  # noqa: E402
 
 # 构造一张最小 PNG 字节用于图片工具测试
 _MINIMAL_PNG = (
@@ -162,6 +163,39 @@ def test_provider_response_size_limit_applies_to_json() -> None:
 
     asyncio.run(_run())
     print("[OK] http_proxy: JSON 与二进制响应大小限制")
+
+
+def test_openai_base_url_preserves_versioned_api_root() -> None:
+    """OpenAI 兼容地址应在完整版本根路径后追加接口，且不重复 /v1。"""
+
+    openai = OpenaiImage(api_key="test-key", base_url="https://api.openai.com/v1/")
+    assert openai.base_url == "https://api.openai.com/v1"
+    assert openai._build_api_url("images/generations") == (
+        "https://api.openai.com/v1/images/generations"
+    )
+
+    ark = OpenaiImage(
+        api_key="test-key",
+        base_url="https://ark.cn-beijing.volces.com/api/v3",
+    )
+    assert ark._build_api_url("images/generations") == (
+        "https://ark.cn-beijing.volces.com/api/v3/images/generations"
+    )
+    assert ark._build_api_url("chat/completions") == (
+        "https://ark.cn-beijing.volces.com/api/v3/chat/completions"
+    )
+
+    agent_plan = OpenaiImage(
+        api_key="test-key",
+        base_url="https://ark.cn-beijing.volces.com/api/plan/v3/",
+    )
+    assert agent_plan._build_api_url("images/generations") == (
+        "https://ark.cn-beijing.volces.com/api/plan/v3/images/generations"
+    )
+
+    legacy = OpenaiImage(api_key="test-key", base_url="https://relay.example.com")
+    assert legacy.base_url == "https://relay.example.com/v1"
+    print("[OK] openai base_url: 保留 /v1、/api/v3 并兼容旧根地址")
 
 
 def test_novelai_v5_payload_uses_v5_parameters() -> None:
@@ -1763,6 +1797,7 @@ def test_task_store_limits_history_and_omits_prompt() -> None:
 def main() -> None:
     test_image_utils_detect_mime_type()
     test_provider_response_size_limit_applies_to_json()
+    test_openai_base_url_preserves_versioned_api_root()
     test_novelai_v5_payload_uses_v5_parameters()
     test_novelai_v4_and_v3_payloads_use_supported_parameters()
     test_novelai_quality_tags_follow_model_family()

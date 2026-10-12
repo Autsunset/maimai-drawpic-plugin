@@ -27,6 +27,11 @@ NovelAIMode = Literal["anime", "furry", "background"]
 AliyunImageInputMode = Literal["auto", "base64", "url"]
 AliyunPromptExtendMode = Literal["direct", "agent"]
 AliyunKlingResultType = Literal["single", "series"]
+VolcengineBackgroundMode = Literal["", "opaque", "transparent"]
+VolcengineOptimizePromptMode = Literal["", "standard", "fast"]
+VolcengineOutputFormat = Literal["", "png", "jpeg"]
+VolcengineResponseFormat = Literal["url", "b64_json"]
+VolcengineSequentialMode = Literal["disabled", "auto"]
 
 
 class PluginSectionConfig(PluginConfigBase):
@@ -449,11 +454,12 @@ class OpenAICompatibleInstanceConfig(PluginConfigBase):
         },
     )
     base_url: str = Field(
-        default="https://api.openai.com",
-        description="OpenAI 兼容服务基础 URL。可填写根地址，粘贴带 /v1 的地址时插件会自动兼容",
+        default="https://api.openai.com/v1",
+        description="OpenAI 兼容服务 API 根地址，末尾应包含 /v1、/api/v3 等版本路径",
         json_schema_extra={
             "label": "基础 URL",
-            "placeholder": "https://api.example.com",
+            "placeholder": "https://api.example.com/v1",
+            "hint": "填写完整 API 根路径，例如 OpenAI 的 /v1 或方舟的 /api/v3；插件只会继续追加接口路径",
             "order": 2,
         },
     )
@@ -619,11 +625,11 @@ class OpenAIModelConfig(PluginConfigBase):
         },
     )
     base_url: str = Field(
-        default="https://api.openai.com",
-        description="OpenAI兼容服务基础 URL。可填写根地址，粘贴带 /v1 的地址时插件会自动兼容",
+        default="https://api.openai.com/v1",
+        description="OpenAI 兼容服务 API 根地址，末尾应包含 /v1、/api/v3 等版本路径",
         json_schema_extra={
             "label": "OpenAI 基础 URL",
-            "hint": "OpenAI兼容服务基础 URL。建议填写根地址；如果粘贴了带 /v1 的地址，插件会自动去重处理",
+            "hint": "填写完整 API 根路径，例如 https://api.openai.com/v1 或 https://ark.cn-beijing.volces.com/api/v3",
             "order": 0,
         },
     )
@@ -1259,62 +1265,48 @@ class VolcengineModelConfig(PluginConfigBase):
         description="火山引擎方舟 API Key",
         json_schema_extra={
             "label": "火山引擎 API Key",
-            "hint": "填入火山方舟 API Key。接口地址由插件内置，不需要配置 BaseURL",
+            "hint": "普通方舟与 Agent Plan 共用这一字段；填入与下方 Base URL 对应的 Key，二者的 Key 本身不可交叉使用",
             "input_type": "password",
             "order": 0,
         },
     )
-    models: list[str] = Field(
-        default=[],
-        description="火山引擎方舟图片模型列表（旧字段，已拆分为统一、文生图和图生图模型列表；留空时自动兼容）",
+    base_url: str = Field(
+        default="https://ark.cn-beijing.volces.com/api/v3",
+        description="火山引擎方舟图片生成 API 基础地址",
         json_schema_extra={
-            "label": "火山引擎模型列表（旧）",
-            "hint": "已拆分为统一模型、文生图模型和图生图模型；填写下方任一新字段后本字段被忽略",
+            "label": "火山引擎 Base URL",
+            "hint": "普通方舟与 Agent Plan 共用这一字段：按量直调和 Token 额度包填 /api/v3，Agent Plan 填 /api/plan/v3；也可填写兼容网关或完整接口地址",
+            "order": 0.5,
+        },
+    )
+    models: list[str] = Field(
+        default=[
+            "doubao-seedream-5-0-flash-260915",
+            "doubao-seedream-5-0-pro-260628",
+            "doubao-seedream-5-0-260128",
+        ],
+        description="火山引擎方舟图片模型列表",
+        json_schema_extra={
+            "label": "火山引擎模型列表",
+            "hint": "统一填写 Model ID 或 Endpoint ID；名称含 t2i/i2i 的旧模型会自动限制任务类型，其余模型默认同时支持文生图与图生图",
             "order": 1,
         },
     )
-    unified_models: list[str] = Field(
-        default=[],
-        description="火山引擎同时支持文生图和图生图的统一模型列表",
-        json_schema_extra={
-            "label": "统一模型列表",
-            "hint": "填写同时支持文生图和图生图的模型或 endpoint 名称。列表中的模型可直接作为会话首选模型，插件会按任务类型调用对应能力",
-            "order": 2,
-        },
-    )
-    t2i_models: list[str] = Field(
-        default=["doubao-seedream-3-0-t2i"],
-        description="火山引擎文生图模型列表，仅用于文生图任务",
-        json_schema_extra={
-            "label": "文生图模型列表",
-            "hint": "填写火山方舟控制台中以 -t2i 结尾的即梦 AI / 豆包生图模型或 endpoint 名称",
-            "order": 2,
-        },
-    )
-    i2i_models: list[str] = Field(
-        default=["doubao-seedream-3-0-i2i"],
-        description="火山引擎图生图模型列表，仅用于图生图编辑任务",
-        json_schema_extra={
-            "label": "图生图模型列表",
-            "hint": "填写火山方舟控制台中以 -i2i 结尾的即梦 AI / 豆包生图模型或 endpoint 名称；留空则该平台不支持图生图",
-            "order": 3,
-        },
-    )
     default_size: str = Field(
-        default="2048*2048",
+        default="2K",
         description="火山引擎图片默认分辨率",
         json_schema_extra={
             "label": "默认分辨率",
-            "hint": "常见值：1024*1024、1328*1328、2048*2048；以模型实际支持为准",
+            "hint": "填写 1K/1.5K/2K/4K 或宽x高；必须使用小写 x，插件会兼容旧配置中的 * 和 ×",
             "order": 4,
         },
     )
     model_size_overrides: list[str] = Field(
         default=[],
-        description="火山引擎按模型覆盖分辨率。每项格式为 模型名=宽*高",
+        description="火山引擎按模型覆盖分辨率。每项格式为 模型名=分辨率档位或宽x高",
         json_schema_extra={
             "label": "按模型覆盖分辨率",
-            "hint": "每行填写一个 模型名=宽*高，例如 doubao-seedream-3-0-t2i=1024*1024",
+            "hint": "每行填写一个 模型名=尺寸，例如 doubao-seedream-5-0-flash-260915=2K",
             "order": 5,
         },
     )
@@ -1327,13 +1319,72 @@ class VolcengineModelConfig(PluginConfigBase):
             "order": 6,
         },
     )
-    response_format: str = Field(
+    response_format: VolcengineResponseFormat = Field(
         default="url",
         description="火山引擎图片响应格式",
         json_schema_extra={
             "label": "响应格式",
-            "hint": "常见值：url、b64_json；留空则不传",
+            "hint": "url 返回 24 小时有效下载链接；b64_json 直接返回 Base64 图片数据",
+            "options": ["url", "b64_json"],
             "order": 7,
+        },
+    )
+    output_format: VolcengineOutputFormat = Field(
+        default="",
+        description="火山引擎生成图片的文件格式",
+        json_schema_extra={
+            "label": "输出文件格式",
+            "hint": "可选 png 或 jpeg；仅 Seedream 5.0 系列支持，留空跟随模型默认值",
+            "options": ["", "png", "jpeg"],
+            "order": 7.1,
+        },
+    )
+    sequential_image_generation: VolcengineSequentialMode = Field(
+        default="disabled",
+        description="火山引擎组图生成模式",
+        json_schema_extra={
+            "label": "组图生成",
+            "hint": "auto 允许 Seedream 5.0 lite、4.5、4.0 自动生成组图；其他模型会自动忽略",
+            "options": ["disabled", "auto"],
+            "order": 7.2,
+        },
+    )
+    optimize_prompt_mode: VolcengineOptimizePromptMode = Field(
+        default="",
+        description="火山引擎服务端提示词优化模式",
+        json_schema_extra={
+            "label": "提示词优化模式",
+            "hint": "standard 质量优先；fast 仅 Seedream 5.0 pro 和 4.0 支持；留空不传",
+            "options": ["", "standard", "fast"],
+            "order": 7.3,
+        },
+    )
+    web_search_enabled: bool = Field(
+        default=False,
+        description="是否允许支持的火山引擎模型调用联网搜索工具",
+        json_schema_extra={
+            "label": "启用联网搜索",
+            "hint": "仅 Seedream 5.0 lite 支持；模型会自行判断是否需要联网，并可能增加延迟",
+            "order": 7.4,
+        },
+    )
+    background: VolcengineBackgroundMode = Field(
+        default="",
+        description="火山引擎图生图透明通道模式",
+        json_schema_extra={
+            "label": "图生图背景模式",
+            "hint": "仅 Seedream 5.0 pro/flash 图生图支持；transparent 要求单张透明源图且不能输出 jpeg",
+            "options": ["", "opaque", "transparent"],
+            "order": 7.5,
+        },
+    )
+    layer_decomposition: bool = Field(
+        default=False,
+        description="是否启用 Seedream 5.0 pro/flash 图层拆分",
+        json_schema_extra={
+            "label": "启用图层拆分",
+            "hint": "仅 Seedream 5.0 pro/flash 图生图支持，且必须只输入一张图片；会返回底图和多个图层",
+            "order": 7.6,
         },
     )
     guidance_scale: float = Field(
@@ -1341,7 +1392,7 @@ class VolcengineModelConfig(PluginConfigBase):
         description="火山引擎提示词引导强度。0 表示不传",
         json_schema_extra={
             "label": "引导强度",
-            "hint": "大于 0 时传入 guidance_scale；仅模型支持时生效",
+            "hint": "仅 Seedream 3.0/SeedEdit 3.0 支持；当前 Seedream 4.0/5.0 会自动忽略",
             "order": 8,
         },
     )
@@ -1350,7 +1401,7 @@ class VolcengineModelConfig(PluginConfigBase):
         description="火山引擎随机种子。负数表示不传",
         json_schema_extra={
             "label": "随机种子",
-            "hint": "非负整数会传入 seed；仅模型支持时生效",
+            "hint": "仅 Seedream 3.0/SeedEdit 3.0 支持；当前 Seedream 4.0/5.0 会自动忽略",
             "order": 9,
         },
     )
@@ -1365,10 +1416,10 @@ class VolcengineModelConfig(PluginConfigBase):
     )
     max_images: int = Field(
         default=1,
-        description="单次火山引擎请求生成图片数量上限",
+        description="火山引擎组图最多生成图片数量",
         json_schema_extra={
             "label": "单次图片数量",
-            "hint": "插件当前默认请求 1 张；这里限制工具未来传入 n 时的最大值",
+            "hint": "仅组图生成 auto 模式生效，范围 1 到 15；输入参考图数量与输出数量之和不会超过 15",
             "order": 11,
         },
     )
@@ -2165,40 +2216,27 @@ def migrate_legacy_review_config(config_data: Mapping[str, Any]) -> dict[str, An
 
 
 def _migrate_legacy_volcengine_models(migrated_config: dict[str, Any]) -> None:
-    """将旧版火山引擎 models 列表自动分配到 t2i_models / i2i_models。
-
-    仅在 t2i_models / i2i_models 均未填写时触发，按后缀 -t2i / -i2i 拆分；
-    无法识别后缀的模型同时加入两个列表，保证兼容性。
-    """
+    """将旧版火山引擎分组模型列表合并到 models。"""
 
     volcengine_config = migrated_config.get("volcengine")
     if not isinstance(volcengine_config, dict):
         return
-    legacy_models = volcengine_config.get("models")
-    if not isinstance(legacy_models, list) or not legacy_models:
-        return
-    # 仅在新的两个字段都缺失或为空时才迁移
-    has_t2i = isinstance(volcengine_config.get("t2i_models"), list) and volcengine_config["t2i_models"]
-    has_i2i = isinstance(volcengine_config.get("i2i_models"), list) and volcengine_config["i2i_models"]
-    if has_t2i or has_i2i:
-        return
-    t2i_models: list[str] = []
-    i2i_models: list[str] = []
-    for model in legacy_models:
-        normalized_model = str(model or "").strip()
-        if not normalized_model:
+
+    merged_models: list[str] = []
+    for field_name in ("models", "unified_models", "t2i_models", "i2i_models"):
+        configured_models = volcengine_config.get(field_name)
+        if not isinstance(configured_models, list):
             continue
-        lowered = normalized_model.lower()
-        if lowered.endswith("-t2i"):
-            t2i_models.append(normalized_model)
-        elif lowered.endswith("-i2i"):
-            i2i_models.append(normalized_model)
-        else:
-            # 无法识别后缀，同时加入两个列表
-            t2i_models.append(normalized_model)
-            i2i_models.append(normalized_model)
-    volcengine_config["t2i_models"] = t2i_models
-    volcengine_config["i2i_models"] = i2i_models
+        for model in configured_models:
+            normalized_model = str(model or "").strip()
+            if normalized_model and normalized_model not in merged_models:
+                merged_models.append(normalized_model)
+
+    if merged_models:
+        volcengine_config["models"] = merged_models
+    volcengine_config.pop("unified_models", None)
+    volcengine_config.pop("t2i_models", None)
+    volcengine_config.pop("i2i_models", None)
 
 
 def _migrate_legacy_quota_fields(migrated_config: dict[str, Any]) -> None:

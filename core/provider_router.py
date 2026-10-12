@@ -245,39 +245,45 @@ class ProviderRouter:
         return [model.strip() for model in self.config.zhipu.models if model.strip()]
 
     def get_volcengine_t2i_models(self) -> list[str]:
-        """获取火山引擎文生图模型列表。"""
+        """按模型后缀和全局黑名单获取可用于文生图的火山模型。"""
 
-        if not self.config.volcengine.enabled:
-            return []
-        return list(
-            dict.fromkeys(
-                model.strip()
-                for model in self.config.volcengine.unified_models + self.config.volcengine.t2i_models
-                if model.strip()
-            )
-        )
+        unsupported_models = {
+            model.strip()
+            for model in self.config.general.text_to_image_unsupported_models
+            if model.strip()
+        }
+        return [
+            model
+            for model in self.get_volcengine_models()
+            if not self._has_volcengine_task_marker(model, "i2i") and model not in unsupported_models
+        ]
 
     def get_volcengine_i2i_models(self) -> list[str]:
-        """获取火山引擎图生图模型列表。"""
+        """按模型后缀和全局黑名单获取可用于图生图的火山模型。"""
+
+        unsupported_models = {
+            model.strip()
+            for model in self.config.general.image_edit_unsupported_models
+            if model.strip()
+        }
+        return [
+            model
+            for model in self.get_volcengine_models()
+            if not self._has_volcengine_task_marker(model, "t2i") and model not in unsupported_models
+        ]
+
+    def get_volcengine_models(self) -> list[str]:
+        """获取火山引擎单一模型列表。"""
 
         if not self.config.volcengine.enabled:
             return []
-        return list(
-            dict.fromkeys(
-                model.strip()
-                for model in self.config.volcengine.unified_models + self.config.volcengine.i2i_models
-                if model.strip()
-            )
-        )
+        return list(dict.fromkeys(model.strip() for model in self.config.volcengine.models if model.strip()))
 
-    def get_volcengine_models(self) -> list[str]:
-        """获取火山引擎全部模型列表（文生图 + 图生图，去重保序）。"""
+    @staticmethod
+    def _has_volcengine_task_marker(model: str, marker: Literal["t2i", "i2i"]) -> bool:
+        """识别模型名中由连接符分隔的 t2i / i2i 能力标记。"""
 
-        combined: list[str] = []
-        for model in self.get_volcengine_t2i_models() + self.get_volcengine_i2i_models():
-            if model not in combined:
-                combined.append(model)
-        return combined
+        return re.search(rf"(?:^|[-_.]){marker}(?:$|[-_.])", model.strip().lower()) is not None
 
     def get_siliconflow_models(self) -> list[str]:
         """获取硅基流动模型列表。"""
@@ -635,12 +641,19 @@ class ProviderRouter:
 
         return VolcengineImage(
             api_key=self.config.volcengine.api_key,
+            base_url=self.config.volcengine.base_url,
             logger=self.logger,
             request_timeout_seconds=self.resolve_request_timeout_seconds(),
             default_size=self.config.volcengine.default_size,
             model_size_overrides=parse_model_value_overrides(self.config.volcengine.model_size_overrides),
             model_endpoint_overrides=parse_model_value_overrides(self.config.volcengine.model_endpoint_overrides),
             response_format=self.config.volcengine.response_format,
+            output_format=self.config.volcengine.output_format,
+            sequential_image_generation=self.config.volcengine.sequential_image_generation,
+            optimize_prompt_mode=self.config.volcengine.optimize_prompt_mode,
+            web_search_enabled=self.config.volcengine.web_search_enabled,
+            background=self.config.volcengine.background,
+            layer_decomposition=self.config.volcengine.layer_decomposition,
             guidance_scale=self.config.volcengine.guidance_scale,
             seed=self.config.volcengine.seed,
             watermark=self.config.volcengine.watermark,
@@ -874,10 +887,10 @@ class ProviderRouter:
                 return ModelTaskCapability(
                     allowed=False,
                     reason=(
-                        f"当前火山引擎模型 {normalized_model} 属于{current_kind}，"
+                        f"当前火山引擎模型 {normalized_model} 的名称标记为{current_kind}，"
                         f"不支持{task_name}；请切换到对应任务模型"
                     ),
-                    source="volcengine_model_lists",
+                    source="volcengine_model_suffix",
                 )
         if (
             provider_name == "comfyui"
@@ -900,45 +913,15 @@ class ProviderRouter:
         model: str,
         task_type: str,
     ) -> str:
-        """根据任务类型自动解析火山引擎最终使用的模型名。
-
-        火山引擎文生图模型（-t2i）和图生图模型（-i2i）是分离的，
-        当用户选定的模型与任务类型不匹配时，自动切换到对应的模型。
-        返回最终使用的模型名；无法切换时抛出 ValueError。
-        """
+        """按单一模型列表、任务后缀和全局黑名单验证火山模型。"""
 
         normalized_model = model.strip()
         if not normalized_model:
             raise ValueError("火山引擎模型名为空，无法解析")
-
-        t2i_models = self.get_volcengine_t2i_models()
-        i2i_models = self.get_volcengine_i2i_models()
-
-        if task_type == "edit_image":
-            if normalized_model in i2i_models:
-                return normalized_model
-            if not i2i_models:
-                raise ValueError("火山引擎未配置图生图模型（i2i_models 为空），无法提交图生图任务")
-            # 尝试把 -t2i 后缀替换为 -i2i 查找对应模型
-            if normalized_model.lower().endswith("-t2i"):
-                candidate = normalized_model[:-4] + "-i2i"
-                if candidate in i2i_models:
-                    return candidate
-            # 回退到第一个可用 i2i 模型
-            return i2i_models[0]
-
-        # task_type == "draw"（文生图）
-        if normalized_model in t2i_models:
-            return normalized_model
-        if not t2i_models:
-            raise ValueError("火山引擎未配置文生图模型（t2i_models 为空），无法提交文生图任务")
-        # 尝试把 -i2i 后缀替换为 -t2i 查找对应模型
-        if normalized_model.lower().endswith("-i2i"):
-            candidate = normalized_model[:-4] + "-t2i"
-            if candidate in t2i_models:
-                return candidate
-        # 回退到第一个可用 t2i 模型
-        return t2i_models[0]
+        capability = self.evaluate_model_task_capability(normalized_model, task_type)
+        if not capability.allowed:
+            raise ValueError(capability.reason)
+        return normalized_model
 
     def require_platform_for_model(
         self,

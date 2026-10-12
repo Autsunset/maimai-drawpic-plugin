@@ -311,14 +311,6 @@ class DrawService:
         effective_model = model
         if provider_name == "volcengine":
             effective_model = self.router.resolve_volcengine_model_for_task(model, task_type)
-            if effective_model != model:
-                self.ctx.logger.info(
-                    "火山引擎模型自动切换: task_type=%s original_model=%s effective_model=%s is_fallback=%s",
-                    task_type,
-                    model,
-                    effective_model,
-                    is_fallback,
-                )
         elif provider_name == "novelai":
             effective_model = self.router.resolve_novelai_model_for_mode(model, novelai_mode)
             provider_name = self.router.get_model_provider(effective_model)

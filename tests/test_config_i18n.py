@@ -127,6 +127,10 @@ def test_contextual_labels_preserve_required_and_provider_meaning() -> None:
     assert sections["zhipu"]["fields"]["models"]["i18n"]["ja_JP"]["label"] == ("智譜モデル一覧（必須）")
     assert sections["zhipu"]["fields"]["quality"]["i18n"]["ko_KR"]["label"] == ("생성 품질(선택 사항)")
     assert sections["aliyun"]["fields"]["base_url"]["i18n"]["en_US"]["label"] == ("DashScope Base URL (Required)")
+    assert sections["volcengine"]["fields"]["base_url"]["i18n"]["en_US"]["label"] == ("Volcengine Base URL")
+    assert sections["volcengine"]["fields"]["models"]["i18n"]["en_US"]["label"] == (
+        "Volcengine Image Models"
+    )
     assert sections["plugin"]["fields"]["enabled"]["i18n"]["en_US"]["label"] == ("Enable Plugin")
     assert (
         sections["prompt_review"]["fields"]["review_prompt"]["i18n"]["en_US"]["label"] == "Prompt Review Instructions"

@@ -4,7 +4,7 @@
 
 # 🎨 麦麦绘图
 
-![Plugin Version](https://img.shields.io/badge/Plugin-1.12.3-informational.svg)
+![Plugin Version](https://img.shields.io/badge/Plugin-1.12.4-informational.svg)
 ![MaiBot](https://img.shields.io/badge/MaiBot-%3E%3D1.2.0-blue.svg)
 ![MaiBot Plugin SDK](https://img.shields.io/badge/Plugin%20SDK-%3E%3D2.7.1-blueviolet.svg)
 ![License](https://img.shields.io/badge/License-AGPL--3.0-green.svg)
@@ -105,21 +105,27 @@ negative_prompt_template = "oil painting, 3d, {negative_prompt}"
 [volcengine]
 enabled = true
 api_key = "your-volcengine-api-key"
-unified_models = ["doubao-seedream-4-0"]
-t2i_models = ["doubao-seedream-3-0-t2i"]
-i2i_models = ["doubao-seedream-3-0-i2i"]
-default_size = "2048*2048"
+base_url = "https://ark.cn-beijing.volces.com/api/v3"
+models = [
+  "doubao-seedream-5-0-flash-260915",
+  "doubao-seedream-5-0-pro-260628",
+  "doubao-seedream-5-0-260128",
+]
+default_size = "2K"
+response_format = "url"
+output_format = "png"
+optimize_prompt_mode = "standard"
 
 [openai]
 enabled = true
-base_url = "https://api.openai.com"
+base_url = "https://api.openai.com/v1"
 api_key = "your-openai-api-key"
 models = ["gpt-image-2"]
 
 [[openai.instances]]
 enabled = true
 name = "备用接口"
-base_url = "https://api.example.com"
+base_url = "https://api.example.com/v1"
 api_key = "your-relay-api-key"
 models = "relay-image=gpt-image-2"
 ```
@@ -182,10 +188,33 @@ negative_prompt_template = "3d render, oil painting, {negative_prompt}"
 | `google` | `base_url`、`api_key`、`models`、`aspect_ratio` |
 | `zhipu` | `api_key`、`models`、`quality`、`size`、`watermark_enabled`、`user_id` |
 | `aliyun` | `base_url`、`api_key`、`models`、`image_input_mode`、各模型族参数 |
-| `volcengine` | `api_key`、`unified_models`、`t2i_models`、`i2i_models`、`default_size` |
+| `volcengine` | `base_url`、`api_key`、模型列表、`default_size`、组图、输出格式、提示词优化、联网搜索、透明通道与图层拆分 |
 | `siliconflow` | `api_key`、`models`、`image_size` |
 | `novelai` | `base_url`、`api_key`、`models`、`custom_models`、`default_mode`、`default_artist_tags`、`positive_prompt`、`negative_prompt`、`width`、`height` |
 | `comfyui` | `base_url`、工作流路径和节点 ID |
+
+#### OpenAI 兼容接口
+
+`openai.base_url` 和每个 `openai.instances[].base_url` 都应填写完整 API 根路径，末尾包含接口版本，例如 OpenAI 使用 `https://api.openai.com/v1`，方舟 OpenAI 兼容接口使用 `https://ark.cn-beijing.volces.com/api/v3`。插件会直接在该地址后追加 `images/generations`、`images/edits` 或 `chat/completions`，不会把 `/v1` 重复拼到 `/api/v3` 后。为兼容旧配置，仅当地址没有版本路径时才自动补 `/v1`。
+
+#### 火山引擎方舟
+
+插件按[火山方舟图片生成 API](https://docs.volcengine.com/docs/ark/image-generation-api?lang=zh)的模型能力构造请求：
+
+- 普通方舟与 Agent Plan 共用同一组 `api_key`、`base_url`，不需要维护两套配置。`base_url` 可填写 API 根地址或完整 `images/generations` 地址：按量直接调用与 Token 额度包使用 `https://ark.cn-beijing.volces.com/api/v3`；Agent Plan 使用 `https://ark.cn-beijing.volces.com/api/plan/v3` 和对应的专属 API Key。插件会自动追加 `/images/generations`，自定义兼容网关也可使用。套餐是否包含目标图片模型仍以方舟控制台权益为准。
+- 火山平台只保留一个 `models` 图片模型列表。默认包含 Seedream 5.0 flash（`doubao-seedream-5-0-flash-260915`）、5.0 pro（`doubao-seedream-5-0-pro-260628`）和 5.0 lite（`doubao-seedream-5-0-260128`）；也支持 Seedream 4.5、4.0 与自定义 Endpoint ID。
+- Seedance 是视频生成模型，不在本插件支持范围内。插件不会把视频模型加入图片模型列表或向其发送图片生成请求。
+- 模型名含独立 `t2i` 标记时仅允许文生图，含独立 `i2i` 标记时仅允许图生图；不含这两个标记的模型默认同时支持两类任务。还可用通用配置中的 `image_edit_unsupported_models`、`text_to_image_unsupported_models` 显式限制任意模型能力。
+- 旧配置中的 `unified_models`、`t2i_models`、`i2i_models` 会按原顺序去重合并到 `models`，无需手动迁移。
+- 图生图统一使用官方 `image` 字段：单图传字符串，多图传数组，不会再尝试 `image_url`、`images`、`messages` 等非该接口字段。Seedream 5.0 pro/flash 最多接收 10 张参考图，5.0 lite/4.5/4.0 最多接收 14 张，超限会在请求前返回明确错误。
+- 尺寸支持分辨率档位或 `宽x高`。旧配置中的 `*`、`×` 会自动转换为小写 `x`。
+- `seed`、`guidance_scale` 仅向 Seedream/SeedEdit 3.0 发送；当前 4.0/5.0 模型会自动移除这些不支持参数。
+- `sequential_image_generation = "auto"` 与 `max_images` 用于 Seedream 5.0 lite、4.5、4.0 组图；输入参考图与输出图总数会限制在 15 张以内。
+- `output_format` 支持 `png`、`jpeg`，仅向 Seedream 5.0 系列发送；`response_format` 控制返回 URL 或 Base64，两者含义不同。
+- `optimize_prompt_mode` 支持 `standard`、`fast`；不支持 `fast` 的模型会明确记录警告并使用 `standard`。
+- `web_search_enabled` 仅对 Seedream 5.0 lite 生效。
+- `background` 和 `layer_decomposition` 仅对 Seedream 5.0 pro/flash 图生图生效。透明背景要求一张带透明通道的源图，且不能选择 JPEG 输出；图层拆分也只接受一张源图。
+- Endpoint ID 或兼容网关无法从名称判断模型版本时，插件保留显式配置和 `extra_parameters` 的透传能力，但始终移除官方 Body 不支持的 `n` 和插件无法消费的流式 `stream`。
 
 NovelAI 官方模型可直接填写以下模型 ID：
 
@@ -339,7 +368,7 @@ Qwen Image 与 Z-Image 使用同步接口。可灵和 Vidu 使用异步提交与
 
 #### 自动兼容与 New API 聊天绘图
 
-`auto` 对 RinkoAI NAI 使用专用适配；其他中转会读取免费的 `/v1/models`，按 New API 的 `supported_endpoint_types` 选择：`openai` 对应聊天接口，`image-generation` 对应 Images API。元数据缓存 5 分钟，同一实例内还会分别记住文生图与图生图成功使用的格式。普通 OpenAI 服务没有端点声明时，Gemini 图片模型优先聊天，GPT Image 和其他模型优先 Images API。
+`auto` 对 RinkoAI NAI 使用专用适配；其他中转会读取 API 根路径下免费的 `/models`，按 New API 的 `supported_endpoint_types` 选择：`openai` 对应聊天接口，`image-generation` 对应 Images API。元数据缓存 5 分钟，同一实例内还会分别记住文生图与图生图成功使用的格式。普通 OpenAI 服务没有端点声明时，Gemini 图片模型优先聊天，GPT Image 和其他模型优先 Images API。
 
 只有明确的端点不支持错误（如路由不存在、方法不允许）才会尝试另一种已允许的格式，单次最多尝试两种。鉴权、额度、审核、模型不存在、超时、成功响应中无图片或图片下载失败都会直接报错，适配器不会因此重发付费绘图请求。手动选择 `images_api` 或 `chat_completions` 时不会自动切换；人工配置的模型能力禁用名单继续优先生效。
 
