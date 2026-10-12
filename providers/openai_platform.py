@@ -410,7 +410,7 @@ class OpenaiImage:
         dimensions = self._detect_image_dimensions(image_bytes)
         if dimensions is None:
             return ""
-        if model.strip() == "gpt-image-2":
+        if model.strip().lower().startswith(("gpt-image-2", "chatgpt-image-latest")):
             return self._normalize_gpt_image_2_size(dimensions)
         return self._resolve_closest_official_size(dimensions)
 
@@ -443,7 +443,26 @@ class OpenaiImage:
         if self.moderation:
             payload["moderation"] = self.moderation
         payload.update(self.extra_parameters)
+        payload.update({"model": model, "prompt": prompt, "n": self._resolve_n(n)})
+        self._validate_image_parameters(payload, model)
         return payload
+
+    def _validate_image_parameters(self, payload: dict[str, Any], model: str) -> None:
+        """按 GPT Image 官方限制验证参数；保留其他兼容模型的扩展能力。"""
+
+        if payload.pop("stream", False):
+            raise ValueError("插件当前不支持流式图片响应，请移除 stream=true")
+        payload.pop("partial_images", None)
+        if not (self._is_gpt_image_model(model) or model.strip().lower() == "chatgpt-image-latest"):
+            return
+        # GPT Image 直接返回 Base64，response_format 是旧模型参数。
+        payload.pop("response_format", None)
+        if model.strip().lower().startswith("gpt-image-2"):
+            payload.pop("input_fidelity", None)
+        if payload.get("output_format", "png") == "png":
+            payload.pop("output_compression", None)
+        if payload.get("background") == "transparent" and payload.get("output_format") == "jpeg":
+            raise ValueError("OpenAI 透明背景必须使用 png 或 webp 输出格式")
 
     async def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         """发送 JSON POST 请求。"""
@@ -580,23 +599,15 @@ class OpenaiImage:
                         len(submitted_images),
                         len(image_bytes_list),
                     )
-                    form = aiohttp.FormData()
-                    form.add_field("model", model)
-                    form.add_field("prompt", prompt)
-                    form.add_field("n", str(self._resolve_n(n)))
+                    parameters = self._build_images_generation_payload(prompt, model, n)
                     if size:
-                        form.add_field("size", size)
-                    if self.quality:
-                        form.add_field("quality", self.quality)
-                    if self.response_format:
-                        form.add_field("response_format", self.response_format)
-                    if self.output_format:
-                        form.add_field("output_format", self.output_format)
-                    if self.background:
-                        form.add_field("background", self.background)
-                    for key, value in self.extra_parameters.items():
+                        parameters["size"] = size
+                    # 编辑与生成复用可选字段，包括 moderation；复合扩展值必须使用 JSON。
+                    form = aiohttp.FormData()
+                    for key, value in parameters.items():
                         if value is not None:
-                            form.add_field(str(key), str(value))
+                            serialized = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+                            form.add_field(str(key), serialized)
                     for image_bytes in submitted_images:
                         mime_type = self._detect_mime_type(image_bytes)
                         form.add_field(
@@ -636,7 +647,7 @@ class OpenaiImage:
                 continue
             image_base64 = item.get("b64_json")
             if isinstance(image_base64, str) and image_base64:
-                image_bytes_list.append(base64.b64decode(image_base64))
+                image_bytes_list.append(await asyncio.to_thread(base64.b64decode, image_base64))
                 continue
 
             image_url = item.get("url")
@@ -777,19 +788,19 @@ class OpenaiImage:
 
         image_base64 = item.get("b64_json") or item.get("image_base64") or item.get("base64")
         if isinstance(image_base64, str) and image_base64:
-            return base64.b64decode(image_base64)
+            return await asyncio.to_thread(base64.b64decode, image_base64)
 
         inline_data = item.get("inline_data") or item.get("inlineData")
         if isinstance(inline_data, dict):
             inline_base64 = inline_data.get("data")
             if isinstance(inline_base64, str) and inline_base64:
-                return base64.b64decode(inline_base64)
+                return await asyncio.to_thread(base64.b64decode, inline_base64)
 
         source = item.get("source")
         if isinstance(source, dict):
             source_base64 = source.get("data")
             if isinstance(source_base64, str) and source_base64:
-                return base64.b64decode(source_base64)
+                return await asyncio.to_thread(base64.b64decode, source_base64)
             source_url = source.get("url")
             if isinstance(source_url, str) and source_url:
                 return await self._extract_image_bytes_from_string(source_url)

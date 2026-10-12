@@ -3,13 +3,12 @@ from __future__ import annotations
 from typing import Any
 
 import aiohttp
+import asyncio
 import base64
 import time
 
-from ..core.image_utils import detect_image_dimensions, detect_mime_type
-from ..core.http_proxy import HttpProxySettings, read_response_bytes, read_response_json, read_response_text
-
-
+from ..core.image_utils import detect_mime_type
+from ..core.http_proxy import HttpProxySettings, read_response_bytes, read_response_json, read_response_text, sanitize_provider_text
 
 class SiliconFlowImage:
     """硅基流动图片生成接口封装。"""
@@ -23,12 +22,11 @@ class SiliconFlowImage:
         request_timeout_seconds: int = 20,
         image_size: str = "1024x1024",
         model_size_overrides: dict[str, str] | None = None,
-        batch_size: int = 1,
         seed: int = -1,
         num_inference_steps: int = 20,
         guidance_scale: float = 7.5,
         negative_prompt: str = "",
-        output_format: str = "png",
+        cfg: float = 0.0,
         extra_parameters: dict[str, Any] | None = None,
         proxy_settings: HttpProxySettings | None = None,
     ) -> None:
@@ -41,12 +39,11 @@ class SiliconFlowImage:
             for model, size in (model_size_overrides or {}).items()
             if str(model).strip() and str(size).strip()
         }
-        self.batch_size = max(int(batch_size), 1)
         self.seed = int(seed)
         self.num_inference_steps = int(num_inference_steps)
         self.guidance_scale = float(guidance_scale)
         self.negative_prompt = negative_prompt.strip()
-        self.output_format = output_format.strip()
+        self.cfg = float(cfg)
         self.extra_parameters = dict(extra_parameters or {})
         self.proxy_settings = proxy_settings or HttpProxySettings.disabled()
 
@@ -60,27 +57,22 @@ class SiliconFlowImage:
         return await self._extract_images(response)
 
     async def edit_images(self, prompt: str, model: str, image_bytes_list: list[bytes], n: int = 1) -> list[bytes]:
-        """调用硅基流动图生图接口。
-
-        硅基流动图生图接口仅接受单张源图片，传入多张时只使用第一张。
-        """
+        """使用官方 image/image2/image3 字段提交模型支持的所有源图。"""
 
         if not image_bytes_list:
             raise RuntimeError("没有可用于图生图的源图片")
-        if len(image_bytes_list) > 1:
-            self._log_warning(
-                "硅基流动图生图仅支持单张源图片，已忽略多余的 %s 张", len(image_bytes_list) - 1
-            )
-
-        image_bytes = image_bytes_list[0]
-        mime_type = self._detect_mime_type(image_bytes)
-        image_base64 = base64.b64encode(image_bytes).decode("utf-8")
-        response = await self._post_json_with_source_size_fallback(
-            prompt=prompt,
-            model=model,
-            n=n,
-            image_data_url=f"data:{mime_type};base64,{image_base64}",
-            source_image_bytes=image_bytes,
+        maximum = self.max_reference_images(model)
+        if len(image_bytes_list) > maximum:
+            raise ValueError(f"当前硅基流动模型最多支持 {maximum} 张源图片：{model}")
+        payload = self._build_payload(prompt=prompt, model=model, n=n)
+        for index, data in enumerate(image_bytes_list):
+            mime_type = detect_mime_type(data)
+            encoded = await asyncio.to_thread(base64.b64encode, data)
+            key = "image" if index == 0 else f"image{index + 1}"
+            payload[key] = f"data:{mime_type};base64,{encoded.decode('ascii')}"
+        response = await self._post_json(
+            url=f"{self._BASE_URL}/v1/images/generations",
+            payload=payload,
         )
         return await self._extract_images(response)
 
@@ -90,65 +82,19 @@ class SiliconFlowImage:
         return self.model_size_overrides.get(model.strip(), self.image_size)
 
     @staticmethod
-    def _detect_image_size(image_bytes: bytes) -> str:
-        """读取源图尺寸，硅基流动 image_size 使用 宽x高。"""
+    def max_reference_images(model: str) -> int:
+        """当前官方接口仅 Qwen Image Edit 2509 支持三张源图。"""
 
-        dimensions = detect_image_dimensions(image_bytes)
-        if dimensions is None:
-            return ""
-        width, height = dimensions
-        return f"{width}x{height}"
-
-    async def _post_json_with_source_size_fallback(
-        self,
-        *,
-        prompt: str,
-        model: str,
-        n: int,
-        image_data_url: str,
-        source_image_bytes: bytes,
-    ) -> dict[str, Any]:
-        """图生图优先使用源图尺寸，接口不支持时回退默认尺寸。"""
-
-        default_size = self._resolve_size(model)
-        source_size = self._detect_image_size(source_image_bytes)
-        size_candidates = [source_size, default_size] if source_size and source_size != default_size else [default_size]
-        attempt_errors: list[str] = []
-
-        for size_index, size in enumerate(size_candidates):
-            if size_index == 0:
-                self._log_info(
-                    "硅基流动图生图尺寸尝试: model=%s source_size=%s request_size=%s default_size=%s image_count=1",
-                    model,
-                    source_size,
-                    size,
-                    default_size,
-                )
-            if size_index > 0:
-                self._log_warning(
-                    "硅基流动图生图源图尺寸不可用，回退默认尺寸: model=%s source_size=%s fallback_size=%s",
-                    model,
-                    source_size,
-                    size,
-                )
-            payload = self._build_payload(prompt=prompt, model=model, n=n, image_size_override=size)
-            payload["image"] = image_data_url
-            try:
-                return await self._post_json(
-                    url=f"{self._BASE_URL}/v1/images/generations",
-                    payload=payload,
-                )
-            except Exception as exc:
-                attempt_errors.append(f"image_size={size or 'default'}: {exc}")
-        raise RuntimeError("硅基流动图生图请求失败: " + " | ".join(attempt_errors))
+        return 3 if model.strip().lower() == "qwen/qwen-image-edit-2509" else 1
 
     def _build_payload(self, prompt: str, model: str, n: int, image_size_override: str | None = None) -> dict[str, Any]:
         """构建硅基流动图片生成请求体。"""
 
+        if n != 1:
+            raise ValueError("硅基流动已移除 batch_size，每次请求只生成一张图片，请分别提交任务")
         payload: dict[str, Any] = {
             "model": model,
             "prompt": prompt,
-            "batch_size": min(max(int(n), 1), self.batch_size),
         }
         image_size = image_size_override if image_size_override is not None else self._resolve_size(model)
         if image_size:
@@ -157,13 +103,25 @@ class SiliconFlowImage:
             payload["seed"] = self.seed
         if self.num_inference_steps > 0:
             payload["num_inference_steps"] = self.num_inference_steps
-        if self.guidance_scale > 0:
+        normalized_model = model.strip().lower()
+        if self.guidance_scale > 0 and normalized_model == "kwai-kolors/kolors":
             payload["guidance_scale"] = self.guidance_scale
+        if self.cfg > 0 and normalized_model.startswith("qwen/qwen-image"):
+            payload["cfg"] = self.cfg
         if self.negative_prompt:
             payload["negative_prompt"] = self.negative_prompt
-        if self.output_format:
-            payload["output_format"] = self.output_format
         payload.update(self.extra_parameters)
+        payload.update({"model": model, "prompt": prompt})
+        # 已下线字段不能通过旧配置或扩展参数重新写回请求。
+        payload.pop("batch_size", None)
+        payload.pop("output_format", None)
+        payload.pop("n", None)
+        if normalized_model.startswith("qwen/qwen-image-edit"):
+            payload.pop("image_size", None)
+        if normalized_model != "kwai-kolors/kolors":
+            payload.pop("guidance_scale", None)
+        if not normalized_model.startswith("qwen/qwen-image"):
+            payload.pop("cfg", None)
         return payload
 
     def _build_headers(self) -> dict[str, str]:
@@ -196,7 +154,7 @@ class SiliconFlowImage:
             ) as response:
                 duration = time.time() - start_time
                 if response.status != 200:
-                    error_text = await read_response_text(response)
+                    error_text = sanitize_provider_text(await read_response_text(response), self.api_key)
                     self._log_error(
                         "硅基流动图片接口失败: status=%s duration=%.2fs url=%s response_preview=%s",
                         response.status,
@@ -217,7 +175,7 @@ class SiliconFlowImage:
 
         data = response.get("images") or response.get("data")
         if not isinstance(data, list):
-            response_preview = str(response)[:1200]
+            response_preview = sanitize_provider_text(response, self.api_key)
             self._log_error("硅基流动响应解析失败: 未找到 images/data 列表，response_preview=%s", response_preview)
             raise RuntimeError(f"硅基流动响应中未找到 images/data 字段，response_preview={response_preview}")
 
@@ -227,7 +185,7 @@ class SiliconFlowImage:
                 continue
             image_base64 = item.get("b64_json")
             if isinstance(image_base64, str) and image_base64:
-                image_bytes_list.append(base64.b64decode(image_base64))
+                image_bytes_list.append(await asyncio.to_thread(base64.b64decode, image_base64))
                 continue
 
             image_url = item.get("url") or item.get("image_url") or item.get("image")
@@ -262,10 +220,10 @@ class SiliconFlowImage:
         """记录警告日志。"""
 
         if self.logger is not None:
-            self.logger.warning(message, *args)
+            self.logger.warning(message, *(sanitize_provider_text(arg, self.api_key) if isinstance(arg, str) else arg for arg in args))
 
     def _log_error(self, message: str, *args: Any) -> None:
         """记录错误日志。"""
 
         if self.logger is not None:
-            self.logger.error(message, *args)
+            self.logger.error(message, *(sanitize_provider_text(arg, self.api_key) if isinstance(arg, str) else arg for arg in args))

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import urlsplit
 
 import aiohttp
 import asyncio
@@ -16,11 +16,13 @@ from ..core.http_proxy import (
     HttpProxySettings,
     read_response_bytes,
     read_response_text,
+    sanitize_provider_url,
 )
 from ..models.aliyun_models import (
     AliyunRequestOptions,
     build_aliyun_parameters,
     resolve_aliyun_model_profile,
+    supports_aliyun_negative_prompt,
     validate_aliyun_task,
 )
 
@@ -177,7 +179,8 @@ class AliyunImage:
             image_count,
             self.image_input_mode,
         )
-        image_values = self._build_image_values(
+        image_values = await asyncio.to_thread(
+            self._build_image_values,
             normalized_model,
             resolved_input_mode,
             image_bytes_list,
@@ -235,6 +238,8 @@ class AliyunImage:
         """构造统一消息请求体，模型参数由 models 层负责。"""
 
         profile = resolve_aliyun_model_profile(model)
+        if self.request_options.negative_prompt and not supports_aliyun_negative_prompt(model):
+            prompt += f"\nNegative prompt: {self.request_options.negative_prompt}"
         text_content = {"text": prompt}
         image_content = [{"image": image_value} for image_value in image_values]
         if profile.family in {"kling", "vidu"}:
@@ -423,7 +428,7 @@ class AliyunImage:
                 response_text = await read_response_text(response)
                 duration = time.monotonic() - started_at
                 try:
-                    response_json = json.loads(response_text)
+                    response_json = await asyncio.to_thread(json.loads, response_text)
                 except json.JSONDecodeError as exc:
                     self._log_error(
                         "阿里云图片接口返回非 JSON: method=%s status=%s duration=%.2fs "
@@ -527,18 +532,7 @@ class AliyunImage:
     def _sanitize_url(url: str) -> str:
         """日志与错误中只保留 URL 的协议、主机和路径。"""
 
-        parsed_url = urlsplit(str(url))
-        if parsed_url.scheme not in {"http", "https"}:
-            return "[INVALID_URL]"
-        return urlunsplit(
-            (
-                parsed_url.scheme,
-                parsed_url.netloc,
-                parsed_url.path,
-                "",
-                "",
-            )
-        )
+        return sanitize_provider_url(str(url))
 
     async def _extract_images(
         self,

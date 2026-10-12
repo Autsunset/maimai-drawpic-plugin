@@ -2,6 +2,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, ClassVar
 
+import asyncio
 import re
 
 from maibot_sdk import CONFIG_RELOAD_SCOPE_SELF, Command, HookHandler, MaiBotPlugin, ON_BOT_CONFIG_RELOAD, ON_MODEL_CONFIG_RELOAD, Tool
@@ -1236,6 +1237,7 @@ class DrawpicPlugin(MaiBotPlugin):
                 "或切换到支持当前任务的模型"
             )
 
+        self._require_router().validate_source_image_count(check_model, len(normalized_source_images))
         await draw_service.review_prompt_or_raise(prompt)
         quota_allowed, quota_message, quota_key = self._reserve_draw_quota(
             resolved_user_id,
@@ -1938,7 +1940,7 @@ class DrawpicPlugin(MaiBotPlugin):
             return False, "当前模型不支持图生图", 1
 
         try:
-            router.validate_forced_command_task(resolved_model, "edit_image")
+            await asyncio.to_thread(router.validate_forced_command_task, resolved_model, "edit_image")
         except (OSError, ValueError) as exc:
             self.ctx.logger.warning("/绘图 图生图命令配置校验失败: model=%s error=%s", resolved_model, exc)
             await self._send_command_reply(
@@ -2666,7 +2668,9 @@ class DrawpicPlugin(MaiBotPlugin):
 
             try:
                 resolved_model = self._require_draw_service().resolve_model_name(session_preference["model"])
-                self._require_router().validate_forced_command_task(resolved_model, "draw")
+                await asyncio.to_thread(
+                    self._require_router().validate_forced_command_task, resolved_model, "draw"
+                )
             except (OSError, ValueError) as exc:
                 self.ctx.logger.warning("/绘图 文生图命令配置校验失败: error=%s", exc)
                 await self._send_command_reply(

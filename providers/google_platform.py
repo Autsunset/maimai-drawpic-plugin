@@ -1,14 +1,14 @@
-from typing import Any
+from typing import Any, Dict, List
 
 from google import genai
-from google.genai import errors, types
+from google.genai import types
 
-from ..core.image_utils import detect_image_dimensions, detect_mime_type
-from ..core.http_proxy import HttpProxySettings
+from ..core.http_proxy import HttpProxySettings, sanitize_provider_text
+from ..core.image_utils import detect_mime_type
 
 
 class GoogleImage:
-    """Google 图片平台封装。"""
+    """通过 Gemini generateContent 生成和编辑图片。"""
 
     def __init__(
         self,
@@ -16,370 +16,131 @@ class GoogleImage:
         base_url: str = "",
         logger: Any | None = None,
         request_timeout_seconds: int = 20,
-        number_of_images: int = 1,
         aspect_ratio: str = "",
-        output_mime_type: str = "image/png",
-        person_generation: str = "",
+        image_size: str = "",
         negative_prompt: str = "",
         seed: int = -1,
-        guidance_scale: float = 0.0,
-        add_watermark: bool = False,
-        extra_parameters: dict[str, Any] | None = None,
+        extra_parameters: Dict[str, Any] | None = None,
         proxy_settings: HttpProxySettings | None = None,
     ) -> None:
-        client_kwargs: dict[str, Any] = {"api_key": api_key}
-        http_options: dict[str, Any] = {"timeout": request_timeout_seconds * 1000}
-        normalized_base_url = base_url.strip()
-        self.base_url = normalized_base_url or "https://generativelanguage.googleapis.com"
+        self.base_url = base_url.strip().rstrip("/") or "https://generativelanguage.googleapis.com"
+        self.api_key = api_key
         self.logger = logger
-        self.proxy_settings = proxy_settings or HttpProxySettings.disabled()
-        if normalized_base_url and normalized_base_url != "https://api.openai.com/v1":
-            http_options["base_url"] = normalized_base_url
-        proxy_client_args = self.proxy_settings.google_client_args()
-        if proxy_client_args:
-            http_options["client_args"] = proxy_client_args
-        client_kwargs["http_options"] = http_options
-        self.client = genai.Client(**client_kwargs)
-        self.number_of_images = max(int(number_of_images), 1)
+        proxy = proxy_settings or HttpProxySettings.disabled()
+        self._client_kwargs = {
+            "api_key": api_key,
+            "http_options": {
+                "timeout": request_timeout_seconds * 1000,
+                "base_url": self.base_url,
+                "client_args": proxy.google_client_args(),
+            },
+        }
         self.aspect_ratio = aspect_ratio.strip()
-        self.output_mime_type = output_mime_type.strip()
-        self.person_generation = person_generation.strip()
+        self.image_size = image_size.strip()
         self.negative_prompt = negative_prompt.strip()
         self.seed = int(seed)
-        self.guidance_scale = float(guidance_scale)
-        self.add_watermark = add_watermark
         self.extra_parameters = dict(extra_parameters or {})
 
     @staticmethod
     def _uses_generate_content_api(model: str) -> bool:
-        """判断当前模型是否应走 Gemini generateContent 图片接口。"""
+        """Gemini 图片模型使用 generateContent，Imagen 不属于此协议。"""
 
-        normalized_model = model.strip().lower()
-        return "image-preview" in normalized_model or "flash-image" in normalized_model
-
-    @classmethod
-    def supports_negative_prompt(cls, model: str) -> bool:
-        """判断模型是否支持独立 negative_prompt 字段。"""
-
-        return not cls._uses_generate_content_api(model)
+        return not model.strip().lower().startswith("imagen-")
 
     @staticmethod
-    def _detect_mime_type(image_bytes: bytes) -> str:
-        """尽量根据图片内容推断 MIME 类型。"""
+    def supports_negative_prompt(model: str) -> bool:
+        """Gemini 没有独立反向提示词字段，调用层应合并到普通提示词。"""
 
-        return detect_mime_type(image_bytes)
-
-    @staticmethod
-    def _detect_image_dimensions(image_bytes: bytes) -> tuple[int, int] | None:
-        """读取源图尺寸，用于选择最接近的输出比例。"""
-
-        return detect_image_dimensions(image_bytes)
+        del model
+        return False
 
     @staticmethod
-    def _resolve_closest_aspect_ratio(dimensions: tuple[int, int]) -> str:
-        """按源图宽高比选择 Google 支持的标准比例。"""
+    def max_reference_images(model: str) -> int:
+        """按官方模型系列限制参考图片数量。"""
 
-        width, height = dimensions
-        ratio = width / height
-        candidates = (
-            "1:1",
-            "2:3",
-            "3:2",
-            "3:4",
-            "4:3",
-            "4:5",
-            "5:4",
-            "9:16",
-            "16:9",
-            "21:9",
-        )
+        return 3 if model.strip().lower().startswith("gemini-2.5-") else 14
 
-        def ratio_distance(aspect_ratio: str) -> float:
-            ratio_width, ratio_height = aspect_ratio.split(":", maxsplit=1)
-            return abs((int(ratio_width) / int(ratio_height)) - ratio)
+    def _build_generate_content_config(self) -> types.GenerateContentConfig:
+        """分开构造生成配置与图片配置，不静默丢弃不支持的扩展参数。"""
 
-        return min(candidates, key=ratio_distance)
-
-    @staticmethod
-    def _extract_images_from_generate_content_response(response: Any) -> list[bytes]:
-        """从 generate_content 响应中提取图片字节。"""
-
-        image_bytes_list: list[bytes] = []
-        candidates = getattr(response, "candidates", None) or []
-        for candidate in candidates:
-            content = getattr(candidate, "content", None)
-            parts = getattr(content, "parts", None) or []
-            for part in parts:
-                inline_data = getattr(part, "inline_data", None)
-                if inline_data is None:
-                    continue
-                data = getattr(inline_data, "data", None)
-                if data:
-                    image_bytes_list.append(data)
-        return image_bytes_list
-
-    @staticmethod
-    def _filter_config_kwargs(config_class: type[Any], kwargs: dict[str, Any]) -> dict[str, Any]:
-        """只保留当前 google-genai 版本支持的配置字段。"""
-
-        fields = getattr(config_class, "model_fields", None)
-        if isinstance(fields, dict):
-            return {key: value for key, value in kwargs.items() if key in fields and value is not None}
-        return {key: value for key, value in kwargs.items() if value is not None}
-
-    def _build_image_config_kwargs(self, n: int, aspect_ratio_override: str | None = None) -> dict[str, Any]:
-        """构建 Google 图片生成/编辑配置参数。"""
-
-        kwargs: dict[str, Any] = {
-            "number_of_images": min(max(int(n), 1), self.number_of_images),
-        }
-        if self.output_mime_type:
-            kwargs["output_mime_type"] = self.output_mime_type
-        aspect_ratio = aspect_ratio_override if aspect_ratio_override is not None else self.aspect_ratio
-        if aspect_ratio:
-            kwargs["aspect_ratio"] = aspect_ratio
-        if self.person_generation:
-            kwargs["person_generation"] = self.person_generation
-        if self.negative_prompt:
-            kwargs["negative_prompt"] = self.negative_prompt
+        kwargs = dict(self.extra_parameters)
+        image_kwargs = kwargs.pop("image_config", {})
+        if not isinstance(image_kwargs, dict):
+            raise ValueError("Google extra_parameters.image_config 必须是 JSON 对象")
+        image_kwargs = dict(image_kwargs)
+        for key, value in (("aspect_ratio", self.aspect_ratio), ("image_size", self.image_size)):
+            if value:
+                image_kwargs.setdefault(key, value)
+            if key in kwargs:
+                image_kwargs[key] = kwargs.pop(key)
+        unsupported_image_keys = set(image_kwargs) - {"aspect_ratio", "image_size"}
+        if unsupported_image_keys:
+            raise ValueError(f"Gemini API 不支持这些图片配置：{', '.join(sorted(unsupported_image_keys))}")
+        unknown_keys = set(kwargs) - set(types.GenerateContentConfig.model_fields)
+        if unknown_keys:
+            raise ValueError(f"Google 生成配置不支持这些参数：{', '.join(sorted(unknown_keys))}")
+        if image_kwargs:
+            kwargs["image_config"] = types.ImageConfig(**image_kwargs)
         if self.seed >= 0:
-            kwargs["seed"] = self.seed
-        if self.guidance_scale > 0:
-            kwargs["guidance_scale"] = self.guidance_scale
-        kwargs["add_watermark"] = self.add_watermark
-        kwargs.update(self.extra_parameters)
-        return kwargs
+            kwargs.setdefault("seed", self.seed)
+        kwargs["response_modalities"] = ["TEXT", "IMAGE"]
+        return types.GenerateContentConfig(**kwargs)
 
-    def _build_generate_content_config(self, aspect_ratio_override: str | None = None) -> types.GenerateContentConfig:
-        """构建 Gemini generateContent 图片配置。"""
+    @staticmethod
+    def _extract_images_from_generate_content_response(response: types.GenerateContentResponse) -> List[bytes]:
+        """只提取最终图片，不发送模型内部的思考图片。"""
 
-        config_kwargs: dict[str, Any] = {
-            "response_modalities": ["TEXT", "IMAGE"],
-        }
-        image_config_class = getattr(types, "ImageConfig", None)
-        if image_config_class is not None:
-            image_config_kwargs = {
-                key: value
-                for key, value in self._build_image_config_kwargs(
-                    1,
-                    aspect_ratio_override=aspect_ratio_override,
-                ).items()
-                if key not in {"number_of_images", "add_watermark"}
-            }
-            filtered_image_config_kwargs = self._filter_config_kwargs(image_config_class, image_config_kwargs)
-            if filtered_image_config_kwargs:
-                config_kwargs["image_config"] = image_config_class(**filtered_image_config_kwargs)
-        return types.GenerateContentConfig(
-            **self._filter_config_kwargs(types.GenerateContentConfig, config_kwargs)
-        )
+        images: List[bytes] = []
+        for candidate in response.candidates or []:
+            if candidate.content is None:
+                continue
+            for part in candidate.content.parts or []:
+                if part.thought or part.inline_data is None:
+                    continue
+                blob = part.inline_data
+                if blob.data and blob.mime_type and blob.mime_type.startswith("image/"):
+                    images.append(blob.data)
+        if not images:
+            feedback = response.prompt_feedback
+            reason = str(feedback.block_reason) if feedback and feedback.block_reason else "未返回图片"
+            finish_reasons = [str(candidate.finish_reason) for candidate in response.candidates or []]
+            raise RuntimeError(f"Google 图片请求未完成：{reason}；finish_reason={','.join(finish_reasons)}")
+        return images
 
-    def _wrap_google_error(self, exc: Exception, model: str, operation: str) -> RuntimeError:
-        """将 Google SDK 异常整理为更容易排查的中文错误。"""
+    def _generate(self, prompt: str, model: str, images: List[bytes], n: int) -> List[bytes]:
+        """由调用层线程池执行同步 SDK 请求，每次请求负责关闭自己的客户端。"""
 
-        if isinstance(exc, errors.ServerError):
-            self._log_error(
-                "Google API错误: operation=%s model=%s base_url=%s status=%s error=%s",
-                operation,
-                model,
-                self.base_url,
-                exc.code,
-                exc,
-            )
-            return RuntimeError(
-                f"Google 图片服务暂时不可用（{operation}，模型: {model}，网关: {self.base_url}，"
-                f"状态码: {exc.code}）。这通常是上游网关或模型服务异常，请稍后重试或切换模型。"
-            )
-        if isinstance(exc, errors.ClientError):
-            self._log_error(
-                "Google API错误: operation=%s model=%s base_url=%s status=%s error=%s",
-                operation,
-                model,
-                self.base_url,
-                exc.code,
-                exc,
-            )
-            return RuntimeError(
-                f"Google 图片请求失败（{operation}，模型: {model}，网关: {self.base_url}，"
-                f"状态码: {exc.code}）：{exc}"
-            )
-        self._log_error(
-            "Google API错误: operation=%s model=%s base_url=%s error=%s",
-            operation,
-            model,
-            self.base_url,
-            exc,
-        )
-        return RuntimeError(
-            f"Google 图片请求失败（{operation}，模型: {model}，网关: {self.base_url}）：{exc}"
-        )
-
-    def _log_error(self, message: str, *args: Any) -> None:
-        """记录错误日志。"""
-
-        if self.logger is not None:
-            self.logger.error(message, *args)
-
-    def _log_info(self, message: str, *args: Any) -> None:
-        """记录信息日志。"""
-
-        if self.logger is not None:
-            self.logger.info(message, *args)
-
-    def _log_warning(self, message: str, *args: Any) -> None:
-        """记录警告日志。"""
-
-        if self.logger is not None:
-            self.logger.warning(message, *args)
-
-    def _generate_images_with_generate_content(self, prompt: str, model: str) -> list[bytes]:
-        """使用 Gemini generateContent 接口执行文生图。"""
+        if not self._uses_generate_content_api(model):
+            raise ValueError("Google Gemini API 已下线 Imagen，请选择 Gemini 图片模型")
+        if n != 1:
+            raise ValueError("Gemini 图片接口不支持 number_of_images，请分别提交绘图任务")
+        limit = self.max_reference_images(model)
+        if len(images) > limit:
+            raise ValueError(f"当前 Google 模型最多支持 {limit} 张参考图片")
+        contents: List[Any] = [types.Part.from_bytes(data=data, mime_type=detect_mime_type(data)) for data in images]
+        full_prompt = prompt
+        if self.negative_prompt:
+            full_prompt += f"\nNegative prompt: {self.negative_prompt}"
+        contents.append(full_prompt)
+        # 每个后台任务使用独立 SDK 客户端，避免取消或配置重载影响其他任务。
+        config = self._build_generate_content_config()
+        if model.strip().lower().startswith("gemini-2.5-") and config.image_config and config.image_config.image_size:
+            raise ValueError("Gemini 2.5 图片模型不支持分辨率档位，请将 image_size 留空")
         try:
-            response = self.client.models.generate_content(
-                model=model,
-                contents=prompt,
-                config=self._build_generate_content_config(),
-            )
+            with genai.Client(**self._client_kwargs) as client:
+                response = client.models.generate_content(model=model, contents=contents, config=config)
         except Exception as exc:
-            raise self._wrap_google_error(exc, model, "文生图") from exc
+            raise RuntimeError(f"Google 图片请求失败：{sanitize_provider_text(exc, self.api_key)}") from None
         return self._extract_images_from_generate_content_response(response)
 
-    def _edit_images_with_generate_content(
-        self,
-        prompt: str,
-        model: str,
-        image_bytes_list: list[bytes],
-    ) -> list[bytes]:
-        """使用 Gemini generateContent 接口执行图生图，支持多张源图片。"""
-        contents: list[Any] = [
-            types.Part.from_bytes(
-                data=image_bytes,
-                mime_type=self._detect_mime_type(image_bytes),
-            )
-            for image_bytes in image_bytes_list
-        ]
-        contents.append(prompt)
-        try:
-            self._log_info(
-                "Google generateContent 图生图尺寸策略: model=%s image_count=%s aspect_ratio=%s",
-                model,
-                len(image_bytes_list),
-                self.aspect_ratio or "默认跟随输入图",
-            )
-            response = self.client.models.generate_content(
-                model=model,
-                contents=contents,
-                config=self._build_generate_content_config(),
-            )
-        except Exception as exc:
-            raise self._wrap_google_error(exc, model, "图生图") from exc
-        return self._extract_images_from_generate_content_response(response)
+    def generate_images(self, prompt: str, model: str, n: int = 1) -> List[bytes]:
+        """调用 Gemini 文生图接口。"""
 
-    def generate_images(self, prompt: str, model: str, n: int = 1) -> list[bytes]:
-        """调用 Google 文生图接口。"""
+        return self._generate(prompt, model, [], n)
 
-        if self._uses_generate_content_api(model):
-            image_bytes_list = self._generate_images_with_generate_content(prompt, model)
-            if not image_bytes_list:
-                raise RuntimeError(f"Google generateContent 文生图未返回图片：model={model}")
-            return image_bytes_list
-
-        try:
-            response = self.client.models.generate_images(
-                model=model,
-                prompt=prompt,
-                config=types.GenerateImagesConfig(
-                    **self._filter_config_kwargs(
-                        types.GenerateImagesConfig,
-                        self._build_image_config_kwargs(n),
-                    )
-                ),
-            )
-        except Exception as exc:
-            raise self._wrap_google_error(exc, model, "文生图") from exc
-
-        image_bytes_list: list[bytes] = []
-        for generated_image in response.generated_images or []:
-            image = getattr(generated_image, "image", None)
-            image_bytes = getattr(image, "image_bytes", None)
-            if image_bytes:
-                image_bytes_list.append(image_bytes)
-        if not image_bytes_list:
-            raise RuntimeError(f"Google 文生图响应中没有可用图片数据：model={model}")
-        return image_bytes_list
-
-    def edit_images(self, prompt: str, model: str, image_bytes_list: list[bytes], n: int = 1) -> list[bytes]:
-        """调用 Google 图生图接口，支持一张或多张源图片。"""
+    def edit_images(self, prompt: str, model: str, image_bytes_list: List[bytes], n: int = 1) -> List[bytes]:
+        """调用 Gemini 图生图接口，保留所有有效参考图。"""
 
         if not image_bytes_list:
-            raise RuntimeError("没有可用于图生图的源图片")
-
-        if self._uses_generate_content_api(model):
-            generated_bytes_list = self._edit_images_with_generate_content(prompt, model, image_bytes_list)
-            if not generated_bytes_list:
-                raise RuntimeError(f"Google generateContent 图生图未返回图片：model={model}")
-            return generated_bytes_list
-
-        reference_images = [
-            types.RawReferenceImage(
-                reference_id=index,
-                reference_image=types.Image(
-                    image_bytes=image_bytes,
-                    mime_type=self._detect_mime_type(image_bytes),
-                ),
-            )
-            for index, image_bytes in enumerate(image_bytes_list, start=1)
-        ]
-        dimensions = self._detect_image_dimensions(image_bytes_list[0])
-        source_aspect_ratio = self._resolve_closest_aspect_ratio(dimensions) if dimensions is not None else ""
-        aspect_ratio_candidates = (
-            [source_aspect_ratio, self.aspect_ratio]
-            if source_aspect_ratio and source_aspect_ratio != self.aspect_ratio
-            else [self.aspect_ratio]
-        )
-        attempt_errors: list[str] = []
-        response = None
-        for aspect_index, aspect_ratio in enumerate(aspect_ratio_candidates):
-            if aspect_index == 0:
-                self._log_info(
-                    "Google edit_image 图生图比例尝试: model=%s source_dimensions=%s request_aspect_ratio=%s default_aspect_ratio=%s image_count=%s",
-                    model,
-                    f"{dimensions[0]}x{dimensions[1]}" if dimensions is not None else "",
-                    aspect_ratio,
-                    self.aspect_ratio,
-                    len(image_bytes_list),
-                )
-            else:
-                self._log_warning(
-                    "Google edit_image 图生图源图比例不可用，回退默认比例: model=%s source_aspect_ratio=%s fallback_aspect_ratio=%s",
-                    model,
-                    source_aspect_ratio,
-                    aspect_ratio,
-                )
-            try:
-                response = self.client.models.edit_image(
-                    model=model,
-                    prompt=prompt,
-                    reference_images=reference_images,
-                    config=types.EditImageConfig(
-                        **self._filter_config_kwargs(
-                            types.EditImageConfig,
-                            self._build_image_config_kwargs(n, aspect_ratio_override=aspect_ratio),
-                        )
-                    ),
-                )
-                break
-            except Exception as exc:
-                attempt_errors.append(f"aspect_ratio={aspect_ratio or 'default'}: {exc}")
-
-        if response is None:
-            raise self._wrap_google_error(RuntimeError(" | ".join(attempt_errors)), model, "图生图")
-
-        image_bytes_list: list[bytes] = []
-        for generated_image in response.generated_images or []:
-            image = getattr(generated_image, "image", None)
-            generated_bytes = getattr(image, "image_bytes", None)
-            if generated_bytes:
-                image_bytes_list.append(generated_bytes)
-        if not image_bytes_list:
-            raise RuntimeError(f"Google 图生图响应中没有可用图片数据：model={model}")
-        return image_bytes_list
+            raise ValueError("没有可用于图生图的源图片")
+        return self._generate(prompt, model, image_bytes_list, n)

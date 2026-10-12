@@ -91,6 +91,8 @@ def resolve_aliyun_model_profile(model: str) -> AliyunModelProfile:
     normalized_model = model.strip().lower()
     base64_or_url = frozenset({"base64", "url"})
 
+    if normalized_model.startswith("qwen-image-2.1"):
+        return _profile(model, "qwen", True, True, 10, 6, False, base64_or_url)
     if normalized_model.startswith(("qwen-image-3.0", "qwen-image-2.0")):
         return _profile(model, "qwen", True, True, 3, 6, False, base64_or_url)
     if normalized_model.startswith("qwen-image-edit"):
@@ -117,6 +119,17 @@ def resolve_aliyun_model_profile(model: str) -> AliyunModelProfile:
     if normalized_model.startswith("vidu/"):
         return _profile(model, "vidu", True, True, 14, 1, True, frozenset({"url"}))
     return _profile(model, "legacy", True, True, 8, 6, False, frozenset({"base64"}))
+
+
+def supports_aliyun_negative_prompt(model: str) -> bool:
+    """反向字段仅用于声明支持它的模型，不向可灵/Vidu/Z-Image 混传。"""
+
+    profile = resolve_aliyun_model_profile(model)
+    if profile.family == "legacy":
+        return True
+    if profile.family != "qwen":
+        return False
+    return not model.strip().lower().startswith(("qwen-image-2.0", "qwen-image-2.1"))
 
 
 def resolve_aliyun_image_input_mode(
@@ -195,8 +208,9 @@ def _build_qwen_parameters(
     parameters: dict[str, Any] = {
         "n": _validated_count(n, min(options.max_images, profile.max_output_images)),
         "watermark": options.watermark,
-        "negative_prompt": options.negative_prompt,
     }
+    if options.negative_prompt and supports_aliyun_negative_prompt(model):
+        parameters["negative_prompt"] = options.negative_prompt
     if model.lower() != "qwen-image-edit":
         parameters["prompt_extend"] = options.prompt_extend
         if model.lower().startswith("qwen-image-3.0"):
@@ -205,6 +219,8 @@ def _build_qwen_parameters(
         parameters["size"] = _resolved_size(model, options)
     parameters["seed"] = options.seed
     parameters.update(options.qwen_extra_parameters)
+    if not supports_aliyun_negative_prompt(model):
+        parameters.pop("negative_prompt", None)
     return parameters
 
 

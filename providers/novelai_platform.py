@@ -3,6 +3,7 @@ from __future__ import annotations
 from io import BytesIO
 from typing import Any
 
+import asyncio
 import base64
 import json
 import random
@@ -13,16 +14,16 @@ import zipfile
 import aiohttp
 
 from ..core.image_utils import MAX_IMAGE_BYTES, detect_image_dimensions
-from ..core.http_proxy import MAX_PROVIDER_RESPONSE_BYTES, HttpProxySettings, read_response_bytes
+from ..core.http_proxy import MAX_PROVIDER_RESPONSE_BYTES, HttpProxySettings, read_response_bytes, sanitize_provider_text
 
 
 _QUALITY_SUFFIX_BY_MODEL = {
     "nai-diffusion-5-full": "very aesthetic, masterpiece, no text",
     "nai-diffusion-5-curated": "very aesthetic, masterpiece, no text",
-    "nai-diffusion-4-5-full": "very aesthetic, masterpiece, no text",
-    "nai-diffusion-4-5-curated": "very aesthetic, masterpiece, no text, -0.8::feet::, rating:general",
+    "nai-diffusion-4-5-full": "location, very aesthetic, masterpiece, no text",
+    "nai-diffusion-4-5-curated": "location, masterpiece, no text, -0.8::feet::, rating:general",
     "nai-diffusion-4-full": "no text, best quality, very aesthetic, absurdres",
-    "nai-diffusion-4-curated-preview": "rating:general, best quality, very aesthetic, absurdres",
+    "nai-diffusion-4-curated-preview": "rating:general, amazing quality, very aesthetic, absurdres",
     "nai-diffusion-3": "best quality, amazing quality, very aesthetic, absurdres",
     "nai-diffusion-furry-3": "{best quality}, {amazing quality}",
 }
@@ -112,17 +113,12 @@ class NovelAIImage:
         return await self._extract_images(content, content_type)
 
     async def edit_images(self, prompt: str, model: str, image_bytes_list: list[bytes], n: int = 1) -> list[bytes]:
-        """调用 NovelAI / NovelAPI 图生图接口。
-
-        NovelAI img2img 接口仅接受单张源图片，传入多张时只使用第一张。
-        """
+        """调用 NovelAI / NovelAPI 图生图接口，仅接受一张源图片。"""
 
         if not image_bytes_list:
             raise RuntimeError("没有可用于图生图的源图片")
         if len(image_bytes_list) > 1:
-            self._log_warning(
-                "NovelAI 图生图仅支持单张源图片，已忽略多余的 %s 张", len(image_bytes_list) - 1
-            )
+            raise ValueError("NovelAI 图生图仅支持一张源图片，请选择一张图片后重试")
 
         image_bytes = image_bytes_list[0]
         content, content_type = await self._post_img2img_with_source_size_fallback(
@@ -369,12 +365,15 @@ class NovelAIImage:
 
         normalized_size = size.replace("*", "x").lower()
         if "x" not in normalized_size:
-            return max(self.width, 1), max(self.height, 1)
+            raise ValueError(f"NovelAI 模型尺寸必须为 宽x高：{size}")
         width_text, height_text = normalized_size.split("x", maxsplit=1)
         try:
-            return max(int(width_text.strip()), 1), max(int(height_text.strip()), 1)
-        except ValueError:
-            return max(self.width, 1), max(self.height, 1)
+            width, height = int(width_text.strip()), int(height_text.strip())
+        except ValueError as exc:
+            raise ValueError(f"NovelAI 模型尺寸无效：{size}") from exc
+        if width <= 0 or height <= 0:
+            raise ValueError(f"NovelAI 模型尺寸必须为正整数：{size}")
+        return width, height
 
     @staticmethod
     def _detect_image_size(image_bytes: bytes) -> tuple[int, int] | None:
@@ -390,58 +389,20 @@ class NovelAIImage:
         image_bytes: bytes,
         n: int,
     ) -> tuple[bytes, str]:
-        """图生图优先使用源图尺寸，接口不支持时回退默认尺寸。"""
+        """使用合法源图尺寸或配置尺寸提交一次请求，不因上游错误自动重绘。"""
 
         default_size = self._resolve_size(model)
-        source_size = self._detect_image_size(image_bytes)
-        size_candidates: list[tuple[int, int]] = []
-        if source_size is not None and source_size != default_size:
-            size_candidates.append(source_size)
-        size_candidates.append(default_size)
-        attempt_errors: list[str] = []
-
-        for size_index, (width, height) in enumerate(size_candidates):
-            if size_index == 0:
-                self._log_info(
-                    "NovelAI 图生图尺寸尝试: model=%s source_size=%s request_size=%sx%s default_size=%sx%s image_count=1",
-                    model,
-                    f"{source_size[0]}x{source_size[1]}" if source_size is not None else "",
-                    width,
-                    height,
-                    default_size[0],
-                    default_size[1],
-                )
-            if size_index > 0 and source_size is not None:
-                self._log_warning(
-                    "NovelAI 图生图源图尺寸不可用，回退默认尺寸: model=%s source_size=%sx%s fallback_size=%sx%s",
-                    model,
-                    source_size[0],
-                    source_size[1],
-                    width,
-                    height,
-                )
-            payload = self._build_payload(
-                prompt=prompt,
-                model=model,
-                action="img2img",
-                n=n,
-                size_override=(width, height),
-            )
-            payload["parameters"].update(
-                {
-                    "image": base64.b64encode(image_bytes).decode("utf-8"),
-                    "strength": self.img2img_strength,
-                    "noise": self.img2img_noise,
-                }
-            )
-            try:
-                return await self._post_generation(
-                    url=f"{self.base_url}/ai/generate-image",
-                    payload=payload,
-                )
-            except Exception as exc:
-                attempt_errors.append(f"size={width}x{height}: {exc}")
-        raise RuntimeError("NovelAI 图生图请求失败: " + " | ".join(attempt_errors))
+        source_size = await asyncio.to_thread(self._detect_image_size, image_bytes)
+        # 官方尺寸要求边长为 64 的倍数；不合法的源图尺寸不向上游试错。
+        size = source_size if source_size and all(edge % 64 == 0 for edge in source_size) else default_size
+        payload = self._build_payload(prompt=prompt, model=model, action="img2img", n=n, size_override=size)
+        encoded = await asyncio.to_thread(base64.b64encode, image_bytes)
+        payload["parameters"].update({
+            "image": encoded.decode("ascii"),
+            "strength": self.img2img_strength,
+            "noise": self.img2img_noise,
+        })
+        return await self._post_generation(url=f"{self.base_url}/ai/generate-image", payload=payload)
 
     def _resolve_seed(self) -> int:
         """解析 NovelAI seed；负数表示每次随机。"""
@@ -477,7 +438,7 @@ class NovelAIImage:
                 content = await read_response_bytes(response)
                 content_type = response.headers.get("Content-Type", "")
                 if response.status not in {200, 201}:
-                    error_preview = content[:1200].decode("utf-8", errors="replace")
+                    error_preview = sanitize_provider_text(content[:1200].decode("utf-8", errors="replace"), self.api_key)
                     self._log_error(
                         "NovelAI 图片接口失败: status=%s duration=%.2fs url=%s response_preview=%s",
                         response.status,
@@ -497,18 +458,18 @@ class NovelAIImage:
         normalized_content_type = content_type.lower()
         if "application/json" in normalized_content_type:
             try:
-                response = json.loads(content.decode("utf-8"))
+                response = await asyncio.to_thread(json.loads, content)
             except Exception as exc:
                 raise RuntimeError(f"NovelAI JSON 响应解析失败：{exc}") from exc
             return await self._extract_images_from_json(response)
 
         if zipfile.is_zipfile(BytesIO(content)):
-            return self._extract_images_from_zip(content)
+            return await asyncio.to_thread(self._extract_images_from_zip, content)
 
         if normalized_content_type.startswith("image/"):
             return [content]
 
-        response_preview = content[:1200].decode("utf-8", errors="replace")
+        response_preview = sanitize_provider_text(content[:1200].decode("utf-8", errors="replace"), self.api_key)
         raise RuntimeError(f"NovelAI 响应不是可解析的图片、zip 或 JSON，response_preview={response_preview}")
 
     def _extract_images_from_zip(self, content: bytes) -> list[bytes]:
@@ -557,7 +518,7 @@ class NovelAIImage:
                         image_bytes_list.append(extracted)
 
         if not image_bytes_list:
-            response_preview = str(response)[:1200]
+            response_preview = sanitize_provider_text(response, self.api_key)
             raise RuntimeError(f"NovelAPI JSON 响应中没有可用图片数据，response_preview={response_preview}")
         return image_bytes_list
 
@@ -583,11 +544,11 @@ class NovelAIImage:
 
         if value.startswith("data:image/") and ";base64," in value:
             _prefix, image_base64 = value.split(";base64,", maxsplit=1)
-            return base64.b64decode(image_base64)
+            return await asyncio.to_thread(base64.b64decode, image_base64)
         if value.startswith("http://") or value.startswith("https://"):
             return await self._download_image(value)
         try:
-            return base64.b64decode(value)
+            return await asyncio.to_thread(base64.b64decode, value)
         except Exception:
             return None
 
@@ -614,10 +575,10 @@ class NovelAIImage:
         """记录警告日志。"""
 
         if self.logger is not None:
-            self.logger.warning(message, *args)
+            self.logger.warning(message, *(sanitize_provider_text(arg, self.api_key) if isinstance(arg, str) else arg for arg in args))
 
     def _log_error(self, message: str, *args: Any) -> None:
         """记录错误日志。"""
 
         if self.logger is not None:
-            self.logger.error(message, *args)
+            self.logger.error(message, *(sanitize_provider_text(arg, self.api_key) if isinstance(arg, str) else arg for arg in args))

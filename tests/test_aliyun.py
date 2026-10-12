@@ -754,6 +754,10 @@ def test_draw_service_passes_source_urls_only_to_aliyun_adapter() -> None:
             self.provider = provider
             self.provider_name = provider_name
 
+        def validate_source_image_count(self, model: str, image_count: int) -> None:
+            del model
+            assert image_count == 1
+
         def supports_separate_negative_prompt(self, *_args: Any) -> bool:
             return False
 

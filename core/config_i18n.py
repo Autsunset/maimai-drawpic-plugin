@@ -127,6 +127,7 @@ _FIELD_LABELS: Dict[str, Tuple[str, str, str]] = {
     "async_poll_interval_seconds": ("Async Poll Interval", "非同期ポーリング間隔", "비동기 폴링 간격"),
     "background": ("Background", "背景", "배경"),
     "base_url": ("Base URL", "ベース URL", "기본 URL"),
+    "cfg": ("Qwen Image CFG", "Qwen Image CFG", "Qwen Image CFG"),
     "batch_size": ("Batch Size", "バッチサイズ", "배치 크기"),
     "bypass_china_providers": (
         "Bypass Proxy for China Providers",
@@ -425,6 +426,16 @@ _OPENAI_MODE_HINTS = (
 
 
 _FIELD_HINT_OVERRIDES: Dict[str, Tuple[str, str, str]] = {
+    "GoogleModelConfig.image_size": (
+        "1K / 2K / 4K; Gemini 3.1 Flash also supports 512. Use uppercase K; leave blank for the model default.",
+        "1K / 2K / 4K。Gemini 3.1 Flash は 512 にも対応します。大文字 K を使用し、空欄はモデルの既定値を使用します。",
+        "1K / 2K / 4K. Gemini 3.1 Flash는 512도 지원합니다. 대문자 K를 사용하며 비워 두면 모델 기본값을 사용합니다.",
+    ),
+    "SiliconFlowModelConfig.cfg": (
+        "Qwen Image only; 0 omits the parameter. A common value is 4. Kolors uses guidance_scale instead.",
+        "Qwen Image のみ使用します。0 は送信しません。一般的な値は 4 です。Kolors は guidance_scale を使用します。",
+        "Qwen Image 전용입니다. 0이면 전송하지 않습니다. 일반적인 값은 4입니다. Kolors는 guidance_scale을 사용합니다.",
+    ),
     "AliyunModelConfig.models": (
         "Required. Defaults include Qwen 3.0/2.0, Z-Image, Kling v3 and current Vidu image models. "
         "Add older models or dated snapshots manually when needed.",

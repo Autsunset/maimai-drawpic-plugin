@@ -46,7 +46,7 @@ class PluginSectionConfig(PluginConfigBase):
         },
     )
     config_version: str = Field(
-        default="2.29.0",
+        default="2.30.0",
         description="配置版本",
         json_schema_extra={
             "hint": "配置版本",
@@ -794,7 +794,7 @@ class GoogleModelConfig(PluginConfigBase):
         },
     )
     models: list[str] = Field(
-        default=["gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview"],
+        default=["gemini-3.1-flash-image", "gemini-3-pro-image"],
         description="Google 可用图片模型列表",
         json_schema_extra={
             "label": "Google 模型列表",
@@ -802,40 +802,23 @@ class GoogleModelConfig(PluginConfigBase):
             "order": 2,
         },
     )
-    number_of_images: int = Field(
-        default=1,
-        description="Google 图片生成数量",
-        json_schema_extra={
-            "label": "生成图片数量",
-            "hint": "Google generate_images/edit_image 支持 number_of_images；generateContent 图片模型通常只返回 1 张",
-            "order": 3,
-        },
-    )
     aspect_ratio: str = Field(
-        default="1:1",
-        description="Google 图片宽高比",
+        default="",
+        description="Google 图片宽高比，留空时跟随模型或参考图片",
         json_schema_extra={
             "label": "宽高比",
-            "hint": "常见值：1:1、3:4、4:3、9:16、16:9；generateContent 图片模型可能忽略该参数",
+            "hint": "可填 1:1、3:4、4:3、9:16、16:9 等；留空时不强制输出比例",
             "order": 4,
         },
     )
-    output_mime_type: str = Field(
-        default="image/png",
-        description="Google 输出图片 MIME 类型",
-        json_schema_extra={
-            "label": "输出 MIME 类型",
-            "hint": "常见值：image/png、image/jpeg；留空则使用 SDK 默认",
-            "order": 5,
-        },
-    )
-    person_generation: str = Field(
+    image_size: str = Field(
         default="",
-        description="Google 人物生成策略",
+        description="Gemini 图片输出分辨率档位",
         json_schema_extra={
-            "label": "人物生成策略",
-            "hint": "按 Google 模型支持填写，例如 allow_adult；留空则不传",
-            "order": 6,
+            "label": "图片分辨率档位",
+            "hint": "可填 1K、2K、4K；Gemini 3.1 Flash 还支持 512。需使用大写 K，留空使用模型默认分辨率",
+            "placeholder": "1K / 2K / 4K",
+            "order": 5,
         },
     )
     negative_prompt: str = Field(
@@ -843,7 +826,7 @@ class GoogleModelConfig(PluginConfigBase):
         description="Google 反向提示词",
         json_schema_extra={
             "label": "反向提示词",
-            "hint": "Imagen/edit_image 路径支持 negative_prompt；Gemini generateContent 图片模型可能忽略",
+            "hint": "Gemini 不支持独立反向字段，插件会将反向内容合并到普通提示词",
             "input_type": "textarea",
             "order": 7,
         },
@@ -853,26 +836,8 @@ class GoogleModelConfig(PluginConfigBase):
         description="Google 随机种子。负数表示不传",
         json_schema_extra={
             "label": "随机种子",
-            "hint": "非负整数会传入 seed；仅模型/接口支持时生效。",
+            "hint": "非负整数作为 GenerateContentConfig.seed 发送；留 -1 时由平台随机选择",
             "order": 8,
-        },
-    )
-    guidance_scale: float = Field(
-        default=0.0,
-        description="Google 提示词引导强度。",
-        json_schema_extra={
-            "label": "引导强度",
-            "hint": "大于 0 时传入 guidance_scale；仅模型/接口支持时生效",
-            "order": 9,
-        },
-    )
-    add_watermark: bool = Field(
-        default=False,
-        description="Google 是否添加水印",
-        json_schema_extra={
-            "label": "添加水印",
-            "hint": "仅在 SDK/模型支持 add_watermark 时生效",
-            "order": 10,
         },
     )
     extra_parameters: list[str] = Field(
@@ -880,7 +845,7 @@ class GoogleModelConfig(PluginConfigBase):
         description="Google 图片配置额外参数。每项格式为 key=value",
         json_schema_extra={
             "label": "额外参数",
-            "hint": "每行一个 key=value，值支持 true/false、数字或 JSON；仅 SDK 当前配置类支持的字段会被传入",
+            "hint": "每行一个 key=value；用于 temperature、thinking_config、tools 等生成配置，不支持的参数会明确报错",
             "order": 11,
         },
     )
@@ -1499,15 +1464,6 @@ class SiliconFlowModelConfig(PluginConfigBase):
             "order": 3,
         },
     )
-    batch_size: int = Field(
-        default=1,
-        description="硅基流动单次生成图片数量。",
-        json_schema_extra={
-            "label": "生成数量",
-            "hint": "会写入 batch_size；插件当前默认请求 1 张，可按平台模型支持调整",
-            "order": 4,
-        },
-    )
     seed: int = Field(
         default=-1,
         description="硅基流动随机种子。负数表示不传",
@@ -1531,8 +1487,19 @@ class SiliconFlowModelConfig(PluginConfigBase):
         description="硅基流动提示词引导强度。",
         json_schema_extra={
             "label": "引导强度",
-            "hint": "常见值 3 到 12；0 或负数则不传",
+            "hint": "仅 Kolors 使用 guidance_scale；Qwen Image 使用下方 CFG，0 表示不传",
             "order": 7,
+        },
+    )
+    cfg: float = Field(
+        default=0.0,
+        ge=0,
+        le=20,
+        description="Qwen Image 提示词匹配强度",
+        json_schema_extra={
+            "label": "Qwen Image CFG",
+            "hint": "仅 Qwen Image 系列使用；0 不传，常用值 4；Kolors 使用上方引导强度",
+            "order": 7.5,
         },
     )
     negative_prompt: str = Field(
@@ -1543,15 +1510,6 @@ class SiliconFlowModelConfig(PluginConfigBase):
             "hint": "留空则不传 negative_prompt",
             "input_type": "textarea",
             "order": 8,
-        },
-    )
-    output_format: str = Field(
-        default="png",
-        description="硅基流动输出图片格式。",
-        json_schema_extra={
-            "label": "输出格式",
-            "hint": "官方参数 output_format；常见值 png、jpeg、webp",
-            "order": 9,
         },
     )
     extra_parameters: list[str] = Field(

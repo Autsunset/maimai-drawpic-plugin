@@ -4,7 +4,7 @@ from typing import Any, Literal, Protocol
 
 import re
 
-from ..models.aliyun_models import resolve_aliyun_model_profile
+from ..models.aliyun_models import resolve_aliyun_model_profile, supports_aliyun_negative_prompt
 from ..models.openai_models import OPENAI_COMPATIBILITY_MODES, normalize_openai_mode
 from ..models.rinkoai_models import (
     RINKOAI_EDIT_UNSUPPORTED_REASON,
@@ -481,7 +481,9 @@ class ProviderRouter:
         """判断模型当前任务是否支持独立传递反向提示词。"""
 
         provider_name = self.get_model_provider(model)
-        if provider_name in {"aliyun", "siliconflow", "novelai"}:
+        if provider_name == "aliyun":
+            return supports_aliyun_negative_prompt(model)
+        if provider_name in {"siliconflow", "novelai"}:
             return True
         if provider_name == "google":
             return GoogleImage.supports_negative_prompt(model)
@@ -606,17 +608,13 @@ class ProviderRouter:
             base_url=self.config.google.base_url,
             logger=self.logger,
             request_timeout_seconds=self.resolve_request_timeout_seconds(),
-            number_of_images=self.config.google.number_of_images,
             aspect_ratio=self.config.google.aspect_ratio,
-            output_mime_type=self.config.google.output_mime_type,
-            person_generation=self.config.google.person_generation,
+            image_size=self.config.google.image_size,
             negative_prompt=self.merge_prompt_parts(
                 self.config.google.negative_prompt,
                 request_negative_prompt,
             ),
             seed=self.config.google.seed,
-            guidance_scale=self.config.google.guidance_scale,
-            add_watermark=self.config.google.add_watermark,
             extra_parameters=parse_key_value_options(self.config.google.extra_parameters),
             proxy_settings=self._get_proxy_settings("google"),
         )
@@ -671,15 +669,14 @@ class ProviderRouter:
             request_timeout_seconds=self.resolve_request_timeout_seconds(),
             image_size=self.config.siliconflow.image_size,
             model_size_overrides=parse_model_value_overrides(self.config.siliconflow.model_size_overrides),
-            batch_size=self.config.siliconflow.batch_size,
             seed=self.config.siliconflow.seed,
             num_inference_steps=self.config.siliconflow.num_inference_steps,
             guidance_scale=self.config.siliconflow.guidance_scale,
+            cfg=self.config.siliconflow.cfg,
             negative_prompt=self.merge_prompt_parts(
                 self.config.siliconflow.negative_prompt,
                 request_negative_prompt,
             ),
-            output_format=self.config.siliconflow.output_format,
             extra_parameters=parse_key_value_options(self.config.siliconflow.extra_parameters),
             proxy_settings=self._get_proxy_settings("siliconflow"),
         )
@@ -875,6 +872,22 @@ class ProviderRouter:
                 reason=f"当前模型 {normalized_model} 属于智谱平台；该平台当前仅支持文生图，不支持图生图编辑",
                 source="provider_builtin",
             )
+        if provider_name == "google" and normalized_model.lower().startswith("imagen-"):
+            return ModelTaskCapability(
+                allowed=False,
+                reason="Google Gemini API 已下线 Imagen，请选择 Gemini 图片模型",
+                source="provider_builtin",
+            )
+        if (
+            provider_name == "siliconflow"
+            and task_type == "draw"
+            and normalized_model.lower().startswith("qwen/qwen-image-edit")
+        ):
+            return ModelTaskCapability(
+                allowed=False,
+                reason=f"当前硅基流动模型 {normalized_model} 需要参考图片，请使用图生图",
+                source="provider_builtin",
+            )
         if provider_name == "volcengine":
             allowed_models = (
                 self.get_volcengine_t2i_models()
@@ -907,6 +920,26 @@ class ProviderRouter:
             reason="",
             source=("aliyun_registry" if provider_name == "aliyun" else "provider_default"),
         )
+
+    def validate_source_image_count(self, model: str, image_count: int) -> None:
+        """在审核和额度预留前拒绝超出模型能力的输入，禁止静默丢图。"""
+
+        if image_count == 0:
+            return
+        provider = self.get_model_provider(model)
+        maximum = None
+        if provider in {"novelai", "comfyui"}:
+            maximum = 1
+        elif provider == "siliconflow":
+            maximum = SiliconFlowImage.max_reference_images(model)
+        elif provider == "google":
+            maximum = GoogleImage.max_reference_images(model)
+        elif provider == "aliyun":
+            maximum = resolve_aliyun_model_profile(model).max_input_images
+        elif provider == "volcengine":
+            maximum = VolcengineImage._max_reference_images(VolcengineImage._resolve_model_family(model))
+        if maximum is not None and image_count > maximum:
+            raise ValueError(f"当前模型 {model} 最多支持 {maximum} 张参考图片，当前提供了 {image_count} 张")
 
     def resolve_volcengine_model_for_task(
         self,

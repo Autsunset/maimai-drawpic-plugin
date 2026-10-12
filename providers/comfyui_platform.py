@@ -13,7 +13,8 @@ import uuid
 
 import aiohttp
 
-from ..core.http_proxy import HttpProxySettings, read_response_bytes, read_response_text
+from ..core.http_proxy import HttpProxySettings, read_response_bytes, read_response_text, sanitize_provider_text
+from ..core.image_utils import detect_mime_type
 
 
 PromptMode = Literal["single_prompt", "positive_negative"]
@@ -86,7 +87,7 @@ class ComfyUIImage:
         """使用配置的文生图工作流生成图片。"""
 
         del model, n
-        workflow = self._load_workflow(self.t2i_workflow_path, "文生图")
+        workflow = await asyncio.to_thread(self._load_workflow, self.t2i_workflow_path, "文生图")
         self._inject_prompt(
             workflow=workflow,
             prompt=prompt,
@@ -107,9 +108,9 @@ class ComfyUIImage:
         if not image_bytes_list:
             raise RuntimeError("没有可用于 ComfyUI 图生图的源图片")
         if len(image_bytes_list) > 1:
-            self._log_warning("ComfyUI 图生图工作流当前仅注入第一张源图片，已忽略其余 %s 张", len(image_bytes_list) - 1)
+            raise ValueError("ComfyUI 当前图生图工作流只配置了一个源图节点，请仅提供一张图片")
 
-        workflow = self._load_workflow(self.i2i_workflow_path, "图生图")
+        workflow = await asyncio.to_thread(self._load_workflow, self.i2i_workflow_path, "图生图")
         self._inject_prompt(
             workflow=workflow,
             prompt=prompt,
@@ -352,7 +353,7 @@ class ComfyUIImage:
                 if isinstance(status, dict) and status.get("status_str") == "error":
                     messages = status.get("messages")
                     self._log_error("ComfyUI %s执行失败: prompt_id=%s messages=%s", task_name, prompt_id, messages)
-                    raise RuntimeError(f"ComfyUI {task_name}执行失败：{messages}")
+                    raise RuntimeError(f"ComfyUI {task_name}执行失败：{sanitize_provider_text(messages)}")
                 outputs = task_history.get("outputs")
                 if isinstance(outputs, dict):
                     return task_history
@@ -405,12 +406,16 @@ class ComfyUIImage:
         """上传图生图源图片，并返回 ComfyUI 可被 LoadImage 节点读取的文件名。"""
 
         form = aiohttp.FormData()
-        filename = f"maibot_{uuid.uuid4().hex}.png"
-        form.add_field("image", image_bytes, filename=filename, content_type="image/png")
+        mime_type = detect_mime_type(image_bytes)
+        extension = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}.get(mime_type)
+        if extension is None:
+            raise ValueError(f"ComfyUI 源图片格式不支持：{mime_type}")
+        filename = f"maibot_{uuid.uuid4().hex}.{extension}"
+        form.add_field("image", image_bytes, filename=filename, content_type=mime_type)
         response = await self._post_form("/upload/image", form)
         uploaded_name = response.get("name")
         if not isinstance(uploaded_name, str) or not uploaded_name:
-            raise RuntimeError(f"ComfyUI 上传图生图源图片失败：{response}")
+            raise RuntimeError(f"ComfyUI 上传图生图源图片失败：{sanitize_provider_text(response)}")
         subfolder = response.get("subfolder")
         if isinstance(subfolder, str) and subfolder:
             uploaded_name = f"{subfolder.rstrip('/')}/{uploaded_name}"
@@ -426,7 +431,7 @@ class ComfyUIImage:
         async with aiohttp.ClientSession(timeout=timeout, **self.proxy_settings.aiohttp_session_kwargs()) as session:
             async with session.get(url, **self.proxy_settings.aiohttp_request_kwargs()) as response:
                 if response.status != 200:
-                    error_text = await read_response_text(response)
+                    error_text = sanitize_provider_text(await read_response_text(response))
                     raise RuntimeError(f"下载 ComfyUI 图片失败 ({response.status})：{error_text[:1000]}")
                 return await read_response_bytes(response)
 
@@ -454,10 +459,10 @@ class ComfyUIImage:
             async with session.request(method, url, **kwargs, **self.proxy_settings.aiohttp_request_kwargs()) as response:
                 response_text = await read_response_text(response)
                 try:
-                    response_json = json.loads(response_text)
+                    response_json = await asyncio.to_thread(json.loads, response_text)
                 except json.JSONDecodeError as exc:
                     raise RuntimeError(
-                        f"ComfyUI 接口返回非 JSON 数据 ({response.status})：{response_text[:1000]}"
+                        f"ComfyUI 接口返回非 JSON 数据 ({response.status})：{sanitize_provider_text(response_text)}"
                     ) from exc
                 if response.status not in {200, 201}:
                     self._log_error(
@@ -467,9 +472,9 @@ class ComfyUIImage:
                         url,
                         response_text[:2000],
                     )
-                    raise RuntimeError(f"ComfyUI 接口错误 ({response.status})：{response_json}")
+                    raise RuntimeError(f"ComfyUI 接口错误 ({response.status})：{sanitize_provider_text(response_json)}")
                 if not isinstance(response_json, dict):
-                    raise RuntimeError(f"ComfyUI 接口响应格式错误：{response_json}")
+                    raise RuntimeError(f"ComfyUI 接口响应格式错误：{sanitize_provider_text(response_json)}")
                 return response_json
 
     def _log_info(self, message: str, *args: Any) -> None:
@@ -488,4 +493,4 @@ class ComfyUIImage:
         """记录错误日志。"""
 
         if self.logger is not None:
-            self.logger.error(message, *args)
+            self.logger.error(message, *(sanitize_provider_text(arg) if isinstance(arg, str) else arg for arg in args))

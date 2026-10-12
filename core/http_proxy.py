@@ -2,12 +2,45 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import aiohttp
+import asyncio
 import json
+import re
 
 MAX_PROVIDER_RESPONSE_BYTES = 64 * 1024 * 1024
+
+
+def sanitize_provider_url(url: str) -> str:
+    """诊断保留接口主机与路径，移除 URL 凭证和签名查询串。"""
+
+    try:
+        parsed = urlsplit(url)
+        host = parsed.hostname or ""
+        if ":" in host:
+            host = f"[{host}]"
+        if parsed.port is not None:
+            host += f":{parsed.port}"
+        return urlunsplit((parsed.scheme, host, parsed.path, "", ""))
+    except ValueError:
+        return "[INVALID_URL]"
+
+
+def sanitize_provider_text(value: Any, api_key: str = "") -> str:
+    """所有平台的错误与日志均移除凭证、图片数据和签名参数。"""
+
+    text = str(value)
+    if api_key:
+        text = text.replace(api_key, "[REDACTED]")
+    text = re.sub(r"Bearer\s+\S+", "Bearer [REDACTED]", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"data:image/[^;\s]+;base64,[A-Za-z0-9+/=_-]+", "[BASE64_REDACTED]", text, flags=re.IGNORECASE
+    )
+    text = re.sub(r"[A-Za-z0-9+/=_-]{80,}", "[LONG_DATA_REDACTED]", text)
+    for url in re.findall(r"https?://[^\s\"'<>]+", text):
+        text = text.replace(url, sanitize_provider_url(url))
+    return text[:500]
 
 
 async def read_response_bytes(
@@ -56,7 +89,8 @@ async def read_response_json(
 
     response_bytes = await read_response_bytes(response, max_bytes=max_bytes)
     try:
-        return json.loads(response_bytes)
+        # 图片 JSON 可能包含数十 MiB 的 Base64，不在事件循环内进行解析。
+        return await asyncio.to_thread(json.loads, response_bytes)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise RuntimeError("图片服务返回了无效的 JSON 响应") from exc
 

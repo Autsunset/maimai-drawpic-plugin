@@ -285,7 +285,10 @@ class DrawService:
             image_bytes_list = await asyncio.wait_for(call(*args), timeout=timeout_seconds)
         else:
             image_bytes_list = await asyncio.wait_for(asyncio.to_thread(call, *args), timeout=timeout_seconds)
-        return [validate_image_bytes(image_bytes) for image_bytes in image_bytes_list]
+        # 解码大图会占用 CPU，必须在线程中校验，避免阻塞其他会话的任务。
+        return await asyncio.to_thread(
+            lambda: [validate_image_bytes(image_bytes) for image_bytes in image_bytes_list]
+        )
 
     def resolve_fallback_model_name(self, primary_model: str = "") -> str:
         """解析生图备选模型名称。"""
@@ -442,6 +445,8 @@ class DrawService:
         """执行单次图片请求尝试。"""
 
         provider_name = attempt.provider_name
+        if task_type == "edit_image":
+            self.router.validate_source_image_count(attempt.model, len(source_image_bytes_list))
         provider_prompt = prompt
         provider_negative_prompt = request_negative_prompt.strip()
         supports_negative_prompt = self.router.supports_separate_negative_prompt(
@@ -1028,6 +1033,7 @@ class DrawService:
             novelai_mode=novelai_mode,
             novelai_artist_tags=novelai_artist_tags,
         )
+        self.router.validate_source_image_count(primary_attempt.model, len(normalized_source_images))
         if is_image_edit and self.router.get_image_edit_unsupported_reason(primary_attempt.model):
             self.ctx.logger.info(
                 "拒绝提交图生图任务: model=%s stream_id=%s user_id=%s group_id=%s platform=%s source_image_count=%s reason=%s",

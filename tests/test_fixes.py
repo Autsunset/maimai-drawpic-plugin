@@ -313,12 +313,12 @@ def test_novelai_quality_tags_follow_model_family() -> None:
     quality_suffixes = {
         "nai-diffusion-5-full": "very aesthetic, masterpiece, no text",
         "nai-diffusion-5-curated": "very aesthetic, masterpiece, no text",
-        "nai-diffusion-4-5-full": "very aesthetic, masterpiece, no text",
+        "nai-diffusion-4-5-full": "location, very aesthetic, masterpiece, no text",
         "nai-diffusion-4-5-curated": (
-            "very aesthetic, masterpiece, no text, -0.8::feet::, rating:general"
+            "location, masterpiece, no text, -0.8::feet::, rating:general"
         ),
         "nai-diffusion-4-full": "no text, best quality, very aesthetic, absurdres",
-        "nai-diffusion-4-curated-preview": "rating:general, best quality, very aesthetic, absurdres",
+        "nai-diffusion-4-curated-preview": "rating:general, amazing quality, very aesthetic, absurdres",
         "nai-diffusion-3": "best quality, amazing quality, very aesthetic, absurdres",
         "nai-diffusion-furry-3": "{best quality}, {amazing quality}",
     }
@@ -505,7 +505,7 @@ def test_style_descriptions_are_structured_and_backward_compatible() -> None:
 
     legacy_preset = StylePresetConfig(name="旧风格")
     assert legacy_preset.description == ""
-    assert DrawpicConfig().plugin.config_version == "2.29.0"
+    assert DrawpicConfig().plugin.config_version == "2.30.0"
 
     resolver = StylePromptResolver(
         StyleConfig(
@@ -789,6 +789,11 @@ def test_background_tasks_are_concurrent_and_user_isolated() -> None:
             self.config = types.SimpleNamespace(
                 general=types.SimpleNamespace(fallback_model="")
             )
+
+        @staticmethod
+        def validate_source_image_count(model: str, image_count: int) -> None:
+            del model
+            assert image_count == 0
 
         @staticmethod
         def get_model_provider(model: str) -> str:

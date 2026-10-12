@@ -4,11 +4,12 @@ from typing import Any, Literal
 from urllib.parse import urljoin, urlsplit
 
 import aiohttp
+import asyncio
 import base64
 import time
 
 from ..core.image_utils import detect_mime_type
-from ..core.http_proxy import HttpProxySettings, read_response_bytes, read_response_json, read_response_text
+from ..core.http_proxy import HttpProxySettings, read_response_bytes, read_response_json, read_response_text, sanitize_provider_text
 
 
 VolcengineModelFamily = Literal[
@@ -101,7 +102,7 @@ class VolcengineImage:
             raise RuntimeError("没有可用于图生图的源图片")
 
         image_data_urls = [
-            self._build_image_data_url(image_bytes)
+            await asyncio.to_thread(self._build_image_data_url, image_bytes)
             for image_bytes in image_bytes_list
         ]
         payload = self._build_payload(
@@ -197,6 +198,8 @@ class VolcengineImage:
 
     @staticmethod
     def _max_reference_images(model_family: VolcengineModelFamily) -> int | None:
+        if model_family == "legacy_3":
+            return 1
         if model_family in {"seedream_5_pro", "seedream_5_flash"}:
             return 10
         if model_family in {"seedream_5_lite", "seedream_4_5", "seedream_4_0"}:
@@ -282,7 +285,10 @@ class VolcengineImage:
         if is_image_edit and self.layer_decomposition and supports_advanced_edit:
             payload["layer_decomposition"] = True
 
-        payload.update(self.extra_parameters)
+        payload.update({
+            key: value for key, value in self.extra_parameters.items()
+            if key not in {"model", "prompt", "image"}
+        })
         if model_family not in {"legacy_3", "unknown"}:
             payload.pop("guidance_scale", None)
             payload.pop("seed", None)
@@ -319,6 +325,20 @@ class VolcengineImage:
         if payload.get("sequential_image_generation") == "disabled":
             payload.pop("sequential_image_generation", None)
             payload.pop("sequential_image_generation_options", None)
+        if payload.get("sequential_image_generation") == "auto":
+            remaining_count = 15 - source_image_count
+            if remaining_count < 1:
+                raise ValueError("火山引擎组图要求参考图与输出图总数不超过 15 张")
+            options = payload.get("sequential_image_generation_options", {})
+            if not isinstance(options, dict):
+                raise ValueError("火山引擎组图参数必须是 JSON 对象")
+            requested_maximum = options.get("max_images", self.max_images)
+            if not isinstance(requested_maximum, int) or isinstance(requested_maximum, bool) or requested_maximum < 1:
+                raise ValueError("火山引擎组图 max_images 必须是正整数")
+            payload["sequential_image_generation_options"] = {
+                **options,
+                "max_images": min(requested_maximum, self.max_images, remaining_count),
+            }
         if payload.get("background") == "transparent":
             if payload.get("output_format") == "jpeg":
                 raise ValueError("火山引擎透明背景模式不能与 jpeg 输出格式同时使用")
@@ -382,7 +402,7 @@ class VolcengineImage:
                 response_json = await read_response_json(response)
                 response_error = self._extract_response_error(response_json)
                 if response_error is not None:
-                    error_code, error_message = response_error
+                    error_code, error_message = (sanitize_provider_text(value, self.api_key) for value in response_error)
                     self._log_error(
                         "火山引擎图片接口业务失败: code=%s duration=%.2fs url=%s message=%s",
                         error_code,
@@ -427,7 +447,7 @@ class VolcengineImage:
         for item in data:
             item_error = self._extract_item_error(item)
             if item_error:
-                item_errors.append(item_error)
+                item_errors.append(sanitize_provider_text(item_error, self.api_key))
                 continue
             extracted = await self._extract_image_bytes_from_item(item)
             if extracted is not None:
@@ -476,7 +496,7 @@ class VolcengineImage:
         if isinstance(choices, list):
             return choices
 
-        response_preview = str(response)[:1200]
+        response_preview = sanitize_provider_text(response, self.api_key)
         self._log_error("火山引擎响应解析失败: 未找到图片列表，response_preview=%s", response_preview)
         raise RuntimeError(f"火山引擎响应中未找到图片列表，response_preview={response_preview}")
 
@@ -491,7 +511,7 @@ class VolcengineImage:
 
         image_base64 = item.get("b64_json") or item.get("base64") or item.get("image_base64")
         if isinstance(image_base64, str) and image_base64:
-            return base64.b64decode(image_base64)
+            return await asyncio.to_thread(base64.b64decode, image_base64)
 
         for key in ("url", "image_url", "image", "content"):
             value = item.get(key)
@@ -527,7 +547,7 @@ class VolcengineImage:
         if value.startswith("data:image/") and ";base64," in value:
             _prefix, image_base64 = value.split(";base64,", maxsplit=1)
             if image_base64:
-                return base64.b64decode(image_base64)
+                return await asyncio.to_thread(base64.b64decode, image_base64)
             return None
 
         if value.startswith("http://") or value.startswith("https://"):
@@ -558,10 +578,10 @@ class VolcengineImage:
         """记录错误日志。"""
 
         if self.logger is not None:
-            self.logger.error(message, *args)
+            self.logger.error(message, *(sanitize_provider_text(arg, self.api_key) if isinstance(arg, str) else arg for arg in args))
 
     def _log_warning(self, message: str, *args: Any) -> None:
         """记录警告日志。"""
 
         if self.logger is not None:
-            self.logger.warning(message, *args)
+            self.logger.warning(message, *(sanitize_provider_text(arg, self.api_key) if isinstance(arg, str) else arg for arg in args))

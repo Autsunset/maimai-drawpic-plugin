@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
+import asyncio
 import base64
 import time
 
 import aiohttp
 
-from ..core.http_proxy import HttpProxySettings, read_response_bytes, read_response_json, read_response_text
+from ..core.http_proxy import HttpProxySettings, read_response_bytes, read_response_json, read_response_text, sanitize_provider_text
 
 
 class ZhipuImage:
@@ -96,7 +97,7 @@ class ZhipuImage:
             ) as response:
                 duration = time.time() - start_time
                 if response.status != 200:
-                    error_text = await read_response_text(response)
+                    error_text = sanitize_provider_text(await read_response_text(response), self.api_key)
                     self._log_error(
                         "智谱图片生成接口失败: status=%s duration=%.2fs url=%s response_preview=%s",
                         response.status,
@@ -118,7 +119,7 @@ class ZhipuImage:
 
         data = response.get("data")
         if not isinstance(data, list):
-            response_preview = str(response)[:1200]
+            response_preview = sanitize_provider_text(response, self.api_key)
             self._log_error("智谱响应解析失败: 未找到 data 列表，response_preview=%s", response_preview)
             raise RuntimeError(f"智谱响应中未找到 data 字段，response_preview={response_preview}")
 
@@ -129,7 +130,7 @@ class ZhipuImage:
 
             image_base64 = item.get("b64_json")
             if isinstance(image_base64, str) and image_base64:
-                image_bytes_list.append(base64.b64decode(image_base64))
+                image_bytes_list.append(await asyncio.to_thread(base64.b64decode, image_base64))
                 continue
 
             image_url = item.get("url")
@@ -165,4 +166,4 @@ class ZhipuImage:
         """记录错误日志。"""
 
         if self.logger is not None:
-            self.logger.error(message, *args)
+            self.logger.error(message, *(sanitize_provider_text(arg, self.api_key) if isinstance(arg, str) else arg for arg in args))
