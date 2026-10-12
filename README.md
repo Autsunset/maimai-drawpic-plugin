@@ -4,7 +4,7 @@
 
 # 🎨 麦麦绘图
 
-![Plugin Version](https://img.shields.io/badge/Plugin-1.12.4-informational.svg)
+![Plugin Version](https://img.shields.io/badge/Plugin-1.12.5-informational.svg)
 ![MaiBot](https://img.shields.io/badge/MaiBot-%3E%3D1.2.0-blue.svg)
 ![MaiBot Plugin SDK](https://img.shields.io/badge/Plugin%20SDK-%3E%3D2.7.1-blueviolet.svg)
 ![License](https://img.shields.io/badge/License-AGPL--3.0-green.svg)
@@ -181,6 +181,8 @@ negative_prompt_template = "3d render, oil painting, {negative_prompt}"
 
 插件配置页面会跟随 MaiBot WebUI 语言切换配置节标题、说明、字段名称、提示和占位文本。目前支持简体中文、英语、日语和韩语；简体中文同时作为缺少翻译时的默认回退语言。
 
+1.12.5 起，可留空的图片参数使用文本输入，避免空字符串下拉选项导致配置页面报错。智谱 `quality` 可填写 `hd` 或 `standard`；火山 `output_format` 可填写 `png` 或 `jpeg`，`optimize_prompt_mode` 可填写 `standard` 或 `fast`，`background` 可填写 `opaque` 或 `transparent`。这些字段留空时仍使用平台默认行为，已有配置无需修改。
+
 | 配置节 | 常用配置 |
 | --- | --- |
 | `openai` | `base_url`、`api_key`、`models`、`default_size`、`default_openai_compatibility_mode` |
@@ -295,6 +297,8 @@ extra_parameters = []
 
 1.12.0 起，阿里百炼支持 Qwen Image 3.0/2.0 与早期图像模型、Z-Image、可灵图像和 Vidu 图像模型。本插件不接入万象、创意工具、图像翻译或视频生成模型。
 
+1.12.5 起，百炼默认模型列表精简为 11 项：Qwen Image 3.0 Pro/3.0/2.0 Pro/2.0、Z-Image Turbo、可灵 v3/Omni，以及 Vidu Image/Pro/Lite/Q3 Fast。日期快照、早期 Qwen 与 Vidu Q2 不再默认列出，仍可手动添加使用；已有用户模型列表保持不变。
+
 必填配置：
 
 | 配置项 | 说明 |
@@ -346,7 +350,7 @@ kling_resolution = "1k"
 
 - Qwen Image 3.0：`qwen-image-3.0-pro`、`qwen-image-3.0`。
 - Qwen Image 2.0：`qwen-image-2.0-pro`、其日期快照、`qwen-image-2.0` 及其日期快照。
-- 早期 Qwen Image：`qwen-image-max`、`qwen-image-plus`、`qwen-image`、`qwen-image-edit-max`、`qwen-image-edit-plus`、`qwen-image-edit` 及已列入默认配置的日期快照。
+- 早期 Qwen Image：`qwen-image-max`、`qwen-image-plus`、`qwen-image`、`qwen-image-edit-max`、`qwen-image-edit-plus`、`qwen-image-edit` 及对应日期快照，需手动添加。
 - Z-Image：`z-image-turbo`。
 - 可灵：`kling/kling-v3-image-generation`、`kling/kling-v3-omni-image-generation`。
 - Vidu：`vidu/vidu-image_reference2image`、`vidu/vidu-image-pro_reference2image`、`vidu/vidu-image-lite_reference2image`、`vidu/viduq3-fast_reference2image`、`vidu/viduq2-pro_reference2image`、`vidu/viduq2-fast_reference2image`。

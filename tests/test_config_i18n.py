@@ -87,6 +87,19 @@ def test_all_config_sections_and_fields_have_i18n() -> None:
             _assert_field_i18n(f"{section_name}.{field_name}", field)
 
 
+def test_config_select_choices_do_not_include_empty_strings() -> None:
+    """配置 Schema 中的空下拉选项会使宿主 Select 组件崩溃。"""
+
+    def _check_fields(fields: dict[str, Any], parent: str) -> None:
+        for name, field in fields.items():
+            field_path = f"{parent}.{name}"
+            assert "" not in (field.get("choices") or []), field_path
+            _check_fields(field.get("item_fields") or {}, field_path)
+
+    for name, section in _config_schema()["sections"].items():
+        _check_fields(section["fields"], name)
+
+
 def test_all_config_classes_have_section_i18n() -> None:
     """根配置节和嵌套列表模型都必须保留完整的节级多语言元数据。"""
 

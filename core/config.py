@@ -27,9 +27,6 @@ NovelAIMode = Literal["anime", "furry", "background"]
 AliyunImageInputMode = Literal["auto", "base64", "url"]
 AliyunPromptExtendMode = Literal["direct", "agent"]
 AliyunKlingResultType = Literal["single", "series"]
-VolcengineBackgroundMode = Literal["", "opaque", "transparent"]
-VolcengineOptimizePromptMode = Literal["", "standard", "fast"]
-VolcengineOutputFormat = Literal["", "png", "jpeg"]
 VolcengineResponseFormat = Literal["url", "b64_json"]
 VolcengineSequentialMode = Literal["disabled", "auto"]
 
@@ -49,7 +46,7 @@ class PluginSectionConfig(PluginConfigBase):
         },
     )
     config_version: str = Field(
-        default="2.28.0",
+        default="2.29.0",
         description="配置版本",
         json_schema_extra={
             "hint": "配置版本",
@@ -938,7 +935,7 @@ class ZhipuModelConfig(PluginConfigBase):
         json_schema_extra={
             "label": "生成质量（可选）",
             "hint": "留空时由上游按模型选择默认质量；glm-image 仅支持 hd，CogView 可按官方说明选择 hd 或 standard",
-            "options": ["", "hd", "standard"],
+            "placeholder": "hd / standard",
             "order": 2,
         },
     )
@@ -1028,7 +1025,7 @@ class AliyunModelConfig(PluginConfigBase):
         description="阿里百炼可用图片模型列表，插件会自动识别已知模型能力",
         json_schema_extra={
             "label": "阿里百炼模型列表（必填）",
-            "hint": "必填。支持千问 Image、Z-Image、可灵图像和 Vidu 图像模型；不包含万象与创意工具",
+            "hint": "必填。默认仅保留千问 3.0/2.0、Z-Image、可灵 v3 和当前 Vidu 图像模型；旧模型与日期快照可按需手动添加",
             "order": 2,
         },
     )
@@ -1329,13 +1326,15 @@ class VolcengineModelConfig(PluginConfigBase):
             "order": 7,
         },
     )
-    output_format: VolcengineOutputFormat = Field(
+    # 空值表示不传可选参数；使用文本输入避免下拉组件拒绝空字符串选项。
+    output_format: str = Field(
         default="",
+        pattern=r"^(?:png|jpeg)?$",
         description="火山引擎生成图片的文件格式",
         json_schema_extra={
             "label": "输出文件格式",
             "hint": "可选 png 或 jpeg；仅 Seedream 5.0 系列支持，留空跟随模型默认值",
-            "options": ["", "png", "jpeg"],
+            "placeholder": "png / jpeg",
             "order": 7.1,
         },
     )
@@ -1349,13 +1348,14 @@ class VolcengineModelConfig(PluginConfigBase):
             "order": 7.2,
         },
     )
-    optimize_prompt_mode: VolcengineOptimizePromptMode = Field(
+    optimize_prompt_mode: str = Field(
         default="",
+        pattern=r"^(?:standard|fast)?$",
         description="火山引擎服务端提示词优化模式",
         json_schema_extra={
             "label": "提示词优化模式",
             "hint": "standard 质量优先；fast 仅 Seedream 5.0 pro 和 4.0 支持；留空不传",
-            "options": ["", "standard", "fast"],
+            "placeholder": "standard / fast",
             "order": 7.3,
         },
     )
@@ -1368,13 +1368,14 @@ class VolcengineModelConfig(PluginConfigBase):
             "order": 7.4,
         },
     )
-    background: VolcengineBackgroundMode = Field(
+    background: str = Field(
         default="",
+        pattern=r"^(?:opaque|transparent)?$",
         description="火山引擎图生图透明通道模式",
         json_schema_extra={
             "label": "图生图背景模式",
-            "hint": "仅 Seedream 5.0 pro/flash 图生图支持；transparent 要求单张透明源图且不能输出 jpeg",
-            "options": ["", "opaque", "transparent"],
+            "hint": "可选 opaque 或 transparent，留空不传；仅 Seedream 5.0 pro/flash 图生图支持；transparent 要求单张透明源图且不能输出 jpeg",
+            "placeholder": "opaque / transparent",
             "order": 7.5,
         },
     )

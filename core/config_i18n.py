@@ -424,6 +424,41 @@ _OPENAI_MODE_HINTS = (
 )
 
 
+_FIELD_HINT_OVERRIDES: Dict[str, Tuple[str, str, str]] = {
+    "AliyunModelConfig.models": (
+        "Required. Defaults include Qwen 3.0/2.0, Z-Image, Kling v3 and current Vidu image models. "
+        "Add older models or dated snapshots manually when needed.",
+        "必須。既定は Qwen 3.0/2.0、Z-Image、Kling v3 と現行の Vidu 画像モデルです。"
+        "旧モデルや日付付きスナップショットは必要に応じて手動で追加できます。",
+        "필수. 기본 목록에는 Qwen 3.0/2.0, Z-Image, Kling v3와 현재 Vidu 이미지 모델만 포함됩니다. "
+        "이전 모델과 날짜별 스냅샷은 필요할 때 직접 추가할 수 있습니다.",
+    ),
+    "ZhipuModelConfig.quality": (
+        "Leave blank for the model default. GLM-Image supports hd; CogView supports hd or standard.",
+        "空欄はモデルの既定値を使用します。GLM-Image は hd、CogView は hd または standard に対応します。",
+        "비워 두면 모델 기본값을 사용합니다. GLM-Image는 hd, CogView는 hd 또는 standard를 지원합니다.",
+    ),
+    "VolcengineModelConfig.output_format": (
+        "Enter png or jpeg, or leave blank for the model default. Supported by Seedream 5.0 models only.",
+        "png または jpeg を入力します。空欄はモデルの既定値を使用します。Seedream 5.0 系列のみ対応します。",
+        "png 또는 jpeg를 입력합니다. 비워 두면 모델 기본값을 사용합니다. Seedream 5.0 계열만 지원합니다.",
+    ),
+    "VolcengineModelConfig.optimize_prompt_mode": (
+        "Enter standard or fast; leave blank to omit. fast is supported by Seedream 5.0 pro and 4.0 only.",
+        "standard または fast を入力します。空欄は送信しません。fast は Seedream 5.0 pro と 4.0 のみ対応します。",
+        "standard 또는 fast를 입력합니다. 비워 두면 전송하지 않습니다. fast는 Seedream 5.0 pro와 4.0만 지원합니다.",
+    ),
+    "VolcengineModelConfig.background": (
+        "Enter opaque or transparent; leave blank to omit. Seedream 5.0 pro/flash edits only. "
+        "transparent requires one transparent source image and non-JPEG output.",
+        "opaque または transparent を入力します。空欄は送信しません。Seedream 5.0 pro/flash の画像変換のみ対応します。"
+        "transparent は透過した元画像 1 枚が必要で、JPEG 出力は使用できません。",
+        "opaque 또는 transparent를 입력합니다. 비워 두면 전송하지 않습니다. Seedream 5.0 pro/flash 이미지 변환만 지원합니다. "
+        "transparent는 투명 원본 이미지 한 장이 필요하며 JPEG 출력은 사용할 수 없습니다.",
+    ),
+}
+
+
 def _localized_field_entries(
     class_name: str,
     field_name: str,
@@ -443,7 +478,9 @@ def _localized_field_entries(
         label = labels[index]
         localized: Dict[str, str] = {"label": label}
         if str(json_schema_extra.get("hint") or "").strip():
-            if field_name == "default_openai_compatibility_mode":
+            if field_path in _FIELD_HINT_OVERRIDES:
+                localized["hint"] = _FIELD_HINT_OVERRIDES[field_path][index]
+            elif field_name == "default_openai_compatibility_mode":
                 localized["hint"] = _OPENAI_MODE_HINTS[index]
             elif locale == "en_US":
                 localized["hint"] = f"Configure {label}."

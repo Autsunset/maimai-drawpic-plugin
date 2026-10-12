@@ -156,7 +156,7 @@ def test_default_models_cover_requested_families_without_wan_models() -> None:
     assert "qwen-image-3.0" in defaults
     assert "z-image-turbo" in defaults
     assert "kling/kling-v3-omni-image-generation" in defaults
-    assert "vidu/viduq2-pro_reference2image" in defaults
+    assert "vidu/viduq3-fast_reference2image" in defaults
     assert not any(model.startswith("wan") for model in defaults)
     assert len(defaults) == len(set(defaults))
 
@@ -623,7 +623,7 @@ def test_router_automatically_recognizes_aliyun_task_capabilities() -> None:
     """阿里云已知模型应在任务提交前自动识别文生图/图生图能力。"""
 
     config = _config_module().DrawpicConfig()
-    config.aliyun.models = list(_aliyun_models().DEFAULT_ALIYUN_MODELS)
+    config.aliyun.models = [*_aliyun_models().DEFAULT_ALIYUN_MODELS, "qwen-image-edit"]
     router = _provider_router_class()(config)
 
     assert router.evaluate_model_task_capability(
