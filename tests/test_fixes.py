@@ -25,67 +25,19 @@ if _PKG_NAME not in sys.modules:
     _pkg = types.ModuleType(_PKG_NAME)
     _pkg.__path__ = [str(_PLUGIN_DIR)]
     sys.modules[_PKG_NAME] = _pkg
-for _sub in ("core", "providers"):
-    _sub_path = _PLUGIN_DIR / _sub
-    _init_file = _sub_path / "__init__.py"
-    _full_name = f"{_PKG_NAME}.{_sub}"
-    if _full_name in sys.modules:
-        continue
-    if _init_file.exists():
-        _spec = importlib.util.spec_from_file_location(
-            _full_name,
-            _init_file,
-            submodule_search_locations=[str(_sub_path)],
-        )
-        _mod = importlib.util.module_from_spec(_spec)
-        sys.modules[_full_name] = _mod
-        _spec.loader.exec_module(_mod)
-    else:
-        # 无 __init__.py 的子包按命名空间包注册
-        _ns = types.ModuleType(_full_name)
-        _ns.__path__ = [str(_sub_path)]
-        sys.modules[_full_name] = _ns
 
-from maimai_drawpic_pkg.core.config import (  # noqa: E402
-    DrawpicConfig,
-    NovelAIModelConfig,
-    StyleConfig,
-    StylePresetConfig,
-)
-from maimai_drawpic_pkg.core.http_proxy import (  # noqa: E402
-    read_response_bytes,
-    read_response_json,
-)
-from maimai_drawpic_pkg.core.image_utils import (  # noqa: E402
-    detect_image_dimensions,
-    detect_image_format,
-    detect_mime_type,
-)
-from maimai_drawpic_pkg.core.message_utils import (  # noqa: E402
-    _SOURCE_IMAGE_CACHE,
-    _SOURCE_IMAGE_CACHE_ORDER,
-    _normalize_stream_ids,
-    _remember_source_image,
-    SourceImageInput,
-    cache_source_image_from_message,
-    collect_command_source_image_inputs,
-    extract_all_image_base64_from_message,
-    extract_source_images_from_message,
-    find_all_cached_source_images,
-    find_all_cached_source_image_inputs,
-    find_source_image_inputs,
-)
-from maimai_drawpic_pkg.core.moderation import DrawpicModerationService  # noqa: E402
-from maimai_drawpic_pkg.core.stream_service import (  # noqa: E402
-    ChatStreamService,
-    ImageDeliveryUnconfirmedError,
-)
-from maimai_drawpic_pkg.core.style_prompts import StylePromptResolver  # noqa: E402
-from maimai_drawpic_pkg.core.task_store import DrawTaskStore  # noqa: E402
-from maimai_drawpic_pkg.core.texts import build_style_text  # noqa: E402
-from maimai_drawpic_pkg.core.usage_store import UserQuotaStore  # noqa: E402
-from maimai_drawpic_pkg.providers.novelai_platform import NovelAIImage  # noqa: E402
-from maimai_drawpic_pkg.providers.openai_platform import OpenaiImage  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.domain.configuration.models import DrawpicConfig, NovelAIModelConfig, StyleConfig, StylePresetConfig  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.http import read_response_bytes, read_response_json  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.media.images import detect_image_dimensions, detect_image_format, detect_mime_type  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.interfaces.chat.message_images import _SOURCE_IMAGE_CACHE, _SOURCE_IMAGE_CACHE_ORDER, _normalize_stream_ids, _remember_source_image, SourceImageInput, cache_source_image_from_message, collect_command_source_image_inputs, extract_all_image_base64_from_message, extract_source_images_from_message, find_all_cached_source_images, find_all_cached_source_image_inputs, find_source_image_inputs  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.application.moderation import DrawpicModerationService  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.application.chat import ChatStreamService, ImageDeliveryUnconfirmedError  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.domain.styles import StylePromptResolver  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.storage.tasks import DrawTaskStore  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.interfaces.chat.texts import build_style_text  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.storage.quotas import UserQuotaStore  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.providers.novelai import NovelAIImage  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.providers.openai import OpenaiImage  # noqa: E402
 
 # 构造一张最小 PNG 字节用于图片工具测试
 _MINIMAL_PNG = (
@@ -505,7 +457,7 @@ def test_style_descriptions_are_structured_and_backward_compatible() -> None:
 
     legacy_preset = StylePresetConfig(name="旧风格")
     assert legacy_preset.description == ""
-    assert DrawpicConfig().plugin.config_version == "2.30.0"
+    assert DrawpicConfig().plugin.config_version == "2.37.0"
 
     resolver = StylePromptResolver(
         StyleConfig(
@@ -590,8 +542,8 @@ def test_style_description_reply_uses_muted_smaller_text() -> None:
             ]
         )
     )
-    texts_module = importlib.import_module(f"{_PKG_NAME}.core.texts")
-    renderer_module = importlib.import_module(f"{_PKG_NAME}.core.image_reply")
+    texts_module = importlib.import_module(f"{_PKG_NAME}.src.maimai_drawpic.interfaces.chat.texts")
+    renderer_module = importlib.import_module(f"{_PKG_NAME}.src.maimai_drawpic.interfaces.chat.image_reply")
 
     rich_lines = texts_module.build_style_reply_lines(resolver)
     style_line = next(
@@ -621,8 +573,8 @@ def test_style_description_reply_uses_muted_smaller_text() -> None:
 def test_novelai_v3_mode_switches_effective_model() -> None:
     """V3 mode 使用两个官方模型，V4+ mode 不改模型 ID。"""
 
-    from maimai_drawpic_pkg.core.config import DrawpicConfig
-    from maimai_drawpic_pkg.core.provider_router import ProviderRouter
+    from maimai_drawpic_pkg.src.maimai_drawpic.domain.configuration.models import DrawpicConfig
+    from maimai_drawpic_pkg.src.maimai_drawpic.application.routing import ProviderRouter
 
     router = ProviderRouter(DrawpicConfig(), logger=_FakeLogger())
     router.config.novelai.default_artist_tags = "artist:default"
@@ -643,9 +595,9 @@ def test_novelai_v3_mode_switches_effective_model() -> None:
 def test_regular_novelai_route_uses_session_settings_and_prompts() -> None:
     """普通绘图选中 NAI 后应与 NAI 专属入口使用同一套请求参数。"""
 
-    from maimai_drawpic_pkg.core.config import DrawpicConfig
-    from maimai_drawpic_pkg.core.draw_service import DrawService
-    from maimai_drawpic_pkg.core.provider_router import ProviderRouter
+    from maimai_drawpic_pkg.src.maimai_drawpic.domain.configuration.models import DrawpicConfig
+    from maimai_drawpic_pkg.src.maimai_drawpic.application.drawing import DrawService
+    from maimai_drawpic_pkg.src.maimai_drawpic.application.routing import ProviderRouter
 
     config = DrawpicConfig()
     config.novelai.positive_prompt = "default positive"
@@ -699,9 +651,9 @@ def test_regular_novelai_route_uses_session_settings_and_prompts() -> None:
 def test_novelai_mode_is_persisted_per_session() -> None:
     """NAI mode 按平台和聊天目标持久化，不与其他会话混用。"""
 
-    from maimai_drawpic_pkg.core.config import DrawpicConfig
-    from maimai_drawpic_pkg.core.provider_router import ProviderRouter
-    from maimai_drawpic_pkg.core.session_preferences import SessionPreferenceStore
+    from maimai_drawpic_pkg.src.maimai_drawpic.domain.configuration.models import DrawpicConfig
+    from maimai_drawpic_pkg.src.maimai_drawpic.application.routing import ProviderRouter
+    from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.storage.preferences import SessionPreferenceStore
 
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "preferences.json"
@@ -767,7 +719,7 @@ def test_task_store_normal_flow_still_works() -> None:
 def test_background_tasks_are_concurrent_and_user_isolated() -> None:
     """多个用户的绘图请求应独立并发，且任务状态不可相互覆盖或查询。"""
 
-    from maimai_drawpic_pkg.core.draw_service import DrawService
+    from maimai_drawpic_pkg.src.maimai_drawpic.application.drawing import DrawService
 
     class _ConcurrentProvider:
         def __init__(self) -> None:
@@ -787,7 +739,7 @@ def test_background_tasks_are_concurrent_and_user_isolated() -> None:
         def __init__(self, provider: _ConcurrentProvider) -> None:
             self.provider = provider
             self.config = types.SimpleNamespace(
-                general=types.SimpleNamespace(fallback_model="")
+                general=types.SimpleNamespace(fallback_model="", fallback_models=[], request_retry_count=0)
             )
 
         @staticmethod
@@ -813,6 +765,10 @@ def test_background_tasks_are_concurrent_and_user_isolated() -> None:
         def evaluate_model_task_capability(model: str, task_type: str):
             del model, task_type
             return types.SimpleNamespace(allowed=True, reason="", source="test")
+
+        @staticmethod
+        def resolve_fallback_models(primary_model: str = "") -> list[str]:
+            return []
 
         @staticmethod
         def resolve_fallback_model(primary_model: str = "") -> str:
@@ -963,7 +919,7 @@ def test_source_image_cache_ttl() -> None:
     _SOURCE_IMAGE_CACHE.clear()
     _SOURCE_IMAGE_CACHE_ORDER.clear()
     # 临时把 TTL 调到极小以便测试
-    import maimai_drawpic_pkg.core.message_utils as mu
+    import maimai_drawpic_pkg.src.maimai_drawpic.interfaces.chat.message_images as mu
 
     original_ttl = mu._SOURCE_IMAGE_CACHE_TTL_SECONDS
     mu._SOURCE_IMAGE_CACHE_TTL_SECONDS = 0.2
@@ -1188,7 +1144,7 @@ def test_unconfirmed_image_delivery_is_not_retried() -> None:
 def test_provider_router_openai_routes_cache() -> None:
     """P2-8: OpenAI 路由列表缓存。"""
     # 通过包上下文导入，使 provider_router 的相对导入可用
-    from maimai_drawpic_pkg.core.provider_router import ProviderRouter
+    from maimai_drawpic_pkg.src.maimai_drawpic.application.routing import ProviderRouter
 
     class _StubConfig:
         class openai:
@@ -1239,6 +1195,8 @@ def test_provider_router_openai_routes_cache() -> None:
         class general:
             default_model = "gpt-image-2"
             fallback_model = ""
+            fallback_models = []
+            request_retry_count = 0
             request_timeout_seconds = 60
             image_edit_unsupported_models: list[str] = []
             text_to_image_unsupported_models: list[str] = []
@@ -1254,7 +1212,7 @@ def test_provider_router_openai_routes_cache() -> None:
 
 def test_provider_router_fallback_model_resolution() -> None:
     """生图备选模型解析。"""
-    from maimai_drawpic_pkg.core.provider_router import ProviderRouter
+    from maimai_drawpic_pkg.src.maimai_drawpic.application.routing import ProviderRouter
 
     class _StubConfig:
         class openai:
@@ -1305,6 +1263,8 @@ def test_provider_router_fallback_model_resolution() -> None:
         class general:
             default_model = "gpt-image-2"
             fallback_model = "gpt-image-fallback"
+            fallback_models = []
+            request_retry_count = 0
             request_timeout_seconds = 60
             image_edit_unsupported_models: list[str] = []
             text_to_image_unsupported_models: list[str] = []
@@ -1326,7 +1286,7 @@ def test_provider_router_fallback_model_resolution() -> None:
 def test_style_negative_prompt_routing() -> None:
     """支持独立反向词的平台单独传递，其他平台合并到提示词。"""
 
-    from maimai_drawpic_pkg.core.draw_service import DrawService, ImageRequestAttempt
+    from maimai_drawpic_pkg.src.maimai_drawpic.application.drawing import DrawService, ImageRequestAttempt
 
     class _Provider:
         def __init__(self) -> None:

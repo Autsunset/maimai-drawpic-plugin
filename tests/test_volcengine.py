@@ -5,7 +5,6 @@ from pathlib import Path
 
 import asyncio
 import base64
-import importlib.util
 import sys
 import types
 
@@ -16,26 +15,9 @@ if _PKG_NAME not in sys.modules:
     pkg = types.ModuleType(_PKG_NAME)
     pkg.__path__ = [str(_PLUGIN_DIR)]
     sys.modules[_PKG_NAME] = pkg
-for sub in ("core", "providers"):
-    sub_path = _PLUGIN_DIR / sub
-    init_file = sub_path / "__init__.py"
-    full = f"{_PKG_NAME}.{sub}"
-    if full in sys.modules:
-        continue
-    if init_file.exists():
-        spec = importlib.util.spec_from_file_location(
-            full, init_file, submodule_search_locations=[str(sub_path)]
-        )
-        mod = importlib.util.module_from_spec(spec)
-        sys.modules[full] = mod
-        spec.loader.exec_module(mod)
-    else:
-        ns = types.ModuleType(full)
-        ns.__path__ = [str(sub_path)]
-        sys.modules[full] = ns
 
-from maimai_drawpic_pkg.core.provider_router import ProviderRouter  # noqa: E402
-from maimai_drawpic_pkg.providers.volcengine_platform import VolcengineImage  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.application.routing import ProviderRouter  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.providers.volcengine import VolcengineImage  # noqa: E402
 
 
 _MINIMAL_PNG = (
@@ -259,7 +241,7 @@ def test_global_task_blacklist_is_applied() -> None:
 
 def test_config_migration_legacy_models() -> None:
     """旧版分组字段自动合并到 models。"""
-    from maimai_drawpic_pkg.core.config import _migrate_legacy_volcengine_models
+    from maimai_drawpic_pkg.src.maimai_drawpic.domain.configuration.models import _migrate_legacy_volcengine_models
 
     config_data = {
         "volcengine": {
@@ -286,7 +268,7 @@ def test_config_migration_legacy_models() -> None:
 def test_default_models_cover_seedream_5_image_variants() -> None:
     """默认模型列表覆盖用户要求的 Seedream 5 图片模型。"""
 
-    from maimai_drawpic_pkg.core.config import VolcengineModelConfig
+    from maimai_drawpic_pkg.src.maimai_drawpic.domain.configuration.models import VolcengineModelConfig
 
     assert VolcengineModelConfig().models == [
         "doubao-seedream-5-0-flash-260915",

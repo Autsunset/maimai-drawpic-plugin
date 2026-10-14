@@ -16,17 +16,17 @@ from test_config_i18n import _bootstrap_plugin_package
 
 _bootstrap_plugin_package()
 
-from maimai_drawpic_pkg.core.config import DrawpicConfig  # noqa: E402
-from maimai_drawpic_pkg.core.draw_service import DrawService  # noqa: E402
-from maimai_drawpic_pkg.core.http_proxy import sanitize_provider_text  # noqa: E402
-from maimai_drawpic_pkg.core.provider_router import ProviderRouter  # noqa: E402
-from maimai_drawpic_pkg.providers.aliyun_platform import AliyunImage  # noqa: E402
-from maimai_drawpic_pkg.providers.comfyui_platform import ComfyUIImage  # noqa: E402
-from maimai_drawpic_pkg.providers.google_platform import GoogleImage  # noqa: E402
-from maimai_drawpic_pkg.providers.novelai_platform import NovelAIImage  # noqa: E402
-from maimai_drawpic_pkg.providers.openai_platform import OpenaiImage  # noqa: E402
-from maimai_drawpic_pkg.providers.siliconflow_platform import SiliconFlowImage  # noqa: E402
-from maimai_drawpic_pkg.providers.volcengine_platform import VolcengineImage  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.domain.configuration.models import DrawpicConfig  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.application.drawing import DrawService  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.http import sanitize_provider_text  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.application.routing import ProviderRouter  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.providers.aliyun import AliyunImage  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.providers.comfyui import ComfyUIImage  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.providers.gemini import GoogleImage  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.providers.novelai import NovelAIImage  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.providers.openai import OpenaiImage  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.providers.siliconflow import SiliconFlowImage  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.providers.volcengine import VolcengineImage  # noqa: E402
 
 
 PNG = base64.b64decode(
@@ -52,7 +52,7 @@ def test_google_default_config_serializes_through_developer_api_converter() -> N
 def test_google_client_closed_and_only_final_images_returned(monkeypatch: pytest.MonkeyPatch) -> None:
     """真实 SDK 响应中可能带思考图片；客户端退出与最终图片提取均需正确。"""
 
-    import maimai_drawpic_pkg.providers.google_platform as module
+    import maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.providers.gemini as module
 
     response = google_types.GenerateContentResponse(candidates=[google_types.Candidate(
         content=google_types.Content(parts=[
@@ -170,7 +170,7 @@ def test_novelai_invalid_size_override_is_not_silently_replaced() -> None:
 
 
 def test_output_image_validation_runs_outside_event_loop(monkeypatch: pytest.MonkeyPatch) -> None:
-    import maimai_drawpic_pkg.core.draw_service as module
+    import maimai_drawpic_pkg.src.maimai_drawpic.application.drawing.planning as module
 
     event_loop_thread = get_ident()
     validation_threads: List[int] = []

@@ -1,0 +1,100 @@
+"""按配置顺序执行模型尝试，并在单个模型内进行有界重试。"""
+
+from typing import List, Optional, Tuple
+import asyncio
+
+from .types import ImageRequestAttempt
+
+
+class RequestAttemptRunnerMixin:
+    async def _execute_request_plan(
+        self,
+        *,
+        primary_attempt: ImageRequestAttempt,
+        primary_model: str,
+        prompt: str,
+        task_id: str,
+        task_type: str,
+        openai_compatibility_mode: str,
+        novelai_mode: str,
+        novelai_artist_tags: str,
+        source_image_bytes_list: List[bytes],
+        source_image_urls: List[str],
+        matched_message_id: str,
+        request_negative_prompt: str,
+    ) -> Tuple[List[bytes], Optional[ImageRequestAttempt], List[str]]:
+        errors: List[str] = []
+        seen = set()
+        models = [primary_model, *self.router.resolve_fallback_models(primary_model)]
+        retry_count = self.router.config.general.request_retry_count
+        for position, model in enumerate(models):
+            attempt = (
+                primary_attempt
+                if position == 0
+                else self._build_fallback_image_request_attempt(
+                    primary_model=primary_model,
+                    primary_effective_model=primary_attempt.model,
+                    task_type=task_type,
+                    openai_compatibility_mode=openai_compatibility_mode,
+                    novelai_mode=novelai_mode,
+                    novelai_artist_tags=novelai_artist_tags,
+                    fallback_model=model,
+                )
+            )
+            if attempt is None or attempt.model in seen:
+                continue
+            seen.add(attempt.model)
+            try:
+                self.router.validate_source_image_count(attempt.model, len(source_image_bytes_list))
+            except ValueError as exc:
+                errors.append(self._format_attempt_error(attempt, str(exc)))
+                self.ctx.logger.warning("备选模型源图数量校验拒绝: task_id=%s model=%s reason=%s", task_id, model, exc)
+                continue
+            for retry in range(retry_count + 1):
+                await asyncio.to_thread(
+                    self.task_store.update_task,
+                    task_id,
+                    status="running",
+                    model=attempt.model,
+                    provider=attempt.provider_name,
+                    message=f"{'备选' if position else '首选'}模型 {attempt.model}，第 {retry + 1}/{retry_count + 1} 次尝试",
+                )
+                try:
+                    images = await self._run_image_request_attempt(
+                        attempt=attempt,
+                        prompt=prompt,
+                        task_id=task_id,
+                        task_type=task_type,
+                        source_image_bytes_list=source_image_bytes_list,
+                        source_image_urls=source_image_urls,
+                        matched_message_id=matched_message_id,
+                        request_negative_prompt=request_negative_prompt,
+                    )
+                    if not images:
+                        raise RuntimeError("图片平台没有返回任何图片结果")
+                    self.ctx.logger.info(
+                        "模型尝试成功: task_id=%s task_type=%s provider=%s model=%s attempt=%s source_image_count=%s",
+                        task_id,
+                        task_type,
+                        attempt.provider_name,
+                        attempt.model,
+                        retry + 1,
+                        len(source_image_bytes_list),
+                    )
+                    return images, attempt, errors
+                except TimeoutError:
+                    reason = f"图片请求超时，超过 {self.resolve_request_timeout_seconds()} 秒"
+                except Exception as exc:
+                    reason = str(exc) or type(exc).__name__
+                errors.append(self._format_attempt_error(attempt, reason))
+                self.ctx.logger.warning(
+                    "模型尝试失败: task_id=%s task_type=%s provider=%s model=%s attempt=%s retry_limit=%s reason=%s",
+                    task_id,
+                    task_type,
+                    attempt.provider_name,
+                    attempt.model,
+                    retry + 1,
+                    retry_count,
+                    reason,
+                )
+        return [], None, errors

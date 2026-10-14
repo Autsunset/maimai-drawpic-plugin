@@ -1,0 +1,949 @@
+from __future__ import annotations
+
+from typing import Any, Dict, List, Tuple
+from urllib.parse import urlsplit, urlunsplit
+import aiohttp
+import asyncio
+import base64
+import json
+import mimetypes
+import re
+import time
+
+from ..media.images import detect_image_dimensions, detect_mime_type, validate_image_bytes
+from ..http import HttpProxySettings, read_response_bytes, read_response_json, read_response_text
+from ...domain.models.openai_profiles import (
+    build_newapi_chat_payload,
+    is_endpoint_unsupported,
+    normalize_openai_mode,
+    select_auto_modes,
+    uses_newapi_image_chat,
+)
+from ...domain.models.rinkoai_profiles import (
+    RINKOAI_EDIT_UNSUPPORTED_REASON,
+    build_rinkoai_payload,
+    is_rinkoai_host,
+    is_rinkoai_nai_model,
+)
+
+
+class OpenAIRequestError(RuntimeError):
+    """携带脱敏后的协议错误分类，避免根据普通异常盲目重绘。"""
+
+    def __init__(
+        self,
+        status: int,
+        code: str,
+        param: str,
+        message: str,
+        request_id: str = "unknown",
+        duration: float = 0.0,
+    ) -> None:
+        super().__init__(
+            f"HTTP {status} code={code or 'unknown'}: {message} request_id={request_id} duration={duration:.2f}s"
+        )
+        self.status = status
+        self.code = code
+        self.param = param
+        self.can_retry_endpoint = is_endpoint_unsupported(status, code, message)
+
+
+class OpenaiImage:
+    """OpenAI 兼容图片接口封装。"""
+
+    _MARKDOWN_IMAGE_PATTERN = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
+    _VERSION_PATH_PATTERN = re.compile(r"/v\d+$", re.IGNORECASE)
+
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str = "https://api.openai.com/v1",
+        compatibility_mode: str = "images_api",
+        logger: Any | None = None,
+        request_timeout_seconds: int = 20,
+        default_size: str = "1024x1024",
+        model_size_overrides: dict[str, str] | None = None,
+        quality: str = "",
+        response_format: str = "",
+        output_format: str = "",
+        background: str = "",
+        moderation: str = "",
+        max_images: int = 1,
+        extra_parameters: dict[str, Any] | None = None,
+        proxy_settings: HttpProxySettings | None = None,
+    ) -> None:
+        self.api_key = api_key
+        self.base_url = self._normalize_base_url(base_url)
+        self.compatibility_mode = normalize_openai_mode(compatibility_mode)
+        self.logger = logger
+        self.request_timeout_seconds = request_timeout_seconds
+        self.default_size = default_size.strip()
+        self.model_size_overrides = {
+            str(model).strip(): str(size).strip()
+            for model, size in (model_size_overrides or {}).items()
+            if str(model).strip() and str(size).strip()
+        }
+        self.quality = quality.strip()
+        self.response_format = response_format.strip()
+        self.output_format = output_format.strip()
+        self.background = background.strip()
+        self.moderation = moderation.strip()
+        self.max_images = max(int(max_images), 1)
+        self.extra_parameters = dict(extra_parameters or {})
+        self.proxy_settings = proxy_settings or HttpProxySettings.disabled()
+        self._model_endpoint_types: Dict[str, List[str]] = {}
+        self._metadata_expires_at = 0.0
+        self._metadata_lock = asyncio.Lock()
+        self._successful_auto_modes: Dict[Tuple[str, str], str] = {}
+
+    async def generate_images(self, prompt: str, model: str, n: int = 1) -> list[bytes]:
+        """手动调用 OpenAI 兼容文生图接口。"""
+
+        modes = await self._resolve_request_modes(model, "draw")
+        for index, mode in enumerate(modes):
+            try:
+                if mode == "rinkoai":
+                    images = await self._request_chat_images(
+                        build_rinkoai_payload(prompt, model, self._resolve_n(n), self.extra_parameters),
+                        "RinkoAI NAI",
+                    )
+                elif mode == "chat_completions":
+                    images = await self._request_chat_images(
+                        build_newapi_chat_payload(prompt, model, self._resolve_n(n), self.extra_parameters),
+                        "New API Chat Completion",
+                    )
+                else:
+                    response = await self._post_json(
+                        url=self._build_api_url("images/generations"),
+                        payload=self._build_images_generation_payload(prompt=prompt, model=model, n=n),
+                    )
+                    images = await self._extract_images_auto(response)
+                self._remember_auto_mode(model, "draw", mode)
+                return images
+            except OpenAIRequestError as exc:
+                if not exc.can_retry_endpoint or index + 1 == len(modes):
+                    raise
+                self._log_endpoint_switch(model, mode, modes[index + 1], exc)
+            except Exception as exc:
+                raise RuntimeError(f"OpenAI 文生图失败: {self._sanitize_text(exc)}") from None
+        raise RuntimeError("未找到可用的文生图端点")
+
+    async def edit_images(self, prompt: str, model: str, image_bytes_list: list[bytes], n: int = 1) -> list[bytes]:
+        """手动调用 OpenAI 兼容图生图接口，支持一张或多张源图片。"""
+
+        if not image_bytes_list:
+            raise RuntimeError("没有可用于图生图的源图片")
+        if is_rinkoai_nai_model(self.base_url, model):
+            raise ValueError(RINKOAI_EDIT_UNSUPPORTED_REASON)
+
+        modes = await self._resolve_request_modes(model, "edit_image")
+        for index, mode in enumerate(modes):
+            try:
+                if mode == "chat_completions":
+                    source_urls = [
+                        await asyncio.to_thread(self._source_image_data_url, image_bytes)
+                        for image_bytes in image_bytes_list
+                    ]
+                    images = await self._request_chat_images(
+                        build_newapi_chat_payload(
+                            prompt,
+                            model,
+                            self._resolve_n(n),
+                            self.extra_parameters,
+                            source_urls,
+                        ),
+                        "New API Chat Completion",
+                    )
+                else:
+                    response = await self._post_edit_form_with_fallback(
+                        url=self._build_api_url("images/edits"),
+                        model=model,
+                        prompt=prompt,
+                        image_bytes_list=image_bytes_list,
+                        n=n,
+                    )
+                    images = await self._extract_images_auto(response)
+                self._remember_auto_mode(model, "edit_image", mode)
+                return images
+            except OpenAIRequestError as exc:
+                if not exc.can_retry_endpoint or index + 1 == len(modes):
+                    raise
+                self._log_endpoint_switch(model, mode, modes[index + 1], exc)
+            except Exception as exc:
+                raise RuntimeError(f"OpenAI 图生图失败: {self._sanitize_text(exc)}") from None
+        raise RuntimeError("未找到可用的图生图端点")
+
+    @staticmethod
+    def _source_image_data_url(image_bytes: bytes) -> str:
+        """在线程内校验并编码源图，不阻塞事件循环。"""
+
+        validate_image_bytes(image_bytes)
+        mime_type = detect_mime_type(image_bytes)
+        encoded = base64.b64encode(image_bytes).decode("ascii")
+        return f"data:{mime_type};base64,{encoded}"
+
+    async def _request_chat_images(self, payload: dict[str, Any], mode_label: str) -> List[bytes]:
+        """聊天绘图只提交一次，解析或下载失败不得触发端点切换重绘。"""
+
+        try:
+            response = await self._post_json(
+                url=self._build_api_url("chat/completions"),
+                payload=payload,
+            )
+            self._raise_response_error(response)
+            images = await self._extract_chat_completion_images(response)
+            for image_bytes in images:
+                await asyncio.to_thread(validate_image_bytes, image_bytes)
+            return images
+        except OpenAIRequestError:
+            raise
+        except Exception as exc:
+            raise RuntimeError(f"{mode_label} 绘图失败: {self._sanitize_text(exc)}") from None
+
+    def _is_auto_mode(self, model: str) -> bool:
+        return self.compatibility_mode == "auto" or (
+            self.compatibility_mode == "rinkoai" and not is_rinkoai_nai_model(self.base_url, model)
+        )
+
+    async def _resolve_request_modes(self, model: str, task_type: str) -> List[str]:
+        """自动模式读取端点声明并记住成功路径，手动模式严格遵从选择。"""
+
+        preferred = self._resolve_generation_modes(model)
+        if preferred == ["rinkoai"] or not self._is_auto_mode(model):
+            return preferred
+        await self._load_model_endpoint_types()
+        modes = select_auto_modes(model, self._model_endpoint_types.get(model.strip()))
+        cached = self._successful_auto_modes.get((task_type, model))
+        if cached in modes:
+            modes.remove(cached)
+            modes.insert(0, cached)
+        self._log_info("OpenAI 自动兼容选择: model=%s task_type=%s modes=%s", model, task_type, modes)
+        return modes
+
+    def _remember_auto_mode(self, model: str, task_type: str, mode: str) -> None:
+        if self._is_auto_mode(model):
+            self._successful_auto_modes[(task_type, model)] = mode
+
+    def _log_endpoint_switch(self, model: str, old: str, new: str, error: OpenAIRequestError) -> None:
+        self._log_info(
+            "OpenAI 端点不支持，切换兼容格式: model=%s from=%s to=%s status=%s code=%s",
+            model,
+            old,
+            new,
+            error.status,
+            error.code,
+        )
+
+    async def _load_model_endpoint_types(self) -> None:
+        """New API 在免费模型列表中提供端点信息；缺失时按模型规则选择。"""
+
+        if urlsplit(self.base_url).hostname == "api.openai.com":
+            return
+        async with self._metadata_lock:
+            if time.monotonic() < self._metadata_expires_at:
+                return
+            self._model_endpoint_types = await self._fetch_model_endpoint_types()
+            self._metadata_expires_at = time.monotonic() + 300
+
+    async def _fetch_model_endpoint_types(self) -> Dict[str, List[str]]:
+        url = self._build_api_url("models")
+        timeout = aiohttp.ClientTimeout(total=min(5, self.request_timeout_seconds))
+        try:
+            async with aiohttp.ClientSession(
+                timeout=timeout, **self.proxy_settings.aiohttp_session_kwargs()
+            ) as session:
+                async with session.get(
+                    url, headers=self._build_headers(), **self.proxy_settings.aiohttp_request_kwargs()
+                ) as response:
+                    if response.status != 200:
+                        self._log_info("OpenAI 端点信息不可用: status=%s", response.status)
+                        return {}
+                    result = await read_response_json(response, max_bytes=2 * 1024 * 1024)
+            if not isinstance(result, dict) or not isinstance(result.get("data"), list):
+                return {}
+            endpoints: Dict[str, List[str]] = {}
+            for item in result["data"]:
+                if not isinstance(item, dict):
+                    continue
+                model_id = item.get("id")
+                types = item.get("supported_endpoint_types")
+                if isinstance(model_id, str) and isinstance(types, list):
+                    endpoints[model_id] = [value for value in types if isinstance(value, str)]
+            return endpoints
+        except Exception as exc:
+            self._log_warning(
+                "OpenAI 端点信息读取失败: type=%s message=%s",
+                type(exc).__name__,
+                self._sanitize_text(exc),
+            )
+            return {}
+
+    @staticmethod
+    def _is_gpt_image_model(model: str) -> bool:
+        """判断是否为 GPT Image 系列模型。"""
+
+        return "gpt-image" in model
+
+    @classmethod
+    def _normalize_base_url(cls, base_url: str) -> str:
+        """规范 API 根路径，并兼容旧配置中省略 /v1 的地址。"""
+
+        normalized_base_url = base_url.strip().rstrip("/") or "https://api.openai.com/v1"
+        if cls._VERSION_PATH_PATTERN.search(normalized_base_url):
+            return normalized_base_url
+        return f"{normalized_base_url}/v1"
+
+    def _build_api_url(self, path: str) -> str:
+        """在完整 API 根路径后追加 OpenAI 兼容接口路径。"""
+
+        return f"{self.base_url}/{path.lstrip('/')}"
+
+    @staticmethod
+    def _guess_mime_type(filename: str) -> str:
+        """根据文件名猜测 MIME 类型。"""
+
+        mime_type, _ = mimetypes.guess_type(filename)
+        return mime_type or "image/png"
+
+    @staticmethod
+    def _detect_mime_type(image_bytes: bytes) -> str:
+        """尽量根据图片内容推断 MIME 类型。"""
+
+        return detect_mime_type(image_bytes)
+
+    @staticmethod
+    def _guess_filename_by_mime_type(mime_type: str) -> str:
+        """根据 MIME 类型生成上传文件名。"""
+
+        extension_map = {
+            "image/jpeg": "jpg",
+            "image/png": "png",
+            "image/webp": "webp",
+        }
+        extension = extension_map.get(mime_type, "png")
+        return f"source.{extension}"
+
+    def _build_headers(self, with_json_content_type: bool = False) -> dict[str, str]:
+        """构建请求头。"""
+
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        if with_json_content_type:
+            headers["Content-Type"] = "application/json"
+        return headers
+
+    def _resolve_generation_modes(self, model: str) -> list[str]:
+        """选择文生图接口；自动模式不轮流调用多个付费端点。"""
+
+        if self.compatibility_mode == "rinkoai":
+            if not is_rinkoai_host(self.base_url):
+                raise ValueError("RinkoAI 兼容模式仅适用于 api.rinko.ai 的 nai-diffusion-* 模型")
+        if self.compatibility_mode in {"auto", "rinkoai", "chat_completions"} and is_rinkoai_nai_model(
+            self.base_url, model
+        ):
+            return ["rinkoai"]
+        if self.compatibility_mode not in {"auto", "rinkoai"}:
+            return [self.compatibility_mode]
+        if uses_newapi_image_chat(model):
+            return ["chat_completions"]
+        return ["images_api"]
+
+    def _resolve_edit_modes(self, model: str) -> list[str]:
+        """图生图使用与文生图一致的端点选择，不改变任务类型。"""
+
+        return self._resolve_generation_modes(model)
+
+    def _resolve_size(self, model: str) -> str:
+        """按模型名解析分辨率配置。"""
+
+        return self.model_size_overrides.get(model.strip(), self.default_size)
+
+    @staticmethod
+    def _detect_image_dimensions(image_bytes: bytes) -> tuple[int, int] | None:
+        """读取源图尺寸，供图生图尽量保持原始尺寸。"""
+
+        return detect_image_dimensions(image_bytes)
+
+    @staticmethod
+    def _format_size(width: int, height: int) -> str:
+        """格式化 OpenAI Images API 的 size 字段。"""
+
+        return f"{max(int(width), 1)}x{max(int(height), 1)}"
+
+    @staticmethod
+    def _round_to_multiple(value: int, multiple: int = 16) -> int:
+        """将尺寸四舍五入到指定倍数。"""
+
+        return max(int(round(value / multiple) * multiple), multiple)
+
+    @classmethod
+    def _normalize_gpt_image_2_size(cls, dimensions: tuple[int, int]) -> str:
+        """将源图尺寸规范化到 gpt-image-2 支持的任意分辨率约束内。"""
+
+        width, height = dimensions
+        ratio = width / height
+        if ratio > 3:
+            width = height * 3
+        elif ratio < 1 / 3:
+            height = width * 3
+
+        max_edge = max(width, height)
+        if max_edge > 3840:
+            scale = 3840 / max_edge
+            width = int(width * scale)
+            height = int(height * scale)
+
+        width = cls._round_to_multiple(width)
+        height = cls._round_to_multiple(height)
+        pixels = width * height
+        if pixels < 655_360:
+            scale = (655_360 / pixels) ** 0.5
+            width = cls._round_to_multiple(int(width * scale))
+            height = cls._round_to_multiple(int(height * scale))
+        elif pixels > 8_294_400:
+            scale = (8_294_400 / pixels) ** 0.5
+            width = cls._round_to_multiple(int(width * scale))
+            height = cls._round_to_multiple(int(height * scale))
+        return cls._format_size(width, height)
+
+    @classmethod
+    def _resolve_closest_official_size(cls, dimensions: tuple[int, int]) -> str:
+        """按源图比例选择 OpenAI / NewAPI 兼容的官方枚举尺寸。"""
+
+        width, height = dimensions
+        ratio = width / height
+        candidates = (
+            (1024, 1024),
+            (1536, 1024),
+            (1024, 1536),
+        )
+        best_width, best_height = min(candidates, key=lambda item: abs((item[0] / item[1]) - ratio))
+        return cls._format_size(best_width, best_height)
+
+    def _resolve_source_edit_size(self, model: str, image_bytes: bytes) -> str:
+        """解析图生图首选尺寸，兼顾 OpenAI 官方与 OpenAI 兼容中转。"""
+
+        dimensions = self._detect_image_dimensions(image_bytes)
+        if dimensions is None:
+            return ""
+        if model.strip().lower().startswith(("gpt-image-2", "chatgpt-image-latest")):
+            return self._normalize_gpt_image_2_size(dimensions)
+        return self._resolve_closest_official_size(dimensions)
+
+    def _resolve_n(self, n: int) -> int:
+        """解析最终请求图片数量。"""
+
+        return min(max(int(n), 1), self.max_images)
+
+    def _build_images_generation_payload(self, prompt: str, model: str, n: int) -> dict[str, Any]:
+        """构建 OpenAI Images API 文生图请求体。"""
+
+        payload: dict[str, Any] = {
+            "model": model,
+            "prompt": prompt,
+            "n": self._resolve_n(n),
+        }
+        size = self._resolve_size(model)
+        if size:
+            payload["size"] = size
+        if self.quality:
+            payload["quality"] = self.quality
+        if self.response_format:
+            payload["response_format"] = self.response_format
+        elif not self._is_gpt_image_model(model):
+            payload["response_format"] = "b64_json"
+        if self.output_format:
+            payload["output_format"] = self.output_format
+        if self.background:
+            payload["background"] = self.background
+        if self.moderation:
+            payload["moderation"] = self.moderation
+        payload.update(self.extra_parameters)
+        payload.update({"model": model, "prompt": prompt, "n": self._resolve_n(n)})
+        self._validate_image_parameters(payload, model)
+        return payload
+
+    def _validate_image_parameters(self, payload: dict[str, Any], model: str) -> None:
+        """按 GPT Image 官方限制验证参数；保留其他兼容模型的扩展能力。"""
+
+        if payload.pop("stream", False):
+            raise ValueError("插件当前不支持流式图片响应，请移除 stream=true")
+        payload.pop("partial_images", None)
+        if not (self._is_gpt_image_model(model) or model.strip().lower() == "chatgpt-image-latest"):
+            return
+        # GPT Image 直接返回 Base64，response_format 是旧模型参数。
+        payload.pop("response_format", None)
+        if model.strip().lower().startswith("gpt-image-2"):
+            payload.pop("input_fidelity", None)
+        if payload.get("output_format", "png") == "png":
+            payload.pop("output_compression", None)
+        if payload.get("background") == "transparent" and payload.get("output_format") == "jpeg":
+            raise ValueError("OpenAI 透明背景必须使用 png 或 webp 输出格式")
+
+    async def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """发送 JSON POST 请求。"""
+
+        start_time = time.time()
+        timeout = aiohttp.ClientTimeout(total=self.request_timeout_seconds)
+        async with aiohttp.ClientSession(timeout=timeout, **self.proxy_settings.aiohttp_session_kwargs()) as session:
+            async with session.post(
+                url,
+                headers=self._build_headers(with_json_content_type=True),
+                json=payload,
+                **self.proxy_settings.aiohttp_request_kwargs(),
+            ) as response:
+                duration = time.time() - start_time
+                if response.status != 200:
+                    raise await self._http_error(response, url, duration)
+                result = await read_response_json(response)
+                if not isinstance(result, dict):
+                    raise RuntimeError("OpenAI 图片接口返回了非对象 JSON")
+                self._raise_response_error(result)
+                return result
+
+    async def _post_form(self, url: str, form: aiohttp.FormData) -> dict[str, Any]:
+        """发送表单 POST 请求。"""
+
+        start_time = time.time()
+        timeout = aiohttp.ClientTimeout(total=self.request_timeout_seconds)
+        async with aiohttp.ClientSession(timeout=timeout, **self.proxy_settings.aiohttp_session_kwargs()) as session:
+            async with session.post(
+                url,
+                headers=self._build_headers(),
+                data=form,
+                **self.proxy_settings.aiohttp_request_kwargs(),
+            ) as response:
+                duration = time.time() - start_time
+                if response.status != 200:
+                    raise await self._http_error(response, url, duration)
+                result = await read_response_json(response)
+                if not isinstance(result, dict):
+                    raise RuntimeError("OpenAI 图片接口返回了非对象 JSON")
+                self._raise_response_error(result)
+                return result
+
+    async def _http_error(
+        self,
+        response: aiohttp.ClientResponse,
+        url: str,
+        duration: float,
+    ) -> OpenAIRequestError:
+        """保留 HTTP 状态、参数错误与业务码，所有诊断先脱敏。"""
+
+        raw_text = await read_response_text(response, max_bytes=64 * 1024)
+        code, param, message = "", "", raw_text
+        request_id = response.headers.get("x-request-id", "unknown")
+        try:
+            body = json.loads(raw_text)
+        except json.JSONDecodeError:
+            body = None
+        if isinstance(body, dict):
+            error = body.get("error")
+            if isinstance(error, dict):
+                code = str(error.get("code") or "")
+                param = str(error.get("param") or "")
+                message = str(error.get("message") or error.get("type") or raw_text)
+            request_id = str(body.get("request_id") or body.get("id") or request_id)
+        code, param, message = (
+            self._sanitize_text(code),
+            self._sanitize_text(param),
+            self._sanitize_text(message),
+        )
+        self._log_error(
+            "OpenAI API错误: status=%s duration=%.2fs url=%s code=%s param=%s request_id=%s message=%s",
+            response.status,
+            duration,
+            self._sanitize_url(url),
+            code,
+            param,
+            self._sanitize_text(request_id),
+            message,
+        )
+        return OpenAIRequestError(
+            response.status,
+            code,
+            param,
+            message,
+            request_id=self._sanitize_text(request_id),
+            duration=duration,
+        )
+
+    async def _post_edit_form_with_fallback(
+        self,
+        *,
+        url: str,
+        model: str,
+        prompt: str,
+        image_bytes_list: list[bytes],
+        n: int,
+    ) -> dict[str, Any]:
+        """发送图片编辑表单，并自动兼容多种图片字段名。
+
+        OpenAI 官方 curl 示例多图使用 image[]；部分 SDK/中转站会接受重复 image 字段；
+        NewAPI 等旧 OpenAI 兼容接口通常只声明单个 image 字段。
+        """
+
+        default_size = self._resolve_size(model)
+        source_size = self._resolve_source_edit_size(model, image_bytes_list[0])
+        size_candidates = [source_size, default_size] if source_size and source_size != default_size else [default_size]
+
+        last_error = None
+        for size_index, size in enumerate(size_candidates):
+            if size_index == 0:
+                self._log_info(
+                    "OpenAI 图生图尺寸尝试: model=%s source_size=%s request_size=%s default_size=%s image_count=%s",
+                    model,
+                    source_size,
+                    size,
+                    default_size,
+                    len(image_bytes_list),
+                )
+            if size_index > 0:
+                self._log_warning(
+                    "OpenAI 图生图源图尺寸不可用，回退默认尺寸: model=%s source_size=%s fallback_size=%s",
+                    model,
+                    source_size,
+                    size,
+                )
+            if len(image_bytes_list) > 1:
+                field_candidates = [
+                    ("image[]", image_bytes_list, "official_array_field"),
+                    ("image", image_bytes_list, "repeated_image_field"),
+                ]
+            else:
+                field_candidates = [
+                    ("image", image_bytes_list, "single_image_field"),
+                    ("image[]", image_bytes_list, "official_array_field"),
+                ]
+            for field_index, (field_name, submitted_images, field_mode) in enumerate(field_candidates):
+                try:
+                    self._log_info(
+                        "OpenAI 图生图图片字段尝试: model=%s field_name=%s field_mode=%s submitted_image_count=%s total_image_count=%s",
+                        model,
+                        field_name,
+                        field_mode,
+                        len(submitted_images),
+                        len(image_bytes_list),
+                    )
+                    parameters = self._build_images_generation_payload(prompt, model, n)
+                    if size:
+                        parameters["size"] = size
+                    # 编辑与生成复用可选字段，包括 moderation；复合扩展值必须使用 JSON。
+                    form = aiohttp.FormData()
+                    for key, value in parameters.items():
+                        if value is not None:
+                            serialized = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
+                            form.add_field(str(key), serialized)
+                    for image_bytes in submitted_images:
+                        mime_type = self._detect_mime_type(image_bytes)
+                        form.add_field(
+                            field_name,
+                            image_bytes,
+                            filename=self._guess_filename_by_mime_type(mime_type),
+                            content_type=mime_type,
+                        )
+                    return await self._post_form(url=url, form=form)
+                except OpenAIRequestError as exc:
+                    last_error = exc
+                    # 只针对明确标记的参数校验错误调整表单；不能因鉴权、
+                    # 额度或服务错误重发，更不能默默丢掉多图中的部分源图。
+                    if exc.status in {400, 422} and exc.param == "size":
+                        break
+                    if (
+                        exc.status in {400, 422}
+                        and exc.param in {"image", "image[]"}
+                        and field_index + 1 < len(field_candidates)
+                    ):
+                        continue
+                    raise
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("图片编辑表单提交失败")
+
+    async def _extract_images(self, response: dict[str, Any]) -> list[bytes]:
+        """从接口响应中提取图片。"""
+
+        data = response.get("data")
+        if not isinstance(data, list):
+            raise RuntimeError("响应中未找到 data 字段")
+
+        image_bytes_list: list[bytes] = []
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+            image_base64 = item.get("b64_json")
+            if isinstance(image_base64, str) and image_base64:
+                image_bytes_list.append(await asyncio.to_thread(base64.b64decode, image_base64))
+                continue
+
+            image_url = item.get("url")
+            if isinstance(image_url, str) and image_url:
+                image_bytes_list.append(await self._download_image(image_url))
+
+        if not image_bytes_list:
+            raise RuntimeError("未找到有效的图片数据")
+        return image_bytes_list
+
+    async def _extract_images_auto(self, response: dict[str, Any]) -> list[bytes]:
+        """自动尝试多种图片响应格式。"""
+
+        parsers = (
+            self._extract_images,
+            self._extract_chat_completion_images,
+        )
+        errors: list[str] = []
+        for parser in parsers:
+            try:
+                return await parser(response)
+            except Exception as exc:
+                errors.append(f"{parser.__name__}: {self._sanitize_text(exc)}")
+        raise RuntimeError("未能从响应中解析图片数据: " + " | ".join(errors))
+
+    async def _extract_chat_completion_images(self, response: dict[str, Any]) -> list[bytes]:
+        """从 chat completions 响应中提取图片。"""
+
+        choices = response.get("choices")
+        if not isinstance(choices, list):
+            raise RuntimeError("chat completions 响应中未找到 choices 字段")
+
+        image_bytes_list: list[bytes] = []
+        for choice in choices:
+            if not isinstance(choice, dict):
+                continue
+            message = choice.get("message")
+            if not isinstance(message, dict):
+                continue
+
+            content = message.get("content")
+            if isinstance(content, str):
+                image_bytes_list.extend(await self._extract_images_from_string(content))
+
+            if isinstance(content, list):
+                for item in content:
+                    image_bytes_list.extend(await self._extract_images_from_content_item(item))
+
+            direct_images = message.get("images")
+            if isinstance(direct_images, list):
+                for item in direct_images:
+                    image_bytes_list.extend(await self._extract_images_from_content_item(item))
+
+        if image_bytes_list:
+            return image_bytes_list
+
+        response_output = response.get("output")
+        if isinstance(response_output, list):
+            for item in response_output:
+                extracted = await self._extract_image_bytes_from_content_item(item)
+                if extracted is not None:
+                    image_bytes_list.append(extracted)
+
+        top_level_image = response.get("image") or response.get("image_url") or response.get("b64_json")
+        extracted = await self._extract_image_bytes_from_content_item(top_level_image)
+        if extracted is not None:
+            image_bytes_list.append(extracted)
+
+        if image_bytes_list:
+            return image_bytes_list
+
+        raise RuntimeError(
+            f"聊天绘图响应中未找到可解析的图片数据；request_id={self._sanitize_text(response.get('id', 'unknown'))}"
+        )
+
+    async def _extract_images_from_string(self, value: str) -> List[bytes]:
+        """解析所有 Markdown 图片，避免多图响应只返回第一张。"""
+
+        references = await asyncio.to_thread(self._MARKDOWN_IMAGE_PATTERN.findall, value)
+        if not references:
+            references = [value.strip()]
+        images: List[bytes] = []
+        for reference in references:
+            extracted = await self._extract_image_bytes_from_string(reference)
+            if extracted is not None:
+                images.append(extracted)
+        return images
+
+    async def _extract_images_from_content_item(self, item: Any) -> List[bytes]:
+        """保留结构化内容中所有图片，而不是每个片段只取一张。"""
+
+        if isinstance(item, str):
+            return await self._extract_images_from_string(item)
+        if isinstance(item, dict):
+            for key in ("text", "content"):
+                value = item.get(key)
+                if isinstance(value, str):
+                    images = await self._extract_images_from_string(value)
+                    if images:
+                        return images
+            for key in ("content", "parts", "images"):
+                nested = item.get(key)
+                if isinstance(nested, list):
+                    images = []
+                    for entry in nested:
+                        images.extend(await self._extract_images_from_content_item(entry))
+                    if images:
+                        return images
+        extracted = await self._extract_image_bytes_from_content_item(item)
+        return [extracted] if extracted is not None else []
+
+    async def _extract_image_bytes_from_content_item(self, item: Any) -> bytes | None:
+        """从单个内容片段中提取图片。"""
+
+        if isinstance(item, str):
+            return await self._extract_image_bytes_from_string(item)
+
+        if not isinstance(item, dict):
+            return None
+
+        for key in ("text", "content"):
+            text_value = item.get(key)
+            if not isinstance(text_value, str) or not text_value:
+                continue
+            extracted = await self._extract_image_bytes_from_string(text_value)
+            if extracted is not None:
+                return extracted
+
+        for key in ("content", "parts", "images"):
+            nested_items = item.get(key)
+            if not isinstance(nested_items, list):
+                continue
+            for nested_item in nested_items:
+                extracted = await self._extract_image_bytes_from_content_item(nested_item)
+                if extracted is not None:
+                    return extracted
+
+        image_base64 = item.get("b64_json") or item.get("image_base64") or item.get("base64")
+        if isinstance(image_base64, str) and image_base64:
+            return await asyncio.to_thread(base64.b64decode, image_base64)
+
+        inline_data = item.get("inline_data") or item.get("inlineData")
+        if isinstance(inline_data, dict):
+            inline_base64 = inline_data.get("data")
+            if isinstance(inline_base64, str) and inline_base64:
+                return await asyncio.to_thread(base64.b64decode, inline_base64)
+
+        source = item.get("source")
+        if isinstance(source, dict):
+            source_base64 = source.get("data")
+            if isinstance(source_base64, str) and source_base64:
+                return await asyncio.to_thread(base64.b64decode, source_base64)
+            source_url = source.get("url")
+            if isinstance(source_url, str) and source_url:
+                return await self._extract_image_bytes_from_string(source_url)
+        elif isinstance(source, str) and source:
+            return await self._extract_image_bytes_from_string(source)
+
+        image_url = item.get("url")
+        if isinstance(image_url, str) and image_url:
+            return await self._extract_image_bytes_from_string(image_url)
+
+        image_field = item.get("image")
+        if isinstance(image_field, (dict, str)):
+            extracted = await self._extract_image_bytes_from_content_item(image_field)
+            if extracted is not None:
+                return extracted
+
+        image_url_object = item.get("image_url")
+        if isinstance(image_url_object, dict):
+            image_url = image_url_object.get("url")
+        else:
+            image_url = image_url_object
+        if isinstance(image_url, str) and image_url:
+            return await self._extract_image_bytes_from_string(image_url)
+
+        data_field = item.get("data")
+        if isinstance(data_field, str) and data_field:
+            return await self._extract_image_bytes_from_string(data_field)
+
+        return None
+
+    async def _extract_image_bytes_from_string(self, value: str) -> bytes | None:
+        """从字符串中提取图片数据。"""
+
+        if value.startswith("data:image/") and ";base64," in value:
+            _prefix, image_base64 = value.split(";base64,", maxsplit=1)
+            if image_base64:
+                return await asyncio.to_thread(base64.b64decode, image_base64, validate=True)
+            return None
+
+        if value.startswith("http://") or value.startswith("https://"):
+            return await self._download_image(value)
+
+        markdown_match = self._MARKDOWN_IMAGE_PATTERN.search(value)
+        if markdown_match is not None:
+            return await self._extract_image_bytes_from_string(markdown_match.group(1))
+
+        return None
+
+    async def _download_image(self, url: str) -> bytes:
+        """下载 URL 形式返回的图片。"""
+
+        timeout = aiohttp.ClientTimeout(total=self.request_timeout_seconds)
+        async with aiohttp.ClientSession(timeout=timeout, **self.proxy_settings.aiohttp_session_kwargs()) as session:
+            async with session.get(url, **self.proxy_settings.aiohttp_request_kwargs()) as response:
+                if response.status != 200:
+                    self._log_error(
+                        "OpenAI API错误: 下载图片失败 status=%s url=%s",
+                        response.status,
+                        self._sanitize_url(url),
+                    )
+                    raise RuntimeError(f"下载生成图片失败: status={response.status}")
+                return await read_response_bytes(response)
+
+    def _raise_response_error(self, response: dict[str, Any]) -> None:
+        """HTTP 200 也可能携带业务失败，不能把它当作正常图片响应。"""
+
+        error = response.get("error")
+        if not error:
+            return
+        if isinstance(error, dict):
+            code = error.get("code") or error.get("type") or "unknown"
+            message = error.get("message") or "上游未提供错误说明"
+        else:
+            code, message = "unknown", error
+        raise RuntimeError(
+            "OpenAI 图片接口业务失败: "
+            f"code={self._sanitize_text(code)} message={self._sanitize_text(message)} "
+            f"request_id={self._sanitize_text(response.get('request_id') or response.get('id') or 'unknown')}"
+        )
+
+    def _sanitize_text(self, value: Any) -> str:
+        """错误诊断不得包含凭证、图片数据或签名 URL。"""
+
+        text = str(value)
+        if self.api_key:
+            text = text.replace(self.api_key, "[REDACTED]")
+        text = re.sub(r"Bearer\s+\S+", "Bearer [REDACTED]", text, flags=re.IGNORECASE)
+        text = re.sub(
+            r"data:image/[^;\s]+;base64,[A-Za-z0-9+/=_-]+",
+            "[BASE64_REDACTED]",
+            text,
+            flags=re.IGNORECASE,
+        )
+        text = re.sub(r"[A-Za-z0-9+/=_-]{80,}", "[LONG_DATA_REDACTED]", text)
+        for url in re.findall(r"https?://[^\s\"'<>]+", text):
+            text = text.replace(url, self._sanitize_url(url))
+        return text[:500]
+
+    @staticmethod
+    def _sanitize_url(url: str) -> str:
+        """日志仅保留主机与路径，不保留凭证、查询参数或片段。"""
+
+        parsed = urlsplit(url)
+        return urlunsplit((parsed.scheme, parsed.hostname or "", parsed.path, "", ""))
+
+    def _log_error(self, message: str, *args: Any) -> None:
+        """记录错误日志。"""
+
+        if self.logger is not None:
+            self.logger.error(message, *args)
+
+    def _log_info(self, message: str, *args: Any) -> None:
+        """记录信息日志。"""
+
+        if self.logger is not None:
+            self.logger.info(message, *args)
+
+    def _log_warning(self, message: str, *args: Any) -> None:
+        """记录警告日志。"""
+
+        if self.logger is not None:
+            self.logger.warning(message, *args)

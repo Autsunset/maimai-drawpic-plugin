@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>麦麦绘图 · 创作工作台</title>
+    <!-- workspace:styles -->
+  </head>
+  <body>
+    <div class="shell">
+      <aside class="sidebar" aria-label="绘图工作台导航">
+        <a class="brand" href="#studio"
+          ><img
+            class="brand-mark"
+            src="{{workspace:icon}}"
+            alt=""
+            width="44"
+            height="44"
+          /><span>麦麦绘图<small>把想象变成画面</small></span></a
+        >
+        <div class="nav-caption">工作台</div>
+        <nav id="navigation">
+          <button data-view="studio" class="nav-item active">
+            <span data-icon="sparkles"></span>开始创作
+          </button>
+          <button data-view="tasks" class="nav-item">
+            <span data-icon="images"></span>绘图任务<span
+              id="active-count"
+              class="nav-count"
+              hidden
+            ></span>
+          </button>
+          <button data-view="platforms" class="nav-item">
+            <span data-icon="layers"></span>绘图平台
+          </button>
+          <button data-view="settings" class="nav-item">
+            <span data-icon="sliders"></span>偏好与预设
+          </button>
+          <button data-view="logs" class="nav-item">
+            <span data-icon="terminal"></span>运行日志
+          </button>
+        </nav>
+        <div class="sidebar-note">
+          <span class="connection-dot"></span
+          ><span id="connection">正在连接 MaiBot</span>
+        </div>
+      </aside>
+      <main>
+        <header class="page-header">
+          <div>
+            <div class="eyebrow">MAIMAI / DRAWING WORKSPACE</div>
+            <h1 id="page-title">开始创作</h1>
+            <p id="page-description">从一个想法开始，剩下的交给画笔。</p>
+          </div>
+          <button
+            id="refresh"
+            class="button secondary compact"
+            aria-label="刷新工作台"
+          >
+            <span data-icon="refresh"></span><span>刷新</span>
+          </button>
+        </header>
+        <div id="load-error" class="error-banner" role="alert" hidden></div>
+        <div id="workspace-content" aria-live="polite">
+          <div class="loading">
+            <span class="spinner"></span>正在准备绘图工作台…
+          </div>
+        </div>
+        <footer>麦麦绘图<span>配置和作品保存在当前 MaiBot 实例</span></footer>
+      </main>
+    </div>
+    <dialog id="modal">
+      <div class="modal-header">
+        <h2 id="modal-title"></h2>
+        <button id="modal-close" class="icon-button" aria-label="关闭弹窗">
+          ×
+        </button>
+      </div>
+      <div id="modal-content"></div>
+    </dialog>
+    <div id="toast" role="status" aria-live="polite" hidden></div>
+    <!-- workspace:scripts -->
+  </body>
+</html>

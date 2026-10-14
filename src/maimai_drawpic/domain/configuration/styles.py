@@ -1,0 +1,88 @@
+"""configuration/styles.py 的强类型配置定义。"""
+
+from maibot_sdk import Field, PluginConfigBase
+from typing import List
+
+
+class StylePresetConfig(PluginConfigBase):
+    """单个全平台绘图风格的提示词模板。"""
+
+    enabled: bool = Field(
+        default=True,
+        description="是否启用该绘图风格",
+        json_schema_extra={
+            "label": "启用",
+            "order": 0,
+        },
+    )
+    name: str = Field(
+        default="自定义风格",
+        description="风格名称，用于工具参数和 /绘图 风格 指令",
+        json_schema_extra={
+            "label": "风格名称",
+            "placeholder": "例如：水彩、赛博朋克",
+            "order": 1,
+        },
+    )
+    description: str = Field(
+        default="",
+        description="风格的语义描述，供用户查看并帮助模型匹配风格",
+        json_schema_extra={
+            "label": "风格描述（可选）",
+            "hint": "简要说明视觉特点和适用场景；留空时只显示风格名称",
+            "input_type": "textarea",
+            "x-widget": "textarea",
+            "rows": 2,
+            "order": 2,
+        },
+    )
+    positive_prompt_template: str = Field(
+        default="{prompt}",
+        description="正向提示词模板。{prompt} 会替换为用户正向提示词；没有占位符时会自动追加用户提示词",
+        json_schema_extra={
+            "label": "正向提示词模板",
+            "hint": "支持 {prompt}；NovelAI 的 {{tag}} 权重花括号可直接保留",
+            "input_type": "textarea",
+            "x-widget": "textarea",
+            "rows": 4,
+            "order": 3,
+        },
+    )
+    negative_prompt_template: str = Field(
+        default="{negative_prompt}",
+        description="反向提示词模板。{negative_prompt} 会替换为用户反向提示词；没有占位符时会自动追加",
+        json_schema_extra={
+            "label": "反向提示词模板",
+            "hint": "支持 {negative_prompt}；平台支持独立反向提示词时单独传递，否则合并到一个提示词中",
+            "input_type": "textarea",
+            "x-widget": "textarea",
+            "rows": 4,
+            "order": 4,
+        },
+    )
+
+
+class StyleConfig(PluginConfigBase):
+    """全平台通用的风格化提示词模板配置。"""
+
+    __ui_label__ = "绘图风格配置"
+    __ui_order__ = 2
+
+    default_style: str = Field(
+        default="",
+        description="使用“默认”风格名时解析到的风格。留空表示保持普通绘图行为",
+        json_schema_extra={
+            "label": "默认风格",
+            "hint": "必须与下方某个已启用风格名称完全一致；留空时 /绘图 风格 默认 不套用模板",
+            "order": 0,
+        },
+    )
+    presets: List[StylePresetConfig] = Field(
+        default=[],
+        description="适用于所有图片平台的正向、反向提示词模板列表",
+        json_schema_extra={
+            "label": "风格模板",
+            "hint": "风格只负责提示词模板，不会修改 NovelAI Anime/Furry mode 或当前会话模型",
+            "order": 1,
+        },
+    )

@@ -6,7 +6,6 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
-import importlib.util
 import json
 import sys
 import types
@@ -27,32 +26,11 @@ def _bootstrap_plugin_package() -> None:
         package.__path__ = [str(_PLUGIN_DIR)]
         sys.modules[_PKG_NAME] = package
 
-    for subpackage_name in ("core", "models", "providers"):
-        full_name = f"{_PKG_NAME}.{subpackage_name}"
-        if full_name in sys.modules:
-            continue
-        subpackage_path = _PLUGIN_DIR / subpackage_name
-        init_path = subpackage_path / "__init__.py"
-        if not init_path.exists():
-            module = types.ModuleType(full_name)
-            module.__path__ = [str(subpackage_path)]
-            sys.modules[full_name] = module
-            continue
-        spec = importlib.util.spec_from_file_location(
-            full_name,
-            init_path,
-            submodule_search_locations=[str(subpackage_path)],
-        )
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"无法加载测试包：{full_name}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[full_name] = module
-        spec.loader.exec_module(module)
 
 
 def _config_schema() -> dict[str, Any]:
     _bootstrap_plugin_package()
-    config_module = import_module(f"{_PKG_NAME}.core.config")
+    config_module = import_module(f"{_PKG_NAME}.src.maimai_drawpic.domain.configuration.models")
     return generate_plugin_config_schema(config_module.DrawpicConfig)
 
 
@@ -104,7 +82,7 @@ def test_all_config_classes_have_section_i18n() -> None:
     """根配置节和嵌套列表模型都必须保留完整的节级多语言元数据。"""
 
     _bootstrap_plugin_package()
-    config_module = import_module(f"{_PKG_NAME}.core.config")
+    config_module = import_module(f"{_PKG_NAME}.src.maimai_drawpic.domain.configuration.models")
     class_names = (
         "PluginSectionConfig",
         "GeneralConfig",
@@ -166,9 +144,9 @@ def test_manifest_declares_all_config_locales() -> None:
 
 
 def test_manifest_requires_current_maibot_and_sdk() -> None:
-    """发布清单必须拒绝缺少当前配置 Schema 能力的旧运行时。"""
+    """发布清单必须拒绝未核对当前扩展页面和标准路径 API 的旧运行时。"""
 
     manifest = json.loads((_PLUGIN_DIR / "_manifest.json").read_text(encoding="utf-8"))
 
-    assert manifest["host_application"]["min_version"] == "1.2.0"
-    assert manifest["sdk"]["min_version"] == "2.7.1"
+    assert manifest["host_application"]["min_version"] == "1.3.7"
+    assert manifest["sdk"]["min_version"] == "2.12.0"

@@ -1,0 +1,225 @@
+{
+  "schema_version": 2,
+  "required_capabilities": [
+    "custom_pages",
+    "image_upload"
+  ],
+  "pages": [
+    {
+      "id": "studio",
+      "title": "麦麦绘图",
+      "description": "平台配置、绘图创作、任务与日志",
+      "mode": "custom",
+      "placement": "sidebar",
+      "icon": "puzzle",
+      "layout": "viewport",
+      "entry": "src/maimai_drawpic/interfaces/webui/index.html",
+      "queries": {
+        "bootstrap": {
+          "api": "workspace_bootstrap",
+          "version": "1",
+          "parameters": {}
+        },
+        "tasks": {
+          "api": "workspace_tasks",
+          "version": "1",
+          "parameters": {
+            "page": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "status": {
+              "type": "string",
+              "required": false,
+              "max_length": 20
+            },
+            "search": {
+              "type": "string",
+              "required": false,
+              "max_length": 200
+            }
+          }
+        },
+        "task": {
+          "api": "workspace_task",
+          "version": "1",
+          "parameters": {
+            "task_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 12
+            }
+          }
+        },
+        "image": {
+          "api": "workspace_image",
+          "version": "1",
+          "parameters": {
+            "task_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 12
+            },
+            "index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "thumbnail": {
+              "type": "boolean"
+            }
+          }
+        },
+        "original": {
+          "api": "workspace_original",
+          "version": "1",
+          "parameters": {
+            "task_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 12
+            },
+            "index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100
+            },
+            "offset": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 104857600
+            }
+          }
+        },
+        "logs": {
+          "api": "workspace_logs",
+          "version": "1",
+          "parameters": {
+            "task_id": {
+              "type": "string",
+              "required": false,
+              "max_length": 12
+            },
+            "level": {
+              "type": "string",
+              "required": false,
+              "max_length": 10
+            },
+            "limit": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 300
+            },
+            "cursor": {
+              "type": "string",
+              "max_length": 24
+            }
+          }
+        },
+        "streams": {
+          "api": "workspace_streams",
+          "version": "1",
+          "parameters": {
+            "platform": {
+              "type": "string",
+              "required": false,
+              "max_length": 80
+            }
+          }
+        }
+      },
+      "actions": {
+        "provider_save": {
+          "api": "workspace_provider_save",
+          "version": "1",
+          "parameters": {
+            "provider_json": {
+              "type": "string",
+              "required": true,
+              "max_length": 61440
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            }
+          }
+        },
+        "provider_delete": {
+          "api": "workspace_provider_delete",
+          "version": "1",
+          "parameters": {
+            "provider_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 32
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            }
+          },
+          "confirmation": "移除这个平台？进行中的任务仍按提交时的配置执行。"
+        },
+        "settings_save": {
+          "api": "workspace_settings_save",
+          "version": "1",
+          "parameters": {
+            "config_json": {
+              "type": "string",
+              "required": true,
+              "max_length": 61440
+            },
+            "revision": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 2147483647
+            }
+          }
+        },
+        "source": {
+          "api": "workspace_source",
+          "version": "1",
+          "parameters": {
+            "upload_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 200
+            }
+          }
+        },
+        "submit": {
+          "api": "workspace_submit",
+          "version": "1",
+          "parameters": {
+            "request_json": {
+              "type": "string",
+              "required": true,
+              "max_length": 61440
+            }
+          }
+        },
+        "cancel": {
+          "api": "workspace_cancel",
+          "version": "1",
+          "parameters": {
+            "task_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 12
+            }
+          },
+          "confirmation": "取消这个绘图任务？已发送到绘图平台的请求可能仍会计费。"
+        }
+      },
+      "uploads": {
+        "source": {
+          "action": "source",
+          "image_max_edge": 4000
+        }
+      }
+    }
+  ]
+}

@@ -219,6 +219,8 @@ __marimo__/
 !_manifest.json
 config.toml
 data/
+data.migrated-*/
+*.json.migrated-*
 session_preferences.json
 config_back/
 draw_tasks.json

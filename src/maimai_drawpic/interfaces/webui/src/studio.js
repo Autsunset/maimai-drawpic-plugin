@@ -1,0 +1,240 @@
+(() => {
+  "use strict";
+  const U = window.DrawpicUI,
+    { state, $, e, icon, call, buttonAction, toast } = U;
+  let mode = "draw",
+    pollTimer;
+  const draft = {};
+  function saveDraft() {
+    for (const id of [
+      "draw-prompt",
+      "draw-model",
+      "draw-style",
+      "draw-negative",
+      "draw-delivery",
+      "chat-platform",
+    ]) {
+      const input = $("#" + id);
+      if (input) draft[id] = input.value;
+    }
+  }
+  function modelOptions() {
+    return state.data.models
+      .filter((item) => item[mode])
+      .map(
+        (item) =>
+          `<option value="${e(item.name)}" ${item.name === state.data.default_model ? "selected" : ""}>${e(item.name)} · ${e(item.provider)}</option>`,
+      )
+      .join("");
+  }
+  function bindSources() {
+    const box = $("#source-list");
+    if (!box) return;
+    box.innerHTML = state.sources
+      .map(
+        (item, index) =>
+          `<div class="source-item"><img src="${e(item.preview)}" alt="源图片 ${index + 1}"><button type="button" class="icon-button" data-source-index="${index}" aria-label="移除源图片 ${index + 1}">×</button></div>`,
+      )
+      .join("");
+    box.querySelectorAll("[data-source-index]").forEach((button) => {
+      button.onclick = () => {
+        state.sources.splice(Number(button.dataset.sourceIndex), 1);
+        state.requestId = null;
+        bindSources();
+      };
+    });
+  }
+  async function upload(files) {
+    if (state.sources.length + files.length > 8) {
+      toast("最多选择 8 张源图");
+      return;
+    }
+    const button = $("#source-button");
+    button.disabled = true;
+    try {
+      for (const file of files) {
+        const result = await call("upload", "source", {}, file, {
+          onProgress: (percent) => {
+            button.textContent = `上传中 ${Math.round(percent)}%`;
+          },
+        });
+        state.sources.push(result);
+        bindSources();
+      }
+      state.requestId = null;
+    } catch (error) {
+      U.error(error);
+    } finally {
+      button.disabled = false;
+      button.innerHTML = `${icon("upload")}选择源图片`;
+    }
+  }
+  async function updateResult() {
+    clearTimeout(pollTimer);
+    if (!state.lastTask || state.view !== "studio") return;
+    const result = await call("query", "task", { task_id: state.lastTask });
+    if (state.view !== "studio") return;
+    const node = $("#studio-result");
+    if (!node) return;
+    if (result.images.length) {
+      const preview = await call("query", "image", {
+        task_id: result.task_id,
+        index: 0,
+      });
+      node.innerHTML = `<img class="preview-image" src="${e(preview.data_url)}" alt="生成的图片"><div class="result-meta"><span class="pill ${e(result.status)}">${e(U.statusLabel(result.status))}</span><span class="pill">${e(preview.width)} × ${e(preview.height)}</span></div><p class="hint">${e(result.message)}</p><button id="studio-detail" class="button secondary wide" style="margin-top:16px">查看任务与全部图片 ${icon("arrow")}</button>`;
+      $("#studio-detail").onclick = () => U.openTask(result.task_id);
+    } else {
+      node.innerHTML = `<div class="placeholder-art">${icon(result.status === "running" ? "clock" : "images")}<span>${e(U.statusLabel(result.status))}</span><small>${e(result.message)}</small></div><div class="result-meta"><span class="pill">${e(result.model)}</span><span class="pill">${e(result.task_id)}</span></div>`;
+    }
+    if (["pending", "running"].includes(result.status))
+      pollTimer = setTimeout(() => updateResult().catch(U.error), 5000);
+  }
+  U.views.studio = async (previousMode = null) => {
+    clearTimeout(pollTimer);
+    if (!state.data.models.length) {
+      $("#workspace-content").innerHTML = U.empty(
+        "先添加一个绘图平台",
+        "平台和模型准备好之后，就可以在这里开始第一幅作品。",
+        `<button id="first-platform" class="button">${icon("plus")}添加绘图平台</button>`,
+      );
+      $("#first-platform").onclick = () => U.navigate("platforms");
+      return;
+    }
+    $("#workspace-content").innerHTML =
+      `<div class="studio-grid"><section class="panel"><div class="panel-header"><div class="section-label">${icon("sparkles")}<h2>创作新的画面</h2></div><span class="pill">后台执行</span></div><div class="mode-switch" data-mode="${mode}" role="group" aria-label="绘图模式"><span class="mode-indicator" aria-hidden="true"></span><button id="mode-draw" class="${mode === "draw" ? "active" : ""}">文生图</button><button id="mode-edit" class="${mode === "edit_image" ? "active" : ""}">图生图</button></div><form id="draw-form"><div class="field"><label for="draw-prompt">你想画什么？</label><textarea id="draw-prompt" class="prompt-input" maxlength="16000" required placeholder="描述主体、构图、光线和风格。例如：一只橘猫坐在窗边，午后阳光照进房间，水彩质感。"></textarea></div><div class="field-row"><div class="field"><label for="draw-model">绘图模型</label><select id="draw-model" required>${modelOptions()}</select></div><div class="field"><label for="draw-style">风格预设</label><select id="draw-style"><option value="">不使用预设</option>${state.data.presets
+        .filter((item) => item.enabled)
+        .map(
+          (item) => `<option value="${e(item.name)}">${e(item.name)}</option>`,
+        )
+        .join(
+          "",
+        )}</select></div></div>${mode === "edit_image" ? `<div class="field"><label>源图片</label><div class="upload-zone" id="upload-zone">${icon("upload")}<p>拖放图片到这里，或选择文件</p><button type="button" id="source-button" class="button secondary compact">${icon("upload")}选择源图片</button><input type="file" id="source-file" accept="image/png,image/jpeg,image/webp" multiple hidden></div><div class="source-list" id="source-list"></div><p class="hint">上传真实源图；最终支持数量以模型为准。需要公网原图 URL 的模型不支持直接使用网页上传的本地图片。</p></div>` : ""}<details><summary class="muted" style="cursor:pointer;margin-bottom:15px">反向提示词与发送选项</summary><div class="field"><label for="draw-negative">反向提示词</label><textarea id="draw-negative" rows="2" maxlength="16000" placeholder="不希望出现在画面中的内容"></textarea></div><div class="field"><label for="draw-delivery">结果去向</label><select id="draw-delivery"><option value="web">仅在工作台查看</option><option value="chat">同时发送到聊天</option></select></div><div id="delivery-fields" hidden><div class="field-row"><div class="field"><label for="chat-platform">聊天平台标识</label><input id="chat-platform" value="qq" maxlength="80"></div><div class="field"><label>&nbsp;</label><button type="button" id="load-streams" class="button secondary wide">加载聊天会话</button></div></div><div class="field"><label for="draw-stream">目标会话</label><select id="draw-stream"><option value="">请先加载会话</option></select><p class="hint">使用实际聊天流；发送到聊天时沿用群聊或私聊额度。网页专用任务由当前实例管理，不计入聊天额度。</p></div></div></details><div class="sticky-save"><span class="hint">模型校验 · 提示词与图片审核</span><button type="submit" class="button" id="start-drawing">${icon("sparkles")}开始绘图</button></div></form></section><aside class="stack"><section class="panel"><div class="panel-header"><h3>创作结果</h3>${icon("images")}</div><div id="studio-result"><div class="placeholder-art">${icon("sparkles")}<span>想象，正在等待落笔</span><small>任务提交后，会在这里显示进度与生成图片。</small></div></div></section><div class="panel"><h3>让画面更接近你的想法</h3><p class="hint">描述具体的主体、环境和光线。试试风格预设，把常用的画面语言保存下来。</p><button class="button ghost compact" id="studio-presets" style="margin-top:8px">管理预设 ${icon("arrow")}</button></div></aside></div>`;
+    for (const [id, value] of Object.entries(draft)) {
+      const input = $("#" + id);
+      if (
+        input &&
+        (!input.options ||
+          Array.from(input.options).some((option) => option.value === value))
+      )
+        input.value = value;
+    }
+    $("#delivery-fields").hidden = $("#draw-delivery").value !== "chat";
+    function changeMode(next) {
+      if (mode === next) return;
+      saveDraft();
+      state.requestId = null;
+      const previous = mode;
+      mode = next;
+      U.views.studio(previous).catch(U.error);
+    }
+    $("#mode-draw").onclick = () => changeMode("draw");
+    $("#mode-edit").onclick = () => changeMode("edit_image");
+    if (
+      previousMode !== null &&
+      !window.matchMedia("(prefers-reduced-motion: reduce)").matches
+    ) {
+      $(".mode-indicator").animate(
+        [
+          {
+            transform:
+              previousMode === "edit_image"
+                ? "translateX(100%)"
+                : "translateX(0)",
+          },
+          {
+            transform:
+              mode === "edit_image" ? "translateX(100%)" : "translateX(0)",
+          },
+        ],
+        { duration: 260, easing: "cubic-bezier(.2,.8,.2,1)" },
+      );
+      if (mode === "edit_image")
+        $("#upload-zone")
+          .closest(".field")
+          .animate(
+            [
+              { opacity: 0, transform: "translateY(-5px)" },
+              { opacity: 1, transform: "translateY(0)" },
+            ],
+            { duration: 190, easing: "ease-out" },
+          );
+    }
+    $("#draw-delivery").onchange = () => {
+      $("#delivery-fields").hidden = $("#draw-delivery").value !== "chat";
+    };
+    $("#studio-presets").onclick = () => {
+      state.settingsSection = "style";
+      U.navigate("settings");
+    };
+    $("#load-streams").onclick = (event) =>
+      buttonAction(event.currentTarget, async () => {
+        const result = await call("query", "streams", {
+          platform: $("#chat-platform").value.trim(),
+        });
+        $("#draw-stream").innerHTML =
+          '<option value="">请选择真实会话</option>' +
+          result.streams
+            .map(
+              (item) =>
+                `<option value="${e(item.id)}">${e(item.name)}</option>`,
+            )
+            .join("");
+        if (!result.streams.length) toast("这个平台暂无聊天会话");
+      });
+    if (mode === "edit_image") {
+      $("#source-button").onclick = () => $("#source-file").click();
+      $("#source-file").onchange = (event) =>
+        upload(Array.from(event.target.files));
+      bindSources();
+      const zone = $("#upload-zone");
+      zone.ondragover = (event) => {
+        event.preventDefault();
+        zone.classList.add("dragging");
+      };
+      zone.ondragleave = () => zone.classList.remove("dragging");
+      zone.ondrop = (event) => {
+        event.preventDefault();
+        zone.classList.remove("dragging");
+        upload(Array.from(event.dataTransfer.files));
+      };
+    }
+    $("#draw-form").oninput = () => {
+      state.requestId = null;
+      saveDraft();
+    };
+    U.bindSubmit($("#draw-form"));
+    $("#draw-form").onsubmit = (event) => {
+      event.preventDefault();
+      buttonAction($("#start-drawing"), async () => {
+        if (!$("#draw-model").value)
+          throw new Error("当前没有支持这种任务的模型，请调整平台配置");
+        const stream =
+          $("#draw-delivery").value === "chat" ? $("#draw-stream").value : "";
+        if ($("#draw-delivery").value === "chat" && !stream)
+          throw new Error("请选择真实聊天会话");
+        state.requestId ||= U.uid();
+        const request = {
+          prompt: $("#draw-prompt").value,
+          model: $("#draw-model").value,
+          style: $("#draw-style").value,
+          negative_prompt: $("#draw-negative").value,
+          task_type: mode,
+          stream_id: stream,
+          source_ids:
+            mode === "edit_image"
+              ? state.sources.map((item) => item.source_id)
+              : [],
+          request_id: state.requestId,
+        };
+        const result = await call("action", "submit", {
+          request_json: JSON.stringify(request),
+        });
+        state.lastTask = result.task_id;
+        state.requestId = null;
+        toast("绘图任务已提交");
+        await updateResult();
+      });
+    };
+    if (state.lastTask) await updateResult();
+  };
+})();

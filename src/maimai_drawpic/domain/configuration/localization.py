@@ -1,0 +1,581 @@
+"""插件配置 WebUI Schema 的多语言元数据。"""
+
+from collections.abc import Iterable
+from maibot_sdk import PluginConfigBase
+from typing import Dict, Tuple, Type
+
+
+_LOCALES = ("en_US", "ja_JP", "ko_KR")
+
+_SECTION_TEXTS: Dict[str, Tuple[Tuple[str, str, str], Tuple[str, str, str]]] = {
+    "PluginSectionConfig": (
+        ("Plugin Settings", "プラグイン設定", "플러그인 설정"),
+        ("Basic plugin settings.", "プラグインの基本設定です。", "플러그인의 기본 설정입니다."),
+    ),
+    "GeneralConfig": (
+        ("General Settings", "一般設定", "일반 설정"),
+        (
+            "General drawing behavior and permissions.",
+            "描画動作と権限の一般設定です。",
+            "그리기 동작과 권한의 일반 설정입니다.",
+        ),
+    ),
+    "StylePresetConfig": (
+        ("Style Preset", "スタイルプリセット", "스타일 프리셋"),
+        ("A reusable drawing style preset.", "再利用できる描画スタイルです。", "재사용 가능한 그리기 스타일입니다."),
+    ),
+    "StyleConfig": (
+        ("Drawing Styles", "描画スタイル", "그리기 스타일"),
+        (
+            "Prompt templates shared by all providers.",
+            "全プロバイダー共通のプロンプトテンプレートです。",
+            "모든 제공자가 공유하는 프롬프트 템플릿입니다.",
+        ),
+    ),
+    "ProxyConfig": (
+        ("Proxy Settings", "プロキシ設定", "프록시 설정"),
+        (
+            "Global proxy settings for image providers.",
+            "画像プロバイダー用の共通プロキシ設定です。",
+            "이미지 제공자용 전역 프록시 설정입니다.",
+        ),
+    ),
+    "OpenAICompatibleInstanceConfig": (
+        ("OpenAI-Compatible Instance", "OpenAI 互換インスタンス", "OpenAI 호환 인스턴스"),
+        (
+            "Settings for one OpenAI-compatible endpoint.",
+            "OpenAI 互換エンドポイントの設定です。",
+            "OpenAI 호환 엔드포인트 설정입니다.",
+        ),
+    ),
+    "OpenAIModelConfig": (
+        ("OpenAI Settings", "OpenAI 設定", "OpenAI 설정"),
+        ("OpenAI image model settings.", "OpenAI 画像モデルの設定です。", "OpenAI 이미지 모델 설정입니다."),
+    ),
+    "GoogleModelConfig": (
+        ("Google Settings", "Google 設定", "Google 설정"),
+        (
+            "Google Gemini and Imagen model settings.",
+            "Google Gemini と Imagen の設定です。",
+            "Google Gemini 및 Imagen 모델 설정입니다.",
+        ),
+    ),
+    "ZhipuModelConfig": (
+        ("Zhipu Settings", "智譜設定", "Zhipu 설정"),
+        (
+            "Zhipu GLM-Image and CogView settings.",
+            "智譜 GLM-Image と CogView の設定です。",
+            "Zhipu GLM-Image 및 CogView 설정입니다.",
+        ),
+    ),
+    "AliyunModelConfig": (
+        ("Alibaba Cloud Model Studio", "Alibaba Cloud Model Studio", "Alibaba Cloud Model Studio"),
+        (
+            "Alibaba Cloud image model settings.",
+            "Alibaba Cloud 画像モデルの設定です。",
+            "Alibaba Cloud 이미지 모델 설정입니다.",
+        ),
+    ),
+    "VolcengineModelConfig": (
+        ("Volcengine Settings", "Volcengine 設定", "Volcengine 설정"),
+        (
+            "Volcengine Ark image model settings.",
+            "Volcengine Ark 画像モデルの設定です。",
+            "Volcengine Ark 이미지 모델 설정입니다.",
+        ),
+    ),
+    "SiliconFlowModelConfig": (
+        ("SiliconFlow Settings", "SiliconFlow 設定", "SiliconFlow 설정"),
+        (
+            "SiliconFlow image model settings.",
+            "SiliconFlow 画像モデルの設定です。",
+            "SiliconFlow 이미지 모델 설정입니다.",
+        ),
+    ),
+    "NovelAIModelConfig": (
+        ("NovelAI / NovelAPI Settings", "NovelAI / NovelAPI 設定", "NovelAI / NovelAPI 설정"),
+        (
+            "NovelAI and NovelAPI image model settings.",
+            "NovelAI と NovelAPI の設定です。",
+            "NovelAI 및 NovelAPI 이미지 모델 설정입니다.",
+        ),
+    ),
+    "ComfyUIModelConfig": (
+        ("ComfyUI Settings", "ComfyUI 設定", "ComfyUI 설정"),
+        (
+            "Local ComfyUI workflow settings.",
+            "ローカル ComfyUI ワークフローの設定です。",
+            "로컬 ComfyUI 워크플로 설정입니다.",
+        ),
+    ),
+    "PromptModerationConfig": (
+        ("Prompt Review", "プロンプト審査", "프롬프트 검토"),
+        ("Prompt review settings.", "プロンプト審査の設定です。", "프롬프트 검토 설정입니다."),
+    ),
+    "ImageModerationConfig": (
+        ("Generated Image Review", "生成画像の審査", "생성 이미지 검토"),
+        ("Generated image review settings.", "生成画像を審査する設定です。", "생성 이미지를 검토하는 설정입니다."),
+    ),
+}
+
+_FIELD_LABELS: Dict[str, Tuple[str, str, str]] = {
+    "image_cache_max_mb": ("Image Cache Limit (MB)", "画像キャッシュ上限（MB）", "이미지 캐시 한도(MB)"),
+    "log_max_mb": ("Total Log Limit (MB)", "ログ合計上限（MB）", "전체 로그 한도(MB)"),
+    "upload_cache_max_mb": ("Upload Cache Limit (MB)", "アップロードキャッシュ上限（MB）", "업로드 캐시 한도(MB)"),
+    "add_watermark": ("Add Watermark", "ウォーターマークを追加", "워터마크 추가"),
+    "admin_user_ids": ("Administrators", "管理者一覧", "관리자 목록"),
+    "api_key": ("API Key", "API キー", "API 키"),
+    "aspect_ratio": ("Aspect Ratio", "アスペクト比", "화면 비율"),
+    "async_poll_interval_seconds": ("Async Poll Interval", "非同期ポーリング間隔", "비동기 폴링 간격"),
+    "background": ("Background", "背景", "배경"),
+    "base_url": ("Base URL", "ベース URL", "기본 URL"),
+    "cfg": ("Qwen Image CFG", "Qwen Image CFG", "Qwen Image CFG"),
+    "batch_size": ("Batch Size", "バッチサイズ", "배치 크기"),
+    "bypass_china_providers": (
+        "Bypass Proxy for China Providers",
+        "中国プロバイダーはプロキシを回避",
+        "중국 제공자 프록시 우회",
+    ),
+    "command_reply_mode": ("Command Reply Mode", "コマンド応答モード", "명령 응답 모드"),
+    "config_version": ("Configuration Version", "設定バージョン", "설정 버전"),
+    "custom_models": ("Custom Models", "カスタムモデル", "사용자 지정 모델"),
+    "default_artist_tags": ("Default Artist Tags", "既定のアーティストタグ", "기본 아티스트 태그"),
+    "default_mode": ("Default Mode", "既定モード", "기본 모드"),
+    "default_model": ("Default Model", "既定モデル", "기본 모델"),
+    "default_openai_compatibility_mode": (
+        "Default OpenAI Compatibility Mode",
+        "既定の OpenAI 互換モード",
+        "기본 OpenAI 호환 모드",
+    ),
+    "default_size": ("Default Resolution", "既定の解像度", "기본 해상도"),
+    "default_style": ("Default Style", "既定スタイル", "기본 스타일"),
+    "description": ("Description", "説明", "설명"),
+    "enabled": ("Enabled", "有効", "활성화"),
+    "extra_parameters": ("Extra Parameters", "追加パラメータ", "추가 매개변수"),
+    "failure_reason_enabled": ("Include Failure Reason", "失敗理由を表示", "실패 원인 표시"),
+    "fallback_model": ("Fallback Model", "フォールバックモデル", "대체 모델"),
+    "fallback_models": ("Ordered Fallback Models", "代替モデルの優先順位", "대체 모델 우선순위"),
+    "request_retry_count": ("Maximum Retries per Model", "モデルごとの最大再試行回数", "모델별 최대 재시도 횟수"),
+    "group_default_quota": ("Default Group Quota", "グループ既定クォータ", "그룹 기본 할당량"),
+    "group_quota_enabled": ("Enable Group Quota", "グループクォータを有効化", "그룹 할당량 활성화"),
+    "group_quota_period": ("Group Quota Period", "グループクォータ期間", "그룹 할당량 기간"),
+    "guidance_scale": ("Guidance Scale", "ガイダンス強度", "가이던스 강도"),
+    "height": ("Height", "高さ", "높이"),
+    "host": ("Proxy Host", "プロキシホスト", "프록시 호스트"),
+    "i2i_image_node_id": ("Image-to-Image Source Node ID", "画像変換の元画像ノード ID", "이미지 변환 원본 노드 ID"),
+    "i2i_models": ("Image-to-Image Models", "画像変換モデル", "이미지 변환 모델"),
+    "i2i_negative_prompt": (
+        "Image-to-Image Negative Prompt",
+        "画像変換のネガティブプロンプト",
+        "이미지 변환 네거티브 프롬프트",
+    ),
+    "i2i_negative_prompt_node_id": (
+        "Image-to-Image Negative Prompt Node ID",
+        "画像変換ネガティブノード ID",
+        "이미지 변환 네거티브 노드 ID",
+    ),
+    "i2i_positive_prompt_node_id": (
+        "Image-to-Image Positive Prompt Node ID",
+        "画像変換ポジティブノード ID",
+        "이미지 변환 포지티브 노드 ID",
+    ),
+    "i2i_prompt_mode": ("Image-to-Image Prompt Mode", "画像変換プロンプトモード", "이미지 변환 프롬프트 모드"),
+    "i2i_prompt_node_id": (
+        "Image-to-Image Prompt Node ID",
+        "画像変換プロンプトノード ID",
+        "이미지 변환 프롬프트 노드 ID",
+    ),
+    "i2i_seed_node_id": ("Image-to-Image Seed Node ID", "画像変換シードノード ID", "이미지 변환 시드 노드 ID"),
+    "i2i_workflow_path": ("Image-to-Image Workflow JSON", "画像変換ワークフロー JSON", "이미지 변환 워크플로 JSON"),
+    "image_edit_unsupported_models": (
+        "Models Without Image Editing",
+        "画像編集非対応モデル",
+        "이미지 편집 미지원 모델",
+    ),
+    "image_input_mode": ("Source Image Input Mode", "元画像入力モード", "원본 이미지 입력 모드"),
+    "image_input_name": ("Source Image Input Field", "元画像入力フィールド", "원본 이미지 입력 필드"),
+    "image_review_enabled": ("Enable Generated Image Review", "生成画像の審査を有効化", "생성 이미지 검토 활성화"),
+    "image_review_prompt": ("Generated Image Review Template", "生成画像審査テンプレート", "생성 이미지 검토 템플릿"),
+    "image_size": ("Image Size", "画像サイズ", "이미지 크기"),
+    "img2img_noise": ("Image-to-Image Noise", "画像変換ノイズ", "이미지 변환 노이즈"),
+    "img2img_strength": ("Image-to-Image Strength", "画像変換強度", "이미지 변환 강도"),
+    "instances": ("OpenAI-Compatible Instances", "OpenAI 互換インスタンス", "OpenAI 호환 인스턴스"),
+    "kling_aspect_ratio": ("Kling Aspect Ratio", "Kling アスペクト比", "Kling 화면 비율"),
+    "kling_extra_parameters": ("Kling Extra Parameters", "Kling 追加パラメータ", "Kling 추가 매개변수"),
+    "kling_resolution": ("Kling Resolution", "Kling 解像度", "Kling 해상도"),
+    "kling_result_type": ("Kling Omni Result Mode", "Kling Omni 結果モード", "Kling Omni 결과 모드"),
+    "kling_series_amount": ("Kling Omni Series Count", "Kling Omni シリーズ枚数", "Kling Omni 시리즈 수"),
+    "layer_decomposition": ("Layer Decomposition", "レイヤー分解", "레이어 분해"),
+    "max_images": ("Maximum Images", "最大画像数", "최대 이미지 수"),
+    "model_endpoint_overrides": (
+        "Per-Model Endpoint Overrides",
+        "モデル別エンドポイント上書き",
+        "모델별 엔드포인트 재정의",
+    ),
+    "model_size_overrides": ("Per-Model Resolution Overrides", "モデル別解像度上書き", "모델별 해상도 재정의"),
+    "models": ("Models", "モデル一覧", "모델 목록"),
+    "moderation": ("Moderation Level", "モデレーション強度", "검토 강도"),
+    "name": ("Name", "名前", "이름"),
+    "negative_prompt": ("Negative Prompt", "ネガティブプロンプト", "네거티브 프롬프트"),
+    "negative_prompt_template": (
+        "Negative Prompt Template",
+        "ネガティブプロンプトテンプレート",
+        "네거티브 프롬프트 템플릿",
+    ),
+    "noise_schedule": ("Noise Schedule", "ノイズスケジュール", "노이즈 스케줄"),
+    "num_inference_steps": ("Inference Steps", "推論ステップ数", "추론 단계"),
+    "number_of_images": ("Number of Images", "生成画像数", "생성 이미지 수"),
+    "output_format": ("Output Format", "出力形式", "출력 형식"),
+    "output_mime_type": ("Output MIME Type", "出力 MIME タイプ", "출력 MIME 형식"),
+    "optimize_prompt_mode": ("Prompt Optimization Mode", "プロンプト最適化モード", "프롬프트 최적화 모드"),
+    "password": ("Proxy Password", "プロキシパスワード", "프록시 비밀번호"),
+    "permission_enabled": ("Enable Command Permissions", "コマンド権限を有効化", "명령 권한 활성화"),
+    "person_generation": ("Person Generation", "人物生成", "인물 생성"),
+    "poll_interval_seconds": ("Poll Interval", "ポーリング間隔", "폴링 간격"),
+    "port": ("Proxy Port", "プロキシポート", "프록시 포트"),
+    "positive_prompt": ("Default Positive Prompt", "既定のポジティブプロンプト", "기본 포지티브 프롬프트"),
+    "positive_prompt_template": (
+        "Positive Prompt Template",
+        "ポジティブプロンプトテンプレート",
+        "포지티브 프롬프트 템플릿",
+    ),
+    "presets": ("Style Presets", "スタイルプリセット", "스타일 프리셋"),
+    "private_default_quota": ("Default Private Quota", "個人チャット既定クォータ", "개인 채팅 기본 할당량"),
+    "private_quota_enabled": ("Enable Private Quota", "個人チャットクォータを有効化", "개인 채팅 할당량 활성화"),
+    "private_quota_period": ("Private Quota Period", "個人チャットクォータ期間", "개인 채팅 할당량 기간"),
+    "prompt_extend": ("Smart Prompt Expansion", "スマートプロンプト拡張", "스마트 프롬프트 확장"),
+    "prompt_input_name": ("Prompt Input Field", "プロンプト入力フィールド", "프롬프트 입력 필드"),
+    "prompt_review_enabled": ("Enable Prompt Review", "プロンプト審査を有効化", "프롬프트 검토 활성화"),
+    "prompt_review_prompt": ("Prompt Review Template", "プロンプト審査テンプレート", "프롬프트 검토 템플릿"),
+    "quality": ("Quality", "品質", "품질"),
+    "quality_toggle": ("Quality Enhancement", "品質強化", "품질 향상"),
+    "qwen_enable_thinking": ("Qwen 3.0 Thinking Mode", "Qwen 3.0 思考モード", "Qwen 3.0 사고 모드"),
+    "qwen_extra_parameters": ("Qwen Extra Parameters", "Qwen 追加パラメータ", "Qwen 추가 매개변수"),
+    "qwen_prompt_extend_mode": ("Qwen 3.0 Expansion Mode", "Qwen 3.0 拡張モード", "Qwen 3.0 확장 모드"),
+    "request_timeout_seconds": ("Image Request Timeout", "画像リクエストのタイムアウト", "이미지 요청 시간 제한"),
+    "response_format": ("Response Format", "応答形式", "응답 형식"),
+    "review_prompt": ("Review Prompt", "審査プロンプト", "검토 프롬프트"),
+    "rewrite_prompt_to_english": ("Rewrite Prompt in English", "英語プロンプトに書き換え", "영어 프롬프트로 재작성"),
+    "sampler": ("Sampler", "サンプラー", "샘플러"),
+    "scale": ("Prompt Guidance", "プロンプトガイダンス", "프롬프트 가이던스"),
+    "scheme": ("Proxy Protocol", "プロキシプロトコル", "프록시 프로토콜"),
+    "seed": ("Random Seed", "ランダムシード", "무작위 시드"),
+    "seed_input_name": ("Seed Input Field", "シード入力フィールド", "시드 입력 필드"),
+    "sequential_image_generation": ("Sequential Image Generation", "組画像生成", "연속 이미지 생성"),
+    "size": ("Resolution", "解像度", "해상도"),
+    "sm": ("SMEA", "SMEA", "SMEA"),
+    "sm_dyn": ("Dynamic SMEA", "ダイナミック SMEA", "동적 SMEA"),
+    "steps": ("Sampling Steps", "サンプリングステップ数", "샘플링 단계"),
+    "t2i_models": ("Text-to-Image Models", "テキスト画像生成モデル", "텍스트 이미지 생성 모델"),
+    "t2i_negative_prompt": (
+        "Text-to-Image Negative Prompt",
+        "テキスト画像生成ネガティブプロンプト",
+        "텍스트 이미지 생성 네거티브 프롬프트",
+    ),
+    "t2i_negative_prompt_node_id": (
+        "Text-to-Image Negative Prompt Node ID",
+        "テキスト画像生成ネガティブノード ID",
+        "텍스트 이미지 생성 네거티브 노드 ID",
+    ),
+    "t2i_positive_prompt_node_id": (
+        "Text-to-Image Positive Prompt Node ID",
+        "テキスト画像生成ポジティブノード ID",
+        "텍스트 이미지 생성 포지티브 노드 ID",
+    ),
+    "t2i_prompt_mode": (
+        "Text-to-Image Prompt Mode",
+        "テキスト画像生成プロンプトモード",
+        "텍스트 이미지 생성 프롬프트 모드",
+    ),
+    "t2i_prompt_node_id": (
+        "Text-to-Image Prompt Node ID",
+        "テキスト画像生成プロンプトノード ID",
+        "텍스트 이미지 생성 프롬프트 노드 ID",
+    ),
+    "t2i_seed_node_id": (
+        "Text-to-Image Seed Node ID",
+        "テキスト画像生成シードノード ID",
+        "텍스트 이미지 생성 시드 노드 ID",
+    ),
+    "t2i_workflow_path": (
+        "Text-to-Image Workflow JSON",
+        "テキスト画像生成ワークフロー JSON",
+        "텍스트 이미지 생성 워크플로 JSON",
+    ),
+    "text_to_image_unsupported_models": (
+        "Models Without Text-to-Image",
+        "テキスト画像生成非対応モデル",
+        "텍스트 이미지 생성 미지원 모델",
+    ),
+    "uc_preset": ("Legacy UC Preset", "旧 UC プリセット", "레거시 UC 프리셋"),
+    "unified_models": ("Unified Models", "統合モデル", "통합 모델"),
+    "use_system_proxy": ("Use System Proxy", "システムプロキシを使用", "시스템 프록시 사용"),
+    "user_id": ("End-User ID", "エンドユーザー ID", "최종 사용자 ID"),
+    "username": ("Proxy Username", "プロキシユーザー名", "프록시 사용자 이름"),
+    "v4_noise_schedule": ("V4 / V4.5 Noise Schedule", "V4 / V4.5 ノイズスケジュール", "V4 / V4.5 노이즈 스케줄"),
+    "vidu_extra_parameters": ("Vidu Extra Parameters", "Vidu 追加パラメータ", "Vidu 추가 매개변수"),
+    "watermark": ("Add Watermark", "ウォーターマークを追加", "워터마크 추가"),
+    "watermark_enabled": ("Enable Watermark", "ウォーターマークを有効化", "워터마크 활성화"),
+    "web_search_enabled": ("Enable Web Search", "ウェブ検索を有効化", "웹 검색 활성화"),
+    "width": ("Width", "幅", "너비"),
+    "zimage_extra_parameters": ("Z-Image Extra Parameters", "Z-Image 追加パラメータ", "Z-Image 추가 매개변수"),
+    "zimage_prompt_extend": ("Z-Image Prompt Expansion", "Z-Image プロンプト拡張", "Z-Image 프롬프트 확장"),
+}
+
+_FIELD_LABEL_OVERRIDES: Dict[str, Tuple[str, str, str]] = {
+    "PluginSectionConfig.enabled": ("Enable Plugin", "プラグインを有効化", "플러그인 활성화"),
+    "StylePresetConfig.enabled": ("Enable Preset", "プリセットを有効化", "프리셋 활성화"),
+    "ProxyConfig.enabled": ("Enable Global Proxy", "共通プロキシを有効化", "전역 프록시 활성화"),
+    "OpenAICompatibleInstanceConfig.enabled": ("Enable Instance", "インスタンスを有効化", "인스턴스 활성화"),
+    "OpenAIModelConfig.enabled": ("Enable OpenAI Platform", "OpenAI プラットフォームを有効化", "OpenAI 플랫폼 활성화"),
+    "OpenAIModelConfig.api_key": ("OpenAI API Key", "OpenAI API キー", "OpenAI API 키"),
+    "OpenAIModelConfig.models": ("OpenAI Models", "OpenAI モデル一覧", "OpenAI 모델 목록"),
+    "GoogleModelConfig.enabled": ("Enable Google Platform", "Google プラットフォームを有効化", "Google 플랫폼 활성화"),
+    "GoogleModelConfig.api_key": ("Google API Key", "Google API キー", "Google API 키"),
+    "GoogleModelConfig.models": ("Google Models", "Google モデル一覧", "Google 모델 목록"),
+    "ZhipuModelConfig.enabled": ("Enable Zhipu Platform", "智譜プラットフォームを有効化", "Zhipu 플랫폼 활성화"),
+    "ZhipuModelConfig.api_key": ("Zhipu API Key (Required)", "智譜 API キー（必須）", "Zhipu API 키(필수)"),
+    "ZhipuModelConfig.models": ("Zhipu Models (Required)", "智譜モデル一覧（必須）", "Zhipu 모델 목록(필수)"),
+    "ZhipuModelConfig.quality": ("Generation Quality (Optional)", "生成品質（任意）", "생성 품질(선택 사항)"),
+    "ZhipuModelConfig.size": ("Resolution (Optional)", "解像度（任意）", "해상도(선택 사항)"),
+    "ZhipuModelConfig.watermark_enabled": (
+        "Enable Watermark (Optional)",
+        "ウォーターマークを有効化（任意）",
+        "워터마크 활성화(선택 사항)",
+    ),
+    "ZhipuModelConfig.user_id": ("End-User ID (Optional)", "エンドユーザー ID（任意）", "최종 사용자 ID(선택 사항)"),
+    "ZhipuModelConfig.extra_parameters": (
+        "Extra Parameters (Optional)",
+        "追加パラメータ（任意）",
+        "추가 매개변수(선택 사항)",
+    ),
+    "AliyunModelConfig.enabled": (
+        "Enable Alibaba Cloud Platform",
+        "Alibaba Cloud を有効化",
+        "Alibaba Cloud 플랫폼 활성화",
+    ),
+    "AliyunModelConfig.base_url": (
+        "DashScope Base URL (Required)",
+        "DashScope ベース URL（必須）",
+        "DashScope 기본 URL(필수)",
+    ),
+    "AliyunModelConfig.api_key": (
+        "DashScope API Key (Required)",
+        "DashScope API キー（必須）",
+        "DashScope API 키(필수)",
+    ),
+    "AliyunModelConfig.models": (
+        "Alibaba Cloud Models (Required)",
+        "Alibaba Cloud モデル一覧（必須）",
+        "Alibaba Cloud 모델 목록(필수)",
+    ),
+    "VolcengineModelConfig.enabled": (
+        "Enable Volcengine Platform",
+        "Volcengine プラットフォームを有効化",
+        "Volcengine 플랫폼 활성화",
+    ),
+    "VolcengineModelConfig.base_url": (
+        "Volcengine Base URL",
+        "Volcengine ベース URL",
+        "Volcengine 기본 URL",
+    ),
+    "VolcengineModelConfig.api_key": ("Volcengine API Key", "Volcengine API キー", "Volcengine API 키"),
+    "VolcengineModelConfig.models": (
+        "Volcengine Image Models",
+        "Volcengine 画像モデル一覧",
+        "Volcengine 이미지 모델 목록",
+    ),
+    "SiliconFlowModelConfig.enabled": (
+        "Enable SiliconFlow Platform",
+        "SiliconFlow プラットフォームを有効化",
+        "SiliconFlow 플랫폼 활성화",
+    ),
+    "SiliconFlowModelConfig.api_key": ("SiliconFlow API Key", "SiliconFlow API キー", "SiliconFlow API 키"),
+    "SiliconFlowModelConfig.models": ("SiliconFlow Models", "SiliconFlow モデル一覧", "SiliconFlow 모델 목록"),
+    "NovelAIModelConfig.enabled": (
+        "Enable NovelAI / NovelAPI",
+        "NovelAI / NovelAPI を有効化",
+        "NovelAI / NovelAPI 활성화",
+    ),
+    "NovelAIModelConfig.api_key": ("NovelAI API Key", "NovelAI API キー", "NovelAI API 키"),
+    "NovelAIModelConfig.models": ("NovelAI Models", "NovelAI モデル一覧", "NovelAI 모델 목록"),
+    "ComfyUIModelConfig.enabled": ("Enable ComfyUI", "ComfyUI を有効化", "ComfyUI 활성화"),
+    "PromptModerationConfig.enabled": ("Enable Prompt Review", "プロンプト審査を有効化", "프롬프트 검토 활성화"),
+    "PromptModerationConfig.review_prompt": ("Prompt Review Instructions", "プロンプト審査指示", "프롬프트 검토 지침"),
+    "ImageModerationConfig.enabled": (
+        "Enable Generated Image Review",
+        "生成画像の審査を有効化",
+        "생성 이미지 검토 활성화",
+    ),
+    "ImageModerationConfig.review_prompt": ("Image Review Instructions", "画像審査指示", "이미지 검토 지침"),
+}
+
+_PLACEHOLDER_TEXTS: Dict[str, Tuple[str, str, str]] = {
+    "StylePresetConfig.name": ("e.g. Watercolor or Cyberpunk", "例：水彩、サイバーパンク", "예: 수채화, 사이버펑크"),
+    "OpenAICompatibleInstanceConfig.name": (
+        "e.g. platform-1 or newapi-1",
+        "例：platform-1、newapi-1",
+        "예: platform-1, newapi-1",
+    ),
+}
+
+_OPENAI_MODE_HINTS = (
+    "auto / images_api / chat_completions (New API image chat) / rinkoai (RinkoAI NAI). "
+    "auto uses endpoint metadata and model families. Legacy novelai_images_api means rinkoai.",
+    "auto / images_api / chat_completions（New API 画像チャット）/ rinkoai（RinkoAI NAI）。"
+    "auto は端点情報とモデル系列を使用します。旧 novelai_images_api は rinkoai の別名です。",
+    "auto / images_api / chat_completions(New API 이미지 채팅) / rinkoai(RinkoAI NAI). "
+    "auto는 엔드포인트 정보와 모델 계열을 사용합니다. 이전 novelai_images_api는 rinkoai의 별칭입니다.",
+)
+
+
+_FIELD_HINT_OVERRIDES: Dict[str, Tuple[str, str, str]] = {
+    "PluginSectionConfig.image_cache_max_mb": (
+        "Default 300 MB for originals and WebP previews in the plugin temporary directory. Old images are removed automatically; task records remain.",
+        "既定は 300 MB。プラグイン一時ディレクトリの原画像と WebP プレビューが対象です。古い画像を自動削除し、タスク記録は保持します。",
+        "기본 300 MB. 플러그인 임시 폴더의 원본과 WebP 미리보기에 적용하며, 오래된 이미지를 자동 삭제하고 작업 기록은 보존합니다.",
+    ),
+    "PluginSectionConfig.log_max_mb": (
+        "Default 10 MB across the current log and all rotated backups. Old logs are removed automatically.",
+        "既定は 10 MB。現在のログと全ローテーションバックアップの合計です。古いログを自動削除します。",
+        "기본 10 MB. 현재 로그와 모든 순환 백업의 합계이며 오래된 로그를 자동 삭제합니다.",
+    ),
+    "PluginSectionConfig.upload_cache_max_mb": (
+        "Default 256 MB, minimum 40 MB. Uploads and input images also expire after 24 hours or 100 files.",
+        "既定は 256 MB、最小 40 MB。アップロードと入力画像は 24 時間または 100 ファイルの上限でも削除します。",
+        "기본 256 MB, 최소 40 MB. 업로드와 입력 이미지는 24시간 또는 100개 파일 제한도 적용합니다.",
+    ),
+    "GeneralConfig.default_model": (
+        "Leave empty to automatically choose an available model, or select a model from a specific platform instance.",
+        "空欄では利用可能なモデルを自動選択します。特定のプラットフォームのモデルも選択できます。",
+        "비워 두면 사용 가능한 모델을 자동으로 선택하며 특정 플랫폼 인스턴스의 모델을 지정할 수도 있습니다.",
+    ),
+    "GeneralConfig.fallback_models": (
+        "Add models as needed and reorder them. Move to the next model after retries are exhausted; empty disables fallback.",
+        "必要なモデルを追加して順序を変更します。再試行後に次のモデルへ進みます。空欄で無効です。",
+        "필요한 모델을 추가하고 순서를 변경하세요. 재시도 소진 후 다음 모델을 시도하며 비어 있으면 사용하지 않습니다.",
+    ),
+    "GeneralConfig.request_retry_count": (
+        "Extra attempts per model, 0–5. Zero means one attempt per model. Review rejection is never retried.",
+        "モデルごとの追加試行回数は0～5です。0は各モデル1回のみ。審査拒否は再試行しません。",
+        "모델별 추가 시도 횟수는 0~5입니다. 0은 모델당 한 번 시도하며 심사 거부는 재시도하지 않습니다.",
+    ),
+    "ComfyUIModelConfig.t2i_workflow_path": (
+        "The data/ prefix maps to the plugin data directory; default: data/workflows/t2i.json. Other relative paths remain relative to the plugin source directory. Absolute paths are supported. Export an API-format workflow from ComfyUI.",
+        "data/ 接頭辞はプラグインの標準データディレクトリに対応します。既定値は data/workflows/t2i.json。その他の相対パスはプラグインのソースディレクトリが基準です。絶対パスも使用できます。ComfyUI の API 形式でエクスポートしてください。",
+        "data/ 접두사는 플러그인 표준 데이터 디렉터리에 매핑됩니다. 기본값: data/workflows/t2i.json. 다른 상대 경로는 플러그인 소스 디렉터리 기준이며 절대 경로도 지원합니다. ComfyUI API 형식으로 내보내세요.",
+    ),
+    "ComfyUIModelConfig.i2i_workflow_path": (
+        "The data/ prefix maps to the plugin data directory; default: data/workflows/i2i.json. Other relative paths remain relative to the plugin source directory. Absolute paths are supported. Include a node that reads the uploaded image.",
+        "data/ 接頭辞はプラグインの標準データディレクトリに対応します。既定値は data/workflows/i2i.json。その他の相対パスはプラグインのソースディレクトリが基準です。絶対パスも使用できます。アップロード画像を読み込むノードが必要です。",
+        "data/ 접두사는 플러그인 표준 데이터 디렉터리에 매핑됩니다. 기본값: data/workflows/i2i.json. 다른 상대 경로는 플러그인 소스 디렉터리 기준이며 절대 경로도 지원합니다. 업로드 이미지를 읽는 노드가 필요합니다.",
+    ),
+    "GoogleModelConfig.image_size": (
+        "1K / 2K / 4K; Gemini 3.1 Flash also supports 512. Use uppercase K; leave blank for the model default.",
+        "1K / 2K / 4K。Gemini 3.1 Flash は 512 にも対応します。大文字 K を使用し、空欄はモデルの既定値を使用します。",
+        "1K / 2K / 4K. Gemini 3.1 Flash는 512도 지원합니다. 대문자 K를 사용하며 비워 두면 모델 기본값을 사용합니다.",
+    ),
+    "SiliconFlowModelConfig.cfg": (
+        "Qwen Image only; 0 omits the parameter. A common value is 4. Kolors uses guidance_scale instead.",
+        "Qwen Image のみ使用します。0 は送信しません。一般的な値は 4 です。Kolors は guidance_scale を使用します。",
+        "Qwen Image 전용입니다. 0이면 전송하지 않습니다. 일반적인 값은 4입니다. Kolors는 guidance_scale을 사용합니다.",
+    ),
+    "AliyunModelConfig.models": (
+        "Required. Defaults include Qwen 3.0/2.0, Z-Image, Kling v3 and current Vidu image models. "
+        "Add older models or dated snapshots manually when needed.",
+        "必須。既定は Qwen 3.0/2.0、Z-Image、Kling v3 と現行の Vidu 画像モデルです。"
+        "旧モデルや日付付きスナップショットは必要に応じて手動で追加できます。",
+        "필수. 기본 목록에는 Qwen 3.0/2.0, Z-Image, Kling v3와 현재 Vidu 이미지 모델만 포함됩니다. "
+        "이전 모델과 날짜별 스냅샷은 필요할 때 직접 추가할 수 있습니다.",
+    ),
+    "ZhipuModelConfig.quality": (
+        "Leave blank for the model default. GLM-Image supports hd; CogView supports hd or standard.",
+        "空欄はモデルの既定値を使用します。GLM-Image は hd、CogView は hd または standard に対応します。",
+        "비워 두면 모델 기본값을 사용합니다. GLM-Image는 hd, CogView는 hd 또는 standard를 지원합니다.",
+    ),
+    "VolcengineModelConfig.output_format": (
+        "Enter png or jpeg, or leave blank for the model default. Supported by Seedream 5.0 models only.",
+        "png または jpeg を入力します。空欄はモデルの既定値を使用します。Seedream 5.0 系列のみ対応します。",
+        "png 또는 jpeg를 입력합니다. 비워 두면 모델 기본값을 사용합니다. Seedream 5.0 계열만 지원합니다.",
+    ),
+    "VolcengineModelConfig.optimize_prompt_mode": (
+        "Enter standard or fast; leave blank to omit. fast is supported by Seedream 5.0 pro and 4.0 only.",
+        "standard または fast を入力します。空欄は送信しません。fast は Seedream 5.0 pro と 4.0 のみ対応します。",
+        "standard 또는 fast를 입력합니다. 비워 두면 전송하지 않습니다. fast는 Seedream 5.0 pro와 4.0만 지원합니다.",
+    ),
+    "VolcengineModelConfig.background": (
+        "Enter opaque or transparent; leave blank to omit. Seedream 5.0 pro/flash edits only. "
+        "transparent requires one transparent source image and non-JPEG output.",
+        "opaque または transparent を入力します。空欄は送信しません。Seedream 5.0 pro/flash の画像変換のみ対応します。"
+        "transparent は透過した元画像 1 枚が必要で、JPEG 出力は使用できません。",
+        "opaque 또는 transparent를 입력합니다. 비워 두면 전송하지 않습니다. Seedream 5.0 pro/flash 이미지 변환만 지원합니다. "
+        "transparent는 투명 원본 이미지 한 장이 필요하며 JPEG 출력은 사용할 수 없습니다.",
+    ),
+}
+
+
+def _localized_field_entries(
+    class_name: str,
+    field_name: str,
+    json_schema_extra: Dict[str, object],
+) -> Dict[str, Dict[str, str]]:
+    """生成一个字段的三语 WebUI 元数据。"""
+
+    field_path = f"{class_name}.{field_name}"
+    labels = _FIELD_LABEL_OVERRIDES.get(field_path, _FIELD_LABELS.get(field_name))
+    if labels is None:
+        raise ValueError(f"配置字段缺少 i18n 标签：{field_path}")
+
+    placeholder_values = _PLACEHOLDER_TEXTS.get(field_path)
+    default_placeholder = str(json_schema_extra.get("placeholder") or "").strip()
+    translations: Dict[str, Dict[str, str]] = {}
+    for index, locale in enumerate(_LOCALES):
+        label = labels[index]
+        localized: Dict[str, str] = {"label": label}
+        if str(json_schema_extra.get("hint") or "").strip():
+            if field_path in _FIELD_HINT_OVERRIDES:
+                localized["hint"] = _FIELD_HINT_OVERRIDES[field_path][index]
+            elif field_name == "default_openai_compatibility_mode":
+                localized["hint"] = _OPENAI_MODE_HINTS[index]
+            elif locale == "en_US":
+                localized["hint"] = f"Configure {label}."
+            elif locale == "ja_JP":
+                localized["hint"] = f"{label}を設定します。"
+            else:
+                localized["hint"] = f"{label}을(를) 설정합니다."
+        if default_placeholder:
+            localized["placeholder"] = (
+                placeholder_values[index] if placeholder_values is not None else default_placeholder
+            )
+        translations[locale] = localized
+    return translations
+
+
+def apply_config_i18n(config_classes: Iterable[Type[PluginConfigBase]]) -> None:
+    """把集中维护的多语言元数据注入所有插件配置模型。"""
+
+    for config_class in config_classes:
+        class_name = config_class.__name__
+        section_texts = _SECTION_TEXTS.get(class_name)
+        if section_texts is None:
+            raise ValueError(f"配置节缺少 i18n 文案：{class_name}")
+
+        titles, descriptions = section_texts
+        config_class.__ui_i18n__ = {
+            locale: {
+                "title": titles[index],
+                "description": descriptions[index],
+            }
+            for index, locale in enumerate(_LOCALES)
+        }
+
+        for field_name, field_info in config_class.model_fields.items():
+            json_schema_extra = (
+                dict(field_info.json_schema_extra) if isinstance(field_info.json_schema_extra, dict) else {}
+            )
+            json_schema_extra["i18n"] = _localized_field_entries(
+                class_name,
+                field_name,
+                json_schema_extra,
+            )
+            field_info.json_schema_extra = json_schema_extra
