@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="assets/icon.png" alt="麦麦绘图插件图标" width="128" height="128">
+
 # 麦麦绘图
 
 让麦麦拥有图片创作与编辑能力，也让你在工作台里直接创作。
