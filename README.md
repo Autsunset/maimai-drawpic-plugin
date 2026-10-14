@@ -4,6 +4,11 @@
 
 # 麦麦绘图
 
+![Plugin Version](https://img.shields.io/badge/Plugin-1.12.6-informational.svg)
+![MaiBot](https://img.shields.io/badge/MaiBot-%3E%3D1.3.7-blue.svg)
+![MaiBot Plugin SDK](https://img.shields.io/badge/Plugin%20SDK-%3E%3D2.12.0-blueviolet.svg)
+![License](https://img.shields.io/badge/License-AGPL--3.0-green.svg)
+
 让麦麦拥有图片创作与编辑能力，也让你在工作台里直接创作。
 
 [使用指南](#开始使用) · [平台说明](docs/platforms.md) · [插件联动](docs/integration.md)
