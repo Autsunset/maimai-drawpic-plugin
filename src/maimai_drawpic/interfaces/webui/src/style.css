@@ -817,6 +817,24 @@ textarea {
   grid-template-columns: 190px minmax(0, 1fr);
   gap: 20px;
 }
+.page-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+}
+.page-header > div:first-child {
+  min-width: 0;
+}
+@media (max-width: 640px) {
+  .page-actions .unsaved {
+    font-size: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+}
 .settings-tabs {
   display: flex;
   flex-direction: column;

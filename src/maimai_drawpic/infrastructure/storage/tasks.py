@@ -5,9 +5,10 @@ from datetime import datetime
 from functools import wraps
 from pathlib import Path
 from threading import RLock
-from typing import Any, Callable, Literal
+from typing import Any, Callable, Dict, Literal, Optional, Set
 from uuid import uuid4
 import json
+import re
 
 from .atomic import write_json_atomically
 from ..http import sanitize_provider_text
@@ -43,9 +44,12 @@ class DrawTaskRecord:
     message: str = ""
     sent_count: int = 0
     result_count: int = 0
+    generated_count: int = 0
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     last_status_query_at: datetime | None = None
+    submission: Dict[str, Any] = field(default_factory=dict)
+    error: Optional[Dict[str, Any]] = None
 
 
 class DrawTaskStore:
@@ -103,24 +107,21 @@ class DrawTaskStore:
             raw_text = self.path.read_text(encoding="utf-8")
             raw_data = json.loads(raw_text)
         except Exception as exc:
-            self._log_warning("读取绘图任务缓存失败，将使用空状态: %s", exc)
-            self._tasks = {}
-            self._latest_task_id_by_session = {}
-            return
+            raise ValueError("绘图任务文件无法读取，请从备份恢复；未清空幂等记录") from exc
 
         if not isinstance(raw_data, dict):
-            self._log_warning("绘图任务缓存格式不正确，将使用空状态")
-            self._tasks = {}
-            self._latest_task_id_by_session = {}
-            return
+            raise ValueError("绘图任务文件格式错误；未清空幂等记录")
 
         normalized_tasks: dict[str, DrawTaskRecord] = {}
         raw_tasks = raw_data.get("tasks", {})
+        if not isinstance(raw_tasks, dict):
+            raise ValueError("绘图任务集合格式错误；未清空幂等记录")
         if isinstance(raw_tasks, dict):
             for task_id, task_payload in raw_tasks.items():
                 record = self._deserialize_record(task_id, task_payload)
-                if record is not None:
-                    normalized_tasks[task_id] = record
+                if record is None:
+                    raise ValueError(f"绘图任务记录 {task_id} 无效；未清空幂等记录")
+                normalized_tasks[task_id] = record
 
         normalized_latest: dict[str, str] = {}
         raw_latest = raw_data.get("latest_task_id_by_session", {})
@@ -141,6 +142,10 @@ class DrawTaskStore:
             safe_message = self.sanitize_message(record.message)
             changed = changed or safe_message != record.message
             record.message = safe_message
+            if record.error is not None:
+                safe_error = self.sanitize_message(record.error["message"])
+                changed = changed or safe_error != record.error["message"]
+                record.error["message"] = safe_error
         self._latest_task_id_by_session = normalized_latest
         self._prune_tasks()
         if changed:
@@ -173,9 +178,12 @@ class DrawTaskStore:
         model: str,
         provider: str,
         message: str,
+        submission: Optional[Dict[str, Any]] = None,
     ) -> DrawTaskRecord:
         """创建任务记录。"""
 
+        if sum(item.status in {"pending", "running"} for item in self._tasks.values()) >= self.MAX_TASK_RECORDS:
+            raise ValueError("活动任务记录已满，请等待现有任务结束")
         task_id = uuid4().hex[:12]
         record = DrawTaskRecord(
             task_id=task_id,
@@ -186,12 +194,37 @@ class DrawTaskStore:
             model=model,
             provider=provider,
             message=self.sanitize_message(message),
+            submission=dict(submission or {}),
         )
+        previous_tasks = dict(self._tasks)
+        previous_latest = dict(self._latest_task_id_by_session)
         self._tasks[task_id] = record
         self._latest_task_id_by_session[record.session_key] = task_id
         self._prune_tasks()
-        self.save()
+        try:
+            self.save()
+        except Exception:
+            # 持久化未成功不能留下可被幂等查询误认成已受理的内存记录。
+            self._tasks = previous_tasks
+            self._latest_task_id_by_session = previous_latest
+            raise
         return record
+
+    @_synchronized
+    def find_request(self, request_id: str) -> Optional[Dict[str, Any]]:
+        """映射与任务在同一原子文件中，保留期与任务记录一致。"""
+        return next(
+            (
+                self._serialize_record(item)
+                for item in self._tasks.values()
+                if item.submission.get("request_id") == request_id
+            ),
+            None,
+        )
+
+    @_synchronized
+    def retained_task_ids(self) -> Set[str]:
+        return set(self._tasks)
 
     def get_task(self, task_id: str) -> DrawTaskRecord | None:
         """根据任务 ID 获取任务。"""
@@ -217,6 +250,8 @@ class DrawTaskStore:
         model: str | None = None,
         provider: str | None = None,
         result_count: int | None = None,
+        error: Optional[Dict[str, Any]] = None,
+        generated_count: Optional[int] = None,
     ) -> DrawTaskRecord | None:
         """更新任务状态；任务不存在时返回 None 而非抛出 KeyError。"""
 
@@ -226,8 +261,12 @@ class DrawTaskStore:
             return None
         record.status = status
         record.message = self.sanitize_message(message)
+        if error is not None:
+            record.error = {**error, "message": self.sanitize_message(error["message"])}
         if result_count is not None:
             record.result_count = result_count
+        if generated_count is not None:
+            record.generated_count = generated_count
         if sent_count is not None:
             record.sent_count = sent_count
         if model is not None:
@@ -273,6 +312,17 @@ class DrawTaskStore:
 
         if not isinstance(payload, dict):
             return None
+        if not re.fullmatch(r"[a-f0-9]{12}", task_id) or payload.get("task_id", task_id) != task_id:
+            return None
+        if payload.get("status", "pending") not in {"pending", "running", "completed", "failed", "rejected"}:
+            return None
+        error = payload.get("error")
+        if error is not None and (
+            not isinstance(error, dict)
+            or not isinstance(error.get("code"), str)
+            or not isinstance(error.get("message"), str)
+        ):
+            return None
 
         try:
             created_at = datetime.fromisoformat(str(payload.get("created_at") or ""))
@@ -295,9 +345,12 @@ class DrawTaskStore:
                 message=str(payload.get("message") or ""),
                 sent_count=int(payload.get("sent_count") or 0),
                 result_count=int(payload.get("result_count") or 0),
+                generated_count=int(payload.get("generated_count") or 0),
                 created_at=created_at,
                 updated_at=updated_at,
                 last_status_query_at=last_status_query_at,
+                submission=dict(payload.get("submission", {})),
+                error=payload.get("error"),
             )
         except Exception:
             return None
@@ -314,7 +367,7 @@ class DrawTaskStore:
         if len(self._tasks) > self.MAX_TASK_RECORDS:
             newest_tasks = sorted(
                 reversed(list(self._tasks.values())),
-                key=lambda record: record.created_at,
+                key=lambda record: (record.status in {"pending", "running"}, record.created_at),
                 reverse=True,
             )[: self.MAX_TASK_RECORDS]
             self._tasks = {record.task_id: record for record in newest_tasks}

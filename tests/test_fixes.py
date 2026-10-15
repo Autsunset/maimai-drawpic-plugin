@@ -1754,6 +1754,8 @@ def test_task_store_limits_history_and_omits_prompt() -> None:
             )
             task_ids.append(record.task_id)
             assert record.prompt == ""
+            # 历史淘汰只针对已结束记录，活动任务不能被新提交挤掉。
+            store.update_task(record.task_id, status="completed", message="done")
         assert store.get_task_count() == 3
         assert store.get_task(task_ids[0]) is None
     print("[OK] task_store: 历史数量和提示词持久化受限")

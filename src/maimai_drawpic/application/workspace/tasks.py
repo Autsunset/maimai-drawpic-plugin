@@ -15,6 +15,7 @@ from ...infrastructure.storage.results import ImageResultStore
 from ...infrastructure.storage.atomic import write_json_atomically
 from ...domain.styles import StylePromptResolver
 from ...infrastructure.storage.tasks import DrawTaskStore
+from ...domain.task_errors import TaskRequestError, task_error
 
 
 def validate_task_id(task_id: str) -> None:
@@ -52,9 +53,14 @@ class WorkspaceTaskService:
                 raise ValueError("网页任务元数据格式错误")
         self.cleanup_storage()
         for record in self.task_store.snapshot():
+            if record["submission"]:
+                self.metadata[record["task_id"]] = record["submission"]
             if record["status"] in {"pending", "running"}:
                 self.task_store.update_task(
-                    record["task_id"], status="failed", message="插件已重启，旧任务中断，请重新提交"
+                    record["task_id"],
+                    status="failed",
+                    message="插件已重启，旧任务结果待确认，请先核对提供商记录",
+                    error=task_error("RESTART_UNCONFIRMED", "插件重启中断本地等待，未自动重新提交"),
                 )
 
     def _save_metadata(self) -> None:
@@ -66,6 +72,7 @@ class WorkspaceTaskService:
         """任务诊断可被其他插件读取，不能携带提示词、内部会话键或上游凭证。"""
         record.pop("session_key", None)
         record.pop("prompt", None)
+        record.pop("submission", None)
         record["message"] = self.task_store.sanitize_message(record["message"])
         return record
 
@@ -128,8 +135,6 @@ class WorkspaceTaskService:
     ) -> Dict[str, Any]:
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 16000:
             raise ValueError("提示词应为 1～16000 个字符")
-        if not self.get_config().plugin.enabled:
-            raise ValueError("绘图插件已停用，请先启用插件")
         if not all(
             isinstance(value, str) for value in (model, negative_prompt, style, task_type, stream_id, request_id)
         ):
@@ -158,16 +163,25 @@ class WorkspaceTaskService:
             ).hexdigest()
         )
         async with self.lock:
+            retained = await asyncio.to_thread(self.task_store.retained_task_ids)
+            self.metadata = {key: value for key, value in self.metadata.items() if key in retained}
             if request_id:
+                persisted = await asyncio.to_thread(self.task_store.find_request, request_id)
                 previous = next(
                     ((key, value) for key, value in self.metadata.items() if value["request_id"] == request_id), None
                 )
+                if persisted is not None:
+                    previous = (persisted["task_id"], persisted["submission"])
                 if previous is not None:
                     if previous[1]["signature"] != signature:
-                        raise ValueError("相同 request_id 不能用于不同绘图参数")
+                        raise TaskRequestError("REQUEST_ID_CONFLICT", "相同 request_id 不能用于不同绘图参数")
                     return {"task_id": previous[0], "reused": True}
+            if not self.get_config().plugin.enabled:
+                raise ValueError("绘图插件已停用，请先启用插件")
             if sum(len(service.background_tasks) for service in self.active_services()) >= 4:
-                raise ValueError("已有 4 个绘图任务正在执行，请等待完成后再提交")
+                raise TaskRequestError(
+                    "CONCURRENCY_LIMIT", "已有 4 个绘图任务正在执行，请等待完成后再提交", retry_submit=True
+                )
             images = await self._sources(source_ids or [], source_images or [])
             if task_type == "draw" and images:
                 raise ValueError("文生图不能附带源图，请选择图生图")
@@ -186,6 +200,13 @@ class WorkspaceTaskService:
             resolved_style = StylePromptResolver(self.get_config().style).resolve(
                 style_name=style, user_prompt=prompt, user_negative_prompt=negative_prompt
             )
+            submission = {
+                "origin": origin,
+                "request_id": request_id or uuid4().hex,
+                "signature": signature,
+                "prompt": prompt,
+                "style": style,
+            }
             if stream_id:
                 result = await self.submit_chat(
                     prompt=resolved_style.positive_prompt,
@@ -195,6 +216,7 @@ class WorkspaceTaskService:
                     source_image_bytes_list=images,
                     notify_start=False,
                     defer_prompt_review=True,
+                    submission=submission,
                 )
             else:
                 result = await service.start_background_image_request(
@@ -206,16 +228,10 @@ class WorkspaceTaskService:
                     request_negative_prompt=resolved_style.negative_prompt,
                     source_image_bytes_list=images,
                     prompt_reviewed=False,
+                    submission=submission,
                 )
             task_id = result["task_id"]
-            self.metadata[task_id] = {
-                "origin": origin,
-                "request_id": request_id or uuid4().hex,
-                "signature": signature,
-                "prompt": prompt,
-                "style": style,
-            }
-            await asyncio.to_thread(self._save_metadata)
+            self.metadata[task_id] = submission
             return {"task_id": task_id, "reused": False}
 
     async def tasks(self, *, page: int = 1, status: str = "", search: str = "") -> Dict[str, Any]:
@@ -277,9 +293,16 @@ class WorkspaceTaskService:
                 (task for task in service.background_tasks if task.get_name() == f"maimai-drawpic:{task_id}"), None
             )
             if task is not None:
-                task.cancel()
+                if not task.cancel():
+                    raise ValueError("该任务已经结束")
                 await asyncio.gather(task, return_exceptions=True)
-                await asyncio.to_thread(self.task_store.update_task, task_id, status="failed", message="任务已取消")
+                await asyncio.to_thread(
+                    self.task_store.update_task,
+                    task_id,
+                    status="failed",
+                    message="任务已取消",
+                    error=task_error("CANCELLED", "本地等待已取消，不代表上游撤单或停止计费"),
+                )
                 return {"task_id": task_id, "cancelled": True}
         raise ValueError("任务已不在当前执行队列中")
 

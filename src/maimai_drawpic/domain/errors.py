@@ -49,6 +49,10 @@ class ProviderResultError(ProviderError):
     """已收到生成响应，解析或结果下载失败只能恢复结果，不能重新生图。"""
 
 
+class ProviderDownloadError(ProviderResultError):
+    """只允许下载器恢复同一结果 URL 的临时传输错误，不能重新生成。"""
+
+
 class ProviderOutcomeUnknown(ProviderError):
     """连接中断或超时，无法确认上游是否已经受理、生成或计费。"""
 

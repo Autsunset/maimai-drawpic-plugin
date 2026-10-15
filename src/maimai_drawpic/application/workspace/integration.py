@@ -1,0 +1,153 @@
+"""v2 任务契约；v1 页面与旧插件继续使用原接口。"""
+
+from typing import Any, Dict
+import asyncio
+
+from ...domain.task_errors import TaskRequestError, task_error
+from .tasks import WorkspaceTaskService, validate_task_id
+
+
+def public_status(status: str, error: Dict[str, Any] | None) -> str:
+    code = error["code"] if error is not None else ""
+    if code in {"UPSTREAM_UNCONFIRMED", "RESTART_UNCONFIRMED"}:
+        return "unconfirmed"
+    return "cancelled" if code == "CANCELLED" else status
+
+
+class IntegrationTaskService:
+    def __init__(self, tasks: WorkspaceTaskService) -> None:
+        self.tasks = tasks
+
+    def error_response(self, exc: Exception) -> Dict[str, Any]:
+        code = exc.code if isinstance(exc, TaskRequestError) else "INVALID_REQUEST"
+        if isinstance(exc, PermissionError):
+            code = "PERMISSION_DENIED"
+        return {
+            "task_id": None,
+            "status": "not_accepted",
+            "images": [],
+            "retry_after_ms": 0,
+            "error": task_error(
+                code,
+                self.tasks.task_store.sanitize_message(str(exc)),
+                retry_submit=isinstance(exc, TaskRequestError) and exc.retry_submit,
+            ),
+        }
+
+    async def submit(self, **kwargs: Any) -> Dict[str, Any]:
+        try:
+            receipt = await self.tasks.submit(**kwargs, origin="plugin")
+        except (ValueError, PermissionError) as exc:
+            return {**self.error_response(exc), "accepted": False, "request_id": kwargs.get("request_id", "")}
+        return {**await self.task(receipt["task_id"]), **receipt, "accepted": True}
+
+    async def task(self, task_id: str) -> Dict[str, Any]:
+        try:
+            validate_task_id(task_id)
+            record = await asyncio.to_thread(self.tasks.task_store.get_task, task_id)
+            if record is None:
+                raise TaskRequestError("TASK_NOT_FOUND", "当前实例不存在该任务或记录已淘汰")
+            detail = await self.tasks.detail(task_id)
+        except ValueError as exc:
+            return self.error_response(exc)
+        status, error = public_status(detail["status"], detail["error"]), detail["error"]
+        if error is None and status in {"failed", "rejected"}:
+            error = task_error("MODERATION_REJECTED" if status == "rejected" else "EXECUTION_FAILED", detail["message"])
+        if status == "completed" and not detail["images"]:
+            error = task_error(
+                "RESULT_EXPIRED" if detail["result_count"] else "RESULT_UNAVAILABLE",
+                "图片结果已过期、被清理或未能缓存；不会重新生成",
+            )
+        images = [
+            {**image, "task_id": task_id, "format": image["mime"].split("/", 1)[1], "available": True}
+            for image in detail["images"]
+        ]
+        requested = bool(record.stream_id)
+        delivery = "not_requested" if not requested else "pending"
+        if requested and detail["sent_count"]:
+            delivery = (
+                "partial" if max(detail["generated_count"], detail["result_count"]) > detail["sent_count"] else "sent"
+            )
+        elif requested and status not in {"pending", "running"}:
+            delivery = "unconfirmed" if status in {"unconfirmed", "cancelled"} else "failed"
+        return {
+            **detail,
+            "status": status,
+            "images": images,
+            "error": error,
+            "request_id": record.submission.get(
+                "request_id", self.tasks.metadata.get(task_id, {}).get("request_id", "")
+            ),
+            "retry_after_ms": 3000 if status in {"pending", "running"} else 0,
+            "generation_completed": detail["status"] == "completed"
+            or detail["generated_count"] > 0
+            or detail["result_count"] > 0,
+            "results_readable": bool(images),
+            "delivery": {"requested": requested, "status": delivery, "sent_count": detail["sent_count"]},
+        }
+
+    async def image(self, task_id: str, index: int = 0, kind: str = "original", offset: int = 0) -> Dict[str, Any]:
+        task = await self.task(task_id)
+        if task["task_id"] is None:
+            return task
+        if (
+            type(index) is not int
+            or index < 0
+            or not isinstance(kind, str)
+            or kind not in {"original", "preview", "thumbnail"}
+        ):
+            return self.error_response(ValueError("图片索引或类型无效"))
+        if not task["images"]:
+            if task["status"] in {"pending", "running"}:
+                return {"error": task_error("RESULT_NOT_READY", "任务尚未产生可读取图片", retry_query=True)}
+            return {"error": task_error("RESULT_EXPIRED", "图片结果已过期、被清理或尚未产生")}
+        if index >= len(task["images"]):
+            return self.error_response(ValueError("图片索引无效"))
+        try:
+            if kind == "original":
+                result = await asyncio.to_thread(self.tasks.results.original_chunk, task_id, index, offset)
+            else:
+                result = await asyncio.to_thread(self.tasks.results.preview, task_id, index, kind == "thumbnail")
+            return {**result, "error": None}
+        except FileNotFoundError:
+            return {"error": task_error("RESULT_EXPIRED", "读取过程中图片被缓存清理")}
+        except ValueError as exc:
+            return self.error_response(exc)
+
+    async def cancel(self, task_id: str) -> Dict[str, Any]:
+        task = await self.task(task_id)
+        requested = task["status"] in {"pending", "running"}
+        if requested:
+            try:
+                await self.tasks.cancel(task_id)
+            except ValueError:
+                # 取消与完成竞争时返回实际终态，不能把已完成的任务改成已取消。
+                pass
+            task = await self.task(task_id)
+        return {**task, "cancel_requested": requested, "upstream_cancelled": None}
+
+    async def listing(self, page: int = 1, status: str = "", search: str = "") -> Dict[str, Any]:
+        if type(page) is not int or not 1 <= page <= 100 or not isinstance(search, str) or len(search) > 200:
+            return self.error_response(ValueError("分页或搜索参数无效"))
+        if not isinstance(status, str) or status not in {
+            "",
+            "pending",
+            "running",
+            "completed",
+            "failed",
+            "rejected",
+            "unconfirmed",
+            "cancelled",
+        }:
+            return self.error_response(ValueError("任务状态无效"))
+        records = sorted(
+            await asyncio.to_thread(self.tasks.task_store.snapshot), key=lambda item: item["created_at"], reverse=True
+        )
+        filtered = [
+            record
+            for record in records
+            if (not status or public_status(record["status"], record["error"]) == status)
+            and search.casefold() in f"{record['task_id']} {record['model']} {record['message']}".casefold()
+        ]
+        items = [await self.task(record["task_id"]) for record in filtered[(page - 1) * 12 : page * 12]]
+        return {"items": items, "total": len(filtered), "page": page, "page_size": 12, "error": None}

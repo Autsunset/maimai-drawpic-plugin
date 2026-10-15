@@ -8,7 +8,7 @@ import aiohttp
 import asyncio
 import socket
 
-from ...domain.errors import ProviderResultError
+from ...domain.errors import ProviderDownloadError, ProviderResultError
 from ..http import HttpProxySettings, read_response_bytes, sanitize_provider_url
 from .images import validate_image_bytes
 
@@ -54,6 +54,24 @@ async def _addresses(host: str, port: int) -> List[str]:
 
 
 async def download_image(url: str, *, base_url: str, proxy_settings: HttpProxySettings, timeout_seconds: int) -> bytes:
+    """在有限预算内只恢复同一结果地址；每次重新检查 DNS 与重定向。"""
+    try:
+        async with asyncio.timeout(timeout_seconds):
+            for attempt in range(3):
+                try:
+                    return await _download_image(
+                        url, base_url=base_url, proxy_settings=proxy_settings, timeout_seconds=timeout_seconds
+                    )
+                except ProviderDownloadError:
+                    if attempt == 2:
+                        raise
+                    await asyncio.sleep(0.5 * (attempt + 1))
+    except TimeoutError:
+        raise ProviderDownloadError("图片已生成，结果下载等待超时，未重新提交生成请求") from None
+    raise AssertionError("unreachable download retry state")
+
+
+async def _download_image(url: str, *, base_url: str, proxy_settings: HttpProxySettings, timeout_seconds: int) -> bytes:
     """默认只访问公网；管理员配置的服务同源结果允许本地部署，无需额外开关。"""
     current, trusted = _url(url), _url(base_url)
     timeout = aiohttp.ClientTimeout(total=timeout_seconds)
@@ -96,6 +114,8 @@ async def download_image(url: str, *, base_url: str, proxy_settings: HttpProxySe
                         return raw
     except ProviderResultError:
         raise
-    except (aiohttp.ClientError, OSError, TimeoutError, ValueError) as exc:
+    except (aiohttp.ClientConnectionError, aiohttp.ClientPayloadError, TimeoutError) as exc:
+        raise ProviderDownloadError(f"图片结果传输中断（{type(exc).__name__}），未重新提交生成请求") from None
+    except (aiohttp.ClientError, OSError, ValueError) as exc:
         raise ProviderResultError(f"图片结果下载或校验失败（{type(exc).__name__}），未重新提交生成请求") from None
     raise ProviderResultError("图片结果下载未完成")

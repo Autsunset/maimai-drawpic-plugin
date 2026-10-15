@@ -12,7 +12,7 @@ import re
 import shutil
 import tomlkit
 
-from ...domain.configuration.models import DrawpicConfig, OpenAICompatibleInstanceConfig
+from ...domain.configuration.models import DrawpicConfig, OpenAICompatibleInstanceConfig, StylePresetConfig
 from ...application.routing import ProviderRouter
 from .atomic import write_json_atomically, write_text_atomically
 from .settings import WorkspaceSettingsStore, workspace_config
@@ -49,7 +49,7 @@ def host_config(config: Mapping[str, Any]) -> Dict[str, Any]:
 
 def parse_json_object(value: str) -> Dict[str, Any]:
     if len(value.encode("utf-8")) > 60 * 1024:
-        raise ValueError("配置超过 60 KiB，请分次保存")
+        raise ValueError("配置超过 60 KiB，请精简配置内容")
     result = json.loads(value, parse_constant=lambda _: _invalid_number())
     if not isinstance(result, dict):
         raise ValueError("配置必须是对象")
@@ -362,7 +362,14 @@ class WorkspaceConfigStore:
 
     @staticmethod
     def schema() -> Dict[str, Any]:
-        return generate_plugin_config_schema(DrawpicConfig)
+        schema = generate_plugin_config_schema(DrawpicConfig)
+        # SDK 2.12 的列表子模型不输出 hint；在插件工作台补齐，避免模板占位符说明丢失。
+        fields = schema["sections"]["style"]["fields"]["presets"]["item_fields"]
+        for name, field in StylePresetConfig.model_fields.items():
+            extra = field.json_schema_extra
+            if isinstance(extra, dict) and extra.get("hint"):
+                fields[name]["hint"] = extra["hint"]
+        return schema
 
     def secrets(self) -> List[str]:
         return [item["config"]["api_key"] for item in self.providers if item["config"].get("api_key")]

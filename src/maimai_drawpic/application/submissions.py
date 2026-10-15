@@ -1,6 +1,6 @@
 """runtime/requests.py 的插件组件。"""
 
-from typing import Any
+from typing import Any, Dict, Optional
 import asyncio
 
 
@@ -24,6 +24,7 @@ class RequestMixin:
         platform_name: str = "qq",
         notify_start: bool = True,
         defer_prompt_review: bool = False,
+        submission: Optional[Dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """按当前会话设置启动后台绘图，源图为空时文生图，存在源图时图生图。"""
 
@@ -154,8 +155,9 @@ class RequestMixin:
                 notify_start=notify_start,
                 prompt_reviewed=not defer_prompt_review,
                 on_task_unsuccessful=_handle_task_unsuccessful,
+                submission=submission,
             )
-        except Exception:
+        except (Exception, asyncio.CancelledError):
             await asyncio.to_thread(
                 self._refund_draw_quota,
                 quota_key,

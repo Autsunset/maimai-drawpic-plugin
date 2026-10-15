@@ -2,6 +2,7 @@ import re
 import unicodedata
 
 from ..moderation import DrawpicModerationService
+from ...domain.errors import ProviderRequestError
 
 
 class PromptReviewMixin:
@@ -24,7 +25,9 @@ class PromptReviewMixin:
             self.ctx.logger.info("提示词审核未通过")
         if not review_result.passed:
             reason_suffix = f"原因：{review_result.reason}" if review_result.reason else "原因：审核模型判定为不通过"
-            raise ValueError(f"提示词审核未通过，已拒绝本次绘图请求。{reason_suffix}")
+            raise ProviderRequestError(
+                400, "content_policy_violation", f"提示词审核未通过，已拒绝本次绘图请求。{reason_suffix}"
+            )
 
     async def rewrite_prompt_to_english_if_needed(
         self,

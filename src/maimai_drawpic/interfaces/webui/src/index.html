@@ -52,13 +52,28 @@
             <h1 id="page-title">开始创作</h1>
             <p id="page-description">从一个想法开始，剩下的交给画笔。</p>
           </div>
-          <button
-            id="refresh"
-            class="button secondary compact"
-            aria-label="刷新工作台"
-          >
-            <span data-icon="refresh"></span><span>刷新</span>
-          </button>
+          <div class="page-actions">
+            <span id="settings-unsaved" class="unsaved" hidden
+              >有未保存的修改</span
+            >
+            <button
+              id="save-settings"
+              type="button"
+              class="button compact"
+              aria-label="保存全部设置"
+              title="保存全部设置"
+              hidden
+            >
+              <span data-icon="check"></span><span>保存全部设置</span>
+            </button>
+            <button
+              id="refresh"
+              class="button secondary compact"
+              aria-label="刷新工作台"
+            >
+              <span data-icon="refresh"></span><span>刷新</span>
+            </button>
+          </div>
         </header>
         <div id="load-error" class="error-banner" role="alert" hidden></div>
         <div id="workspace-content" aria-live="polite">

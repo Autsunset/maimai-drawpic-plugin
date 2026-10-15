@@ -162,6 +162,8 @@
     return state.data;
   }
   async function render() {
+    $("#save-settings").hidden = state.view !== "settings";
+    $("#settings-unsaved").hidden = state.view !== "settings" || !state.dirty;
     const [title, description] = titles[state.view];
     $("#page-title").textContent = title;
     $("#page-description").textContent = description;

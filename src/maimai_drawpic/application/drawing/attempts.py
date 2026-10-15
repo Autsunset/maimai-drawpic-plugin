@@ -6,6 +6,7 @@ import asyncio
 
 from ...domain.errors import ProviderError, ProviderOutcomeUnknown, ProviderResultError, ProviderSubmittedError
 from .types import ImageRequestAttempt
+from ...domain.task_errors import provider_task_error
 
 
 class RequestAttemptRunnerMixin:
@@ -26,6 +27,7 @@ class RequestAttemptRunnerMixin:
         request_negative_prompt: str,
     ) -> Tuple[List[bytes], Optional[ImageRequestAttempt], List[str]]:
         errors: List[str] = []
+        failure = None
         seen = set()
         models = [primary_model, *self.router.resolve_fallback_models(primary_model)]
         retry_count = self.router.config.general.request_retry_count
@@ -115,5 +117,20 @@ class RequestAttemptRunnerMixin:
                 if not failure.retryable:
                     break
             if not failure.allow_fallback:
+                await asyncio.to_thread(
+                    self.task_store.update_task,
+                    task_id,
+                    status="failed",
+                    message=reason,
+                    error=provider_task_error(failure, reason),
+                )
                 return [], None, errors
+        if failure is not None:
+            await asyncio.to_thread(
+                self.task_store.update_task,
+                task_id,
+                status="failed",
+                message=reason,
+                error=provider_task_error(failure, reason),
+            )
         return [], None, errors

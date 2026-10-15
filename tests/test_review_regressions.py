@@ -29,6 +29,36 @@ async def serve(handler):
     return runner, f"http://127.0.0.1:{port}"
 
 
+def test_result_download_recovers_same_url_after_connection_reset():
+    async def run():
+        downloads = module("infrastructure.media.downloads")
+        proxy = module("infrastructure.http").HttpProxySettings.disabled()
+        hits = []
+
+        async def handler(request):
+            hits.append((request.method, request.path_qs))
+            if len(hits) == 1:
+                # 先发送响应头，再截断图片，验证真实传输失败而非模拟异常。
+                response = web.StreamResponse(headers={"Content-Length": str(len(image_bytes()))})
+                await response.prepare(request)
+                await response.write(b"\x89PNG")
+                request.transport.abort()
+                return response
+            return web.Response(body=image_bytes(), content_type="image/png")
+
+        runner, base = await serve(handler)
+        try:
+            raw = await downloads.download_image(
+                base + "/result?ticket=fixture", base_url=base, proxy_settings=proxy, timeout_seconds=3
+            )
+            assert raw == image_bytes()
+            assert hits == [("GET", "/result?ticket=fixture")] * 2
+        finally:
+            await runner.cleanup()
+
+    asyncio.run(run())
+
+
 def test_result_download_blocks_private_markdown_and_cross_origin_redirects(monkeypatch):
     async def run():
         downloads = module("infrastructure.media.downloads")

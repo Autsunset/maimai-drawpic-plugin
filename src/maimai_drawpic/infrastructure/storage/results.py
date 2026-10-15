@@ -1,6 +1,7 @@
 """保存审核通过的图片，并提供有界预览与原图读取。"""
 
 from PIL import Image, ImageOps
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 from threading import RLock
@@ -96,8 +97,11 @@ class ImageResultStore:
         if not path.exists():
             return []
         records = json.loads(path.read_text(encoding="utf-8"))["images"]
+        expires_at = datetime.fromtimestamp(
+            path.stat().st_mtime + self.retention.RESULT_MAX_AGE, timezone.utc
+        ).isoformat()
         return [
-            {"index": index, **{key: value for key, value in item.items() if key != "file"}}
+            {"index": index, "expires_at": expires_at, **{key: value for key, value in item.items() if key != "file"}}
             for index, item in enumerate(records)
         ]
 

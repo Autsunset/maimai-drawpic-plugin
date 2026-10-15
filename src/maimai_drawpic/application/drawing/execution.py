@@ -5,6 +5,7 @@ import inspect
 from ..chat import ImageDeliveryError
 from ...infrastructure.storage.retention import CacheCapacityError
 from ...domain.errors import ProviderError
+from ...domain.task_errors import provider_task_error, task_error
 
 
 class ImageExecutionMixin:
@@ -140,6 +141,13 @@ class ImageExecutionMixin:
                 )
                 return
 
+            await asyncio.to_thread(
+                self.task_store.update_task,
+                task_id,
+                status="running",
+                message="图片已生成，正在审核结果",
+                generated_count=len(image_bytes_list),
+            )
             reviewed_images, rejected_reasons = await self.filter_reviewed_images(prompt, image_bytes_list)
             if not reviewed_images:
                 review_reason_text = "；".join(rejected_reasons) if rejected_reasons else "审核未通过"
@@ -150,6 +158,7 @@ class ImageExecutionMixin:
                     task_id,
                     status="rejected",
                     message=review_reason_text,
+                    error=task_error("MODERATION_REJECTED", review_reason_text),
                     model=successful_attempt.model,
                     provider=successful_attempt.provider_name,
                 )
@@ -166,6 +175,12 @@ class ImageExecutionMixin:
                 return
 
             result_count = 0
+            await asyncio.to_thread(
+                self.task_store.update_task,
+                task_id,
+                status="running",
+                message="图片已生成，正在保存结果",
+            )
             cache_message = ""
             if self.result_store is not None:
                 try:
@@ -225,6 +240,7 @@ class ImageExecutionMixin:
                 task_id,
                 status="failed",
                 message="任务已取消",
+                error=task_error("CANCELLED", "本地等待已取消，不代表上游撤单或停止计费"),
             )
             await _notify_task_unsuccessful("failed", "任务已取消")
             self.ctx.logger.warning(
@@ -234,7 +250,13 @@ class ImageExecutionMixin:
         except ProviderError as exc:
             status = "rejected" if exc.rejected else "failed"
             message = self.task_store.sanitize_message(str(exc))
-            await asyncio.to_thread(self.task_store.update_task, task_id, status=status, message=message)
+            await asyncio.to_thread(
+                self.task_store.update_task,
+                task_id,
+                status=status,
+                message=message,
+                error=provider_task_error(exc, message),
+            )
             await _notify_task_unsuccessful(status, message)
             self.ctx.logger.warning("绘图请求已终止: task_id=%s status=%s reason=%s", task_id, status, message)
         except ImageDeliveryError as exc:
@@ -244,6 +266,7 @@ class ImageExecutionMixin:
                     task_id,
                     status="failed",
                     message=str(exc),
+                    error=task_error("DELIVERY_FAILED", str(exc)),
                 )
                 await _notify_task_unsuccessful("failed", str(exc))
                 self.ctx.logger.error(
@@ -279,6 +302,7 @@ class ImageExecutionMixin:
                 task_id,
                 status="failed",
                 message=f"{timeout_message}，超过 {timeout_seconds} 秒",
+                error=task_error("UPSTREAM_UNCONFIRMED", "本地等待超时，远端执行状态未确认"),
             )
             await _notify_task_unsuccessful("failed", f"{timeout_message}，超过 {timeout_seconds} 秒")
             self.ctx.logger.error(
@@ -294,6 +318,7 @@ class ImageExecutionMixin:
                 task_id,
                 status="failed",
                 message=str(exc),
+                error=task_error("EXECUTION_FAILED", str(exc)),
             )
             await _notify_task_unsuccessful("failed", str(exc))
             self.ctx.logger.error(

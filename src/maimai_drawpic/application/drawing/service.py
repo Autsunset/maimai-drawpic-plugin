@@ -1,4 +1,4 @@
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Dict, Optional
 import asyncio
 import re
 
@@ -12,6 +12,7 @@ from .prompts import PromptReviewMixin
 from .planning import RequestPlanningMixin
 from .execution import ImageExecutionMixin
 from .queries import TaskQueryMixin
+from .admission import persist_submission
 
 
 class DrawService(
@@ -180,6 +181,7 @@ class DrawService(
         prompt_reviewed: bool = True,
         on_task_unsuccessful: Callable[[str, str, str], Awaitable[None] | None] | None = None,
         on_task_successful: Callable[[str, str, str], Awaitable[None] | None] | None = None,
+        submission: Optional[Dict[str, Any]] = None,
     ) -> dict[str, Any]:
         """启动后台绘图任务，源图为空时文生图，存在源图时图生图。"""
 
@@ -227,8 +229,8 @@ class DrawService(
         if unavailable:
             self.ctx.logger.warning("部分生图备选模型不可用: %s", unavailable)
 
-        task_record = await asyncio.to_thread(
-            self.task_store.create_task,
+        task_record = await persist_submission(
+            self.task_store,
             session_key=self.build_session_key(
                 stream_id=stream_id,
                 user_id=user_id,
@@ -241,6 +243,7 @@ class DrawService(
             model=primary_attempt.model,
             provider=primary_attempt.provider_name,
             message="任务已创建，等待后台执行",
+            submission=submission,
         )
         background_task = asyncio.create_task(
             self._background_image_request(

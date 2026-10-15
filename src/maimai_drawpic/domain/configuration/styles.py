@@ -41,7 +41,7 @@ class StylePresetConfig(PluginConfigBase):
         description="正向提示词模板。{prompt} 会替换为用户正向提示词；没有占位符时会自动追加用户提示词",
         json_schema_extra={
             "label": "正向提示词模板",
-            "hint": "支持 {prompt}；NovelAI 的 {{tag}} 权重花括号可直接保留",
+            "hint": "{prompt} 会替换为你本次输入的绘图描述，建议保留它，在前后添加风格词。例如“水彩，{prompt}”遇到“一只猫”会变成“水彩，一只猫”。删除占位符时仍会自动追加本次描述；NovelAI 的 {{tag}} 权重花括号可保留。",
             "input_type": "textarea",
             "x-widget": "textarea",
             "rows": 4,
@@ -53,7 +53,7 @@ class StylePresetConfig(PluginConfigBase):
         description="反向提示词模板。{negative_prompt} 会替换为用户反向提示词；没有占位符时会自动追加",
         json_schema_extra={
             "label": "反向提示词模板",
-            "hint": "支持 {negative_prompt}；平台支持独立反向提示词时单独传递，否则合并到一个提示词中",
+            "hint": "{negative_prompt} 会替换为你本次填写的反向提示词（不希望出现的内容）。例如“模糊，{negative_prompt}”遇到“水印”会变成“模糊，水印”。建议保留；删除时仍会自动追加本次反向词。平台不支持独立反向字段时会合并到提示词中。",
             "input_type": "textarea",
             "x-widget": "textarea",
             "rows": 4,

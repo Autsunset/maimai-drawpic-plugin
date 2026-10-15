@@ -430,6 +430,16 @@ _OPENAI_MODE_HINTS = (
 
 
 _FIELD_HINT_OVERRIDES: Dict[str, Tuple[str, str, str]] = {
+    "StylePresetConfig.positive_prompt_template": (
+        "{prompt} inserts this request's drawing description. Keep it and add style words around it: watercolor, {prompt} + a cat becomes watercolor, a cat. Without it, the description is appended automatically. NovelAI {{tag}} weights are preserved.",
+        "{prompt} は今回の描画内容に置換されます。残したまま前後にスタイルを追加してください。例：水彩、{prompt} に「猫」を入力すると「水彩、猫」になります。削除した場合も描画内容を末尾に追加します。NovelAI の {{tag}} は保持されます。",
+        "{prompt}는 이번 요청의 그림 설명으로 바뀝니다. 유지하고 앞뒤에 스타일을 추가하세요. 예: 수채화, {prompt}에 고양이를 입력하면 수채화, 고양이가 됩니다. 삭제해도 설명을 뒤에 추가하며 NovelAI {{tag}} 가중치는 유지합니다.",
+    ),
+    "StylePresetConfig.negative_prompt_template": (
+        "{negative_prompt} inserts this request's unwanted content. Keep it: blurry, {negative_prompt} + watermark becomes blurry, watermark. Without it, the negative prompt is appended automatically; platforms without a separate negative field receive merged text.",
+        "{negative_prompt} は今回避けたい要素に置換されます。例：「ぼけ、{negative_prompt}」に「透かし」を入力すると「ぼけ、透かし」になります。残すことを推奨します。削除時も末尾に追加し、専用フィールドのないサービスでは本文に統合します。",
+        "{negative_prompt}는 이번 요청에서 제외할 내용으로 바뀝니다. 예: 흐림, {negative_prompt}에 워터마크를 입력하면 흐림, 워터마크가 됩니다. 유지하는 것을 권장하며 삭제해도 뒤에 추가합니다. 별도 필드가 없는 플랫폼은 본문에 합칩니다.",
+    ),
     "PluginSectionConfig.image_cache_max_mb": (
         "Default 300 MB for originals and WebP previews in the plugin temporary directory. Old images are removed automatically; task records remain.",
         "既定は 300 MB。プラグイン一時ディレクトリの原画像と WebP プレビューが対象です。古い画像を自動削除し、タスク記録は保持します。",
