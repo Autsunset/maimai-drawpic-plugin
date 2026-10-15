@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 import aiohttp
 import asyncio
-import base64
 import time
 
 from .requests import generation_submission

@@ -1,7 +1,6 @@
-from __future__ import annotations
-
 """阿里云百炼图像平台传输适配器。"""
 
+from __future__ import annotations
 
 from typing import Any
 from urllib.parse import urlsplit
