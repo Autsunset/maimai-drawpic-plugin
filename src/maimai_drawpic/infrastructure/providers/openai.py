@@ -10,10 +10,11 @@ import mimetypes
 import re
 import time
 
+from .requests import generation_submission
 from ..http import sanitized_log_args, sanitize_provider_text
 from ..media.images import detect_image_dimensions, detect_mime_type, validate_image_bytes
 from ..media.downloads import download_image
-from ...domain.errors import ProviderConnectionError, ProviderError, ProviderOutcomeUnknown, ProviderRequestError
+from ...domain.errors import ProviderError, ProviderOutcomeUnknown, ProviderRequestError
 from ..http import HttpProxySettings, read_response_json, read_response_text
 from ...domain.models.openai_profiles import (
     build_newapi_chat_payload,
@@ -131,8 +132,6 @@ class OpenaiImage:
                 self._log_endpoint_switch(model, mode, modes[index + 1], exc)
             except ProviderError:
                 raise
-            except aiohttp.ClientConnectorError:
-                raise ProviderConnectionError("图片服务连接未建立，请求尚未发出") from None
             except (TimeoutError, aiohttp.ClientConnectionError):
                 raise ProviderOutcomeUnknown("图片请求超时或中断，远端受理状态不确定，未自动重绘") from None
             except Exception as exc:
@@ -182,8 +181,6 @@ class OpenaiImage:
                 self._log_endpoint_switch(model, mode, modes[index + 1], exc)
             except ProviderError:
                 raise
-            except aiohttp.ClientConnectorError:
-                raise ProviderConnectionError("图片服务连接未建立，请求尚未发出") from None
             except (TimeoutError, aiohttp.ClientConnectionError):
                 raise ProviderOutcomeUnknown("图片请求超时或中断，远端受理状态不确定，未自动重绘") from None
             except Exception as exc:
@@ -214,8 +211,6 @@ class OpenaiImage:
             return images
         except ProviderError:
             raise
-        except aiohttp.ClientConnectorError:
-            raise ProviderConnectionError("图片服务连接未建立，请求尚未发出") from None
         except (TimeoutError, aiohttp.ClientConnectionError):
             raise ProviderOutcomeUnknown("图片请求超时或中断，远端受理状态不确定，未自动重绘") from None
         except Exception as exc:
@@ -503,6 +498,7 @@ class OpenaiImage:
         if payload.get("background") == "transparent" and payload.get("output_format") == "jpeg":
             raise ValueError("OpenAI 透明背景必须使用 png 或 webp 输出格式")
 
+    @generation_submission
     async def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         """发送 JSON POST 请求。"""
 
@@ -525,6 +521,7 @@ class OpenaiImage:
                 self._raise_response_error(result)
                 return result
 
+    @generation_submission
     async def _post_form(self, url: str, form: aiohttp.FormData) -> dict[str, Any]:
         """发送表单 POST 请求。"""
 

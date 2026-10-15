@@ -15,6 +15,7 @@ from ..media.images import detect_mime_type
 from ..http import provider_response_error, sanitized_log_args
 from ..media.downloads import download_image
 from ...domain.errors import ProviderResultError
+from .requests import generation_submission, query_submitted_task, submitted_task
 from ..http import HttpProxySettings, read_response_text, sanitize_provider_url
 from ...domain.models.aliyun_profiles import (
     AliyunRequestOptions,
@@ -268,7 +269,8 @@ class AliyunImage:
         profile = resolve_aliyun_model_profile(model)
         if profile.is_async:
             task_id = await self._submit_async_task(model, payload)
-            return await self._poll_async_task(task_id, model)
+            async with submitted_task("阿里云", task_id):
+                return await self._poll_async_task(task_id, model)
 
         response = await self._post_json(
             self._build_url(self._SYNC_GENERATION_PATH),
@@ -315,7 +317,10 @@ class AliyunImage:
         started_at = time.monotonic()
         previous_status = ""
         while True:
-            response = await self._get_json(self._build_url(f"tasks/{task_id}"))
+            response = await query_submitted_task(
+                lambda: self._get_json(self._build_url(f"tasks/{task_id}")),
+                poll_interval=self.async_poll_interval_seconds,
+            )
             output = response.get("output")
             status_value = output.get("task_status") if isinstance(output, dict) else ""
             status = str(status_value or "").strip().upper()
@@ -373,6 +378,7 @@ class AliyunImage:
         headers.update(extra_headers or {})
         return headers
 
+    @generation_submission
     async def _post_json(
         self,
         url: str,

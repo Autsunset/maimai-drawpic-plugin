@@ -5,7 +5,8 @@
     try {
       await U.bootstrap();
       const view = window.location.hash.slice(1);
-      if (U.views[view]) U.state.view = view;
+      if (Object.hasOwn(U.views, view)) U.state.view = view;
+      else if (view) U.replaceViewHash(U.state.view);
       await U.render();
     } catch (error) {
       const node = U.$("#load-error");

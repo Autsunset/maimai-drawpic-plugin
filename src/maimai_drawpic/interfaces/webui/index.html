@@ -13,6 +13,8 @@
   --text: #282629;
   --muted: #858087;
   --accent: #ca667d;
+  --accent-button: #b94764;
+  --on-accent: #fff;
   --accent-dark: #a84e63;
   --accent-soft: #faedf1;
   --success: #41816b;
@@ -31,6 +33,8 @@
   --text: #eeebed;
   --muted: #aaa2ae;
   --accent: #e397ac;
+  --accent-button: var(--accent);
+  --on-accent: #24151c;
   --accent-dark: #edacc0;
   --accent-soft: #372731;
   --success: #8fc9ae;
@@ -249,8 +253,8 @@ footer {
   padding: 9px 18px;
   border: 1px solid transparent;
   border-radius: 10px;
-  background: var(--accent);
-  color: white;
+  background: var(--accent-button);
+  color: var(--on-accent);
   font-weight: 550;
   text-decoration: none;
   white-space: nowrap;
@@ -1171,6 +1175,9 @@ dialog::backdrop {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .task-card:hover {
+    transform: none;
+  }
   *,
   *::before,
   *::after {
@@ -1312,7 +1319,7 @@ dialog::backdrop {
         <footer>麦麦绘图<span>配置和作品保存在当前 MaiBot 实例</span></footer>
       </main>
     </div>
-    <dialog id="modal">
+    <dialog id="modal" aria-labelledby="modal-title">
       <div class="modal-header">
         <h2 id="modal-title"></h2>
         <button id="modal-close" class="icon-button" aria-label="关闭弹窗">
@@ -1443,8 +1450,9 @@ dialog::backdrop {
   async function confirmDiscard() {
     if (!state.dirty) return true;
     const dialog = document.createElement("dialog");
-    dialog.innerHTML =
-      '<div class="modal-header"><h2>放弃未保存的修改？</h2></div><div style="padding:24px"><p class="muted">关闭或离开后，这次编辑的内容不会保存。</p><div class="modal-footer"><button class="button secondary" data-keep>继续编辑</button><button class="button" data-discard>放弃修改</button></div></div>';
+    const titleId = `discard-title-${uid()}`;
+    dialog.setAttribute("aria-labelledby", titleId);
+    dialog.innerHTML = `<div class="modal-header"><h2 id="${titleId}">放弃未保存的修改？</h2></div><div style="padding:24px"><p class="muted">关闭或离开后，这次编辑的内容不会保存。</p><div class="modal-footer"><button class="button secondary" data-keep>继续编辑</button><button class="button" data-discard>放弃修改</button></div></div>`;
     document.body.append(dialog);
     return new Promise((resolve) => {
       let discard = false;
@@ -1466,15 +1474,14 @@ dialog::backdrop {
   }
   async function closeModal(force = false) {
     if (!force && $("#provider-form") && !(await confirmDiscard())) return;
-    $("#modal").close();
-  }
-  $("#modal").addEventListener("close", () => {
+    // 立即使首次详情请求失效；不等待排队的 close 事件，以免清掉下一次打开的内容。
     state.modalVersion = (state.modalVersion || 0) + 1;
     if ($("#provider-form")) state.dirty = false;
+    $("#modal").close();
     if (modalCleanup) modalCleanup();
     modalCleanup = null;
     $("#modal-content").replaceChildren();
-  });
+  }
   $("#modal").addEventListener("cancel", (event) => {
     event.preventDefault();
     closeModal();
@@ -1521,11 +1528,20 @@ dialog::backdrop {
     nav.classList.add("navigation-ready");
   }
   new ResizeObserver(updateNavigationIndicator).observe($("#navigation"));
+  function replaceViewHash(view) {
+    // srcdoc 的相对 URL 基于父页；使用自身绝对 URL，避免重载隔离 iframe。
+    const url = new URL(window.location.href);
+    url.hash = view;
+    window.history.replaceState(null, "", url.href);
+  }
   async function navigate(view) {
-    if (!views[view]) return;
+    if (!Object.hasOwn(views, view)) {
+      replaceViewHash(state.view);
+      return;
+    }
     if (!(await confirmDiscard())) {
       if (window.location.hash !== `#${state.view}`)
-        window.location.replace(`#${state.view}`);
+        replaceViewHash(state.view);
       return;
     }
     state.dirty = false;
@@ -1608,6 +1624,7 @@ dialog::backdrop {
     bootstrap,
     render,
     navigate,
+    replaceViewHash,
     empty,
     statusLabel,
     date,
@@ -2225,17 +2242,22 @@ dialog::backdrop {
     { state, $, e, icon, call, buttonAction, toast } = U;
   let timer;
   async function original(taskId, index, button) {
+    const modalVersion = state.modalVersion;
+    const current = () =>
+      modalVersion === state.modalVersion &&
+      button.isConnected &&
+      $("#modal").open;
     let offset = 0,
       info,
       parts = [];
     do {
-      if (!button.isConnected || !$("#modal").open) return;
+      if (!current()) return;
       info = await call("query", "original", {
         task_id: taskId,
         index,
         offset,
       });
-      if (!button.isConnected || !$("#modal").open) return;
+      if (!current()) return;
       const decoded = atob(info.data);
       const bytes = Uint8Array.from(decoded, (ch) => ch.charCodeAt(0));
       parts.push(bytes);
@@ -2251,11 +2273,25 @@ dialog::backdrop {
     node.scrollTop = 0;
   }
   async function openTask(taskId, index = 0) {
-    const data = await call("query", "task", { task_id: taskId });
+    // 必须在首个 await 之前登记；关闭、导航或较新的任务请求都会使它失效。
+    const requestVersion = (state.modalVersion || 0) + 1;
+    state.modalVersion = requestVersion;
+    const view = state.view;
+    const current = () =>
+      requestVersion === state.modalVersion && state.view === view;
+    let data;
+    try {
+      data = await call("query", "task", { task_id: taskId });
+    } catch (error) {
+      if (current()) throw error;
+      return;
+    }
+    if (!current()) return;
     const node = U.modal(
       "绘图任务详情",
       `<div class="toolbar"><div class="actions"><span class="pill ${e(data.status)}">${e(U.statusLabel(data.status))}</span><span class="pill">${e(data.model)}</span></div><button id="detail-refresh" class="button secondary compact">${icon("refresh")}刷新</button></div><div id="detail-preview">${data.images.length ? '<div class="loading"><span class="spinner"></span>加载图片…</div>' : U.empty("暂无图片结果", data.status === "completed" ? "图片已清理或此历史任务未保存结果。新图片可在保留期内预览。" : data.message)}</div><div class="image-selector">${data.images.map((image, i) => `<button class="button ${i === index ? "" : "secondary"} compact" data-image-index="${i}">第 ${i + 1} 张</button>`).join("")}</div><div class="actions" style="margin-top:15px">${data.images.length ? `<button id="view-original" class="button secondary compact">${icon("eye")}查看原图</button>` : ""}${["pending", "running"].includes(data.status) ? '<button id="cancel-task" class="button danger compact">取消任务</button>' : ""}<button id="task-log" class="button ghost compact">查看任务日志</button></div><p class="hint" style="margin-top:20px">${e(data.message)}<br>任务 ${e(taskId)} · ${e(U.date(data.created_at))}</p>${data.prompt ? `<details style="margin-top:15px"><summary class="muted">本次提示词</summary><p class="hint" style="white-space:pre-wrap">${e(data.prompt)}</p></details>` : ""}`,
     );
+    const modalVersion = state.modalVersion;
     $("#detail-refresh", node).onclick = () =>
       openTask(taskId, index).catch(U.error);
     node.querySelectorAll("[data-image-index]").forEach((button) => {
@@ -2272,9 +2308,9 @@ dialog::backdrop {
         buttonAction(event.currentTarget, async () => {
           await call("action", "cancel", { task_id: taskId });
           toast("已取消任务");
-          await openTask(taskId, index);
+          if (modalVersion === state.modalVersion && $("#modal").open)
+            await openTask(taskId, index);
         });
-    const modalVersion = state.modalVersion;
     if (data.images.length) {
       const image = await call("query", "image", { task_id: taskId, index });
       if (
@@ -2522,7 +2558,8 @@ dialog::backdrop {
     try {
       await U.bootstrap();
       const view = window.location.hash.slice(1);
-      if (U.views[view]) U.state.view = view;
+      if (Object.hasOwn(U.views, view)) U.state.view = view;
+      else if (view) U.replaceViewHash(U.state.view);
       await U.render();
     } catch (error) {
       const node = U.$("#load-error");

@@ -4,7 +4,7 @@ from typing import List, Optional, Tuple
 import aiohttp
 import asyncio
 
-from ...domain.errors import ProviderConnectionError, ProviderError, ProviderOutcomeUnknown, ProviderResultError
+from ...domain.errors import ProviderError, ProviderOutcomeUnknown, ProviderResultError, ProviderSubmittedError
 from .types import ImageRequestAttempt
 
 
@@ -87,8 +87,6 @@ class RequestAttemptRunnerMixin:
                 except Exception as exc:
                     if isinstance(exc, ProviderError):
                         failure = exc
-                    elif isinstance(exc, aiohttp.ClientConnectorError):
-                        failure = ProviderConnectionError("连接图片服务失败，请求尚未发出")
                     elif isinstance(exc, (TimeoutError, aiohttp.ClientConnectionError)):
                         failure = ProviderOutcomeUnknown(
                             "图片请求超时或连接中断，远端受理状态不确定，未自动重绘；请先检查提供商记录"
@@ -97,7 +95,9 @@ class RequestAttemptRunnerMixin:
                         # 未分类异常不代表请求未受理；禁止根据错误字符串猜测可重绘。
                         failure = ProviderError(str(exc) or type(exc).__name__)
                     reason = self.task_store.sanitize_message(str(failure))
-                    if failure.outcome_unknown and not isinstance(failure, ProviderOutcomeUnknown):
+                    if failure.outcome_unknown and not isinstance(
+                        failure, (ProviderOutcomeUnknown, ProviderSubmittedError)
+                    ):
                         reason = "远端受理状态不确定，未自动重绘；" + reason
                     if failure.rejected:
                         raise failure from None

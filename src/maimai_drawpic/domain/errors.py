@@ -60,3 +60,13 @@ class ProviderConnectionError(ProviderError):
 
     retryable = True
     allow_fallback = True
+
+
+class ProviderSubmittedError(ProviderResultError):
+    """保留已受理的远端 ID；后续失败绝不能重新提交生成。"""
+
+    def __init__(self, provider: str, remote_task_id: str, reason: str, *, outcome_unknown: bool = False) -> None:
+        super().__init__(f"{provider} 任务 {remote_task_id} 已提交；{reason}；未重新提交生成，请检查该任务的远端记录")
+        self.provider = provider
+        self.remote_task_id = remote_task_id
+        self.outcome_unknown = outcome_unknown

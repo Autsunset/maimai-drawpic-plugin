@@ -12,6 +12,7 @@ import time
 import zipfile
 
 from ..media.images import MAX_IMAGE_BYTES, detect_image_dimensions
+from .requests import generation_submission
 from ..http import provider_response_error, sanitized_log_args
 from ..media.downloads import download_image
 from ..http import HttpProxySettings, MAX_PROVIDER_RESPONSE_BYTES, read_response_bytes, sanitize_provider_text
@@ -422,6 +423,7 @@ class NovelAIImage:
             "Accept": "application/zip, application/json, image/*",
         }
 
+    @generation_submission
     async def _post_generation(self, url: str, payload: dict[str, Any]) -> tuple[bytes, str]:
         """发送 NovelAI 图片请求并保留二进制响应。"""
 

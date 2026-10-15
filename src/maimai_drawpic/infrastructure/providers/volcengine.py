@@ -8,6 +8,7 @@ import base64
 import time
 
 from ..media.images import detect_mime_type
+from .requests import generation_submission
 from ..http import provider_response_error, sanitized_log_args
 from ..media.downloads import download_image
 from ..http import (
@@ -372,6 +373,7 @@ class VolcengineImage:
 
         return detect_mime_type(image_bytes)
 
+    @generation_submission
     async def _post_json(self, url: str, payload: dict[str, Any]) -> dict[str, Any]:
         """发送 JSON POST 请求。"""
 

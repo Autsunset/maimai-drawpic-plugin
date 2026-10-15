@@ -16,6 +16,7 @@ from ..storage.migration import resolve_workflow_path
 from ..media.downloads import download_image
 from ..http import HttpProxySettings, read_response_text, sanitize_provider_text
 from ..media.images import detect_mime_type
+from .requests import generation_submission, query_submitted_task, submitted_task
 
 
 PromptMode = Literal["single_prompt", "positive_negative"]
@@ -317,9 +318,10 @@ class ComfyUIImage:
         client_id = str(uuid.uuid4())
         start_time = time.monotonic()
         prompt_id = await self._queue_prompt(workflow, client_id, task_name)
-        history = await self._wait_for_history(prompt_id, start_time, task_name)
-        image_descriptors = self._extract_image_descriptors(history, prompt_id)
-        images = [await self._download_image(descriptor) for descriptor in image_descriptors]
+        async with submitted_task("ComfyUI", prompt_id):
+            history = await self._wait_for_history(prompt_id, start_time, task_name)
+            image_descriptors = self._extract_image_descriptors(history, prompt_id)
+            images = [await self._download_image(descriptor) for descriptor in image_descriptors]
         self._log_info(
             "ComfyUI %s完成: prompt_id=%s image_count=%s duration=%.2fs",
             task_name,
@@ -350,7 +352,10 @@ class ComfyUIImage:
                 raise TimeoutError(
                     f"ComfyUI {task_name}执行超时：prompt_id={prompt_id}，耗时已超过 {self.request_timeout_seconds} 秒"
                 )
-            history = await self._get_json(f"/history/{prompt_id}")
+            history = await query_submitted_task(
+                lambda: self._get_json(f"/history/{prompt_id}"),
+                poll_interval=self.poll_interval_seconds,
+            )
             task_history = history.get(prompt_id)
             if isinstance(task_history, dict):
                 status = task_history.get("status")
@@ -437,11 +442,13 @@ class ComfyUIImage:
             timeout_seconds=self.request_timeout_seconds,
         )
 
+    @generation_submission
     async def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         """向 ComfyUI 发送 JSON 请求。"""
 
         return await self._request_json("POST", path, json=payload)
 
+    @generation_submission
     async def _post_form(self, path: str, form: aiohttp.FormData) -> dict[str, Any]:
         """向 ComfyUI 发送 multipart 表单请求。"""
 

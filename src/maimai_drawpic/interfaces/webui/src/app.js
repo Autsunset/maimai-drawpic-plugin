@@ -118,8 +118,9 @@
   async function confirmDiscard() {
     if (!state.dirty) return true;
     const dialog = document.createElement("dialog");
-    dialog.innerHTML =
-      '<div class="modal-header"><h2>放弃未保存的修改？</h2></div><div style="padding:24px"><p class="muted">关闭或离开后，这次编辑的内容不会保存。</p><div class="modal-footer"><button class="button secondary" data-keep>继续编辑</button><button class="button" data-discard>放弃修改</button></div></div>';
+    const titleId = `discard-title-${uid()}`;
+    dialog.setAttribute("aria-labelledby", titleId);
+    dialog.innerHTML = `<div class="modal-header"><h2 id="${titleId}">放弃未保存的修改？</h2></div><div style="padding:24px"><p class="muted">关闭或离开后，这次编辑的内容不会保存。</p><div class="modal-footer"><button class="button secondary" data-keep>继续编辑</button><button class="button" data-discard>放弃修改</button></div></div>`;
     document.body.append(dialog);
     return new Promise((resolve) => {
       let discard = false;
@@ -141,15 +142,14 @@
   }
   async function closeModal(force = false) {
     if (!force && $("#provider-form") && !(await confirmDiscard())) return;
-    $("#modal").close();
-  }
-  $("#modal").addEventListener("close", () => {
+    // 立即使首次详情请求失效；不等待排队的 close 事件，以免清掉下一次打开的内容。
     state.modalVersion = (state.modalVersion || 0) + 1;
     if ($("#provider-form")) state.dirty = false;
+    $("#modal").close();
     if (modalCleanup) modalCleanup();
     modalCleanup = null;
     $("#modal-content").replaceChildren();
-  });
+  }
   $("#modal").addEventListener("cancel", (event) => {
     event.preventDefault();
     closeModal();
@@ -196,11 +196,20 @@
     nav.classList.add("navigation-ready");
   }
   new ResizeObserver(updateNavigationIndicator).observe($("#navigation"));
+  function replaceViewHash(view) {
+    // srcdoc 的相对 URL 基于父页；使用自身绝对 URL，避免重载隔离 iframe。
+    const url = new URL(window.location.href);
+    url.hash = view;
+    window.history.replaceState(null, "", url.href);
+  }
   async function navigate(view) {
-    if (!views[view]) return;
+    if (!Object.hasOwn(views, view)) {
+      replaceViewHash(state.view);
+      return;
+    }
     if (!(await confirmDiscard())) {
       if (window.location.hash !== `#${state.view}`)
-        window.location.replace(`#${state.view}`);
+        replaceViewHash(state.view);
       return;
     }
     state.dirty = false;
@@ -283,6 +292,7 @@
     bootstrap,
     render,
     navigate,
+    replaceViewHash,
     empty,
     statusLabel,
     date,

@@ -4,17 +4,22 @@
     { state, $, e, icon, call, buttonAction, toast } = U;
   let timer;
   async function original(taskId, index, button) {
+    const modalVersion = state.modalVersion;
+    const current = () =>
+      modalVersion === state.modalVersion &&
+      button.isConnected &&
+      $("#modal").open;
     let offset = 0,
       info,
       parts = [];
     do {
-      if (!button.isConnected || !$("#modal").open) return;
+      if (!current()) return;
       info = await call("query", "original", {
         task_id: taskId,
         index,
         offset,
       });
-      if (!button.isConnected || !$("#modal").open) return;
+      if (!current()) return;
       const decoded = atob(info.data);
       const bytes = Uint8Array.from(decoded, (ch) => ch.charCodeAt(0));
       parts.push(bytes);
@@ -30,11 +35,25 @@
     node.scrollTop = 0;
   }
   async function openTask(taskId, index = 0) {
-    const data = await call("query", "task", { task_id: taskId });
+    // 必须在首个 await 之前登记；关闭、导航或较新的任务请求都会使它失效。
+    const requestVersion = (state.modalVersion || 0) + 1;
+    state.modalVersion = requestVersion;
+    const view = state.view;
+    const current = () =>
+      requestVersion === state.modalVersion && state.view === view;
+    let data;
+    try {
+      data = await call("query", "task", { task_id: taskId });
+    } catch (error) {
+      if (current()) throw error;
+      return;
+    }
+    if (!current()) return;
     const node = U.modal(
       "绘图任务详情",
       `<div class="toolbar"><div class="actions"><span class="pill ${e(data.status)}">${e(U.statusLabel(data.status))}</span><span class="pill">${e(data.model)}</span></div><button id="detail-refresh" class="button secondary compact">${icon("refresh")}刷新</button></div><div id="detail-preview">${data.images.length ? '<div class="loading"><span class="spinner"></span>加载图片…</div>' : U.empty("暂无图片结果", data.status === "completed" ? "图片已清理或此历史任务未保存结果。新图片可在保留期内预览。" : data.message)}</div><div class="image-selector">${data.images.map((image, i) => `<button class="button ${i === index ? "" : "secondary"} compact" data-image-index="${i}">第 ${i + 1} 张</button>`).join("")}</div><div class="actions" style="margin-top:15px">${data.images.length ? `<button id="view-original" class="button secondary compact">${icon("eye")}查看原图</button>` : ""}${["pending", "running"].includes(data.status) ? '<button id="cancel-task" class="button danger compact">取消任务</button>' : ""}<button id="task-log" class="button ghost compact">查看任务日志</button></div><p class="hint" style="margin-top:20px">${e(data.message)}<br>任务 ${e(taskId)} · ${e(U.date(data.created_at))}</p>${data.prompt ? `<details style="margin-top:15px"><summary class="muted">本次提示词</summary><p class="hint" style="white-space:pre-wrap">${e(data.prompt)}</p></details>` : ""}`,
     );
+    const modalVersion = state.modalVersion;
     $("#detail-refresh", node).onclick = () =>
       openTask(taskId, index).catch(U.error);
     node.querySelectorAll("[data-image-index]").forEach((button) => {
@@ -51,9 +70,9 @@
         buttonAction(event.currentTarget, async () => {
           await call("action", "cancel", { task_id: taskId });
           toast("已取消任务");
-          await openTask(taskId, index);
+          if (modalVersion === state.modalVersion && $("#modal").open)
+            await openTask(taskId, index);
         });
-    const modalVersion = state.modalVersion;
     if (data.images.length) {
       const image = await call("query", "image", { task_id: taskId, index });
       if (
