@@ -34,7 +34,7 @@ result = await client.generate(
 
 `saved_request_id` 由调用方在首次请求前持久化；结果中的 task_id 也需要保存。完整运行函数、LLM 工具、图生图和超时恢复见[联动指南](../docs/integration.md)。
 
-这是当前 `feat/webui` 分支提供的正式源码客户端，需要该分支的 **v2 任务接口**；没有宣称已发布到 PyPI，也不要求创建 pyproject.toml。复制代码与服务需要保持协议兼容，不自动回退至 v1。
+这是随绘图插件 **2.0.0** 提供的正式源码客户端，需要相应的 **v2 任务接口**；未发布到 PyPI，也不要求创建 pyproject.toml。复制代码与服务需要保持协议兼容，不自动回退至 v1。
 
 ## 方法
 

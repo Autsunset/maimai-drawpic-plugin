@@ -8,7 +8,7 @@
     {
       "id": "studio",
       "title": "麦麦绘图",
-      "description": "平台配置、绘图创作、任务与日志",
+      "description": "多平台创作工作台 · 模型配置、风格预设、任务与图片管理",
       "mode": "custom",
       "placement": "sidebar",
       "icon": "puzzle",

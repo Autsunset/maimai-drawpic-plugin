@@ -4,16 +4,16 @@
 
 # 麦麦绘图
 
-![Plugin Version](https://img.shields.io/badge/Plugin-1.12.6-informational.svg) ![MaiBot](https://img.shields.io/badge/MaiBot-%3E%3D1.3.6-blue.svg) ![MaiBot Plugin SDK](https://img.shields.io/badge/Plugin%20SDK-%3E%3D2.12.0-blueviolet.svg) ![License](https://img.shields.io/badge/License-AGPL--3.0-green.svg)
+![Plugin Version](https://img.shields.io/badge/Plugin-2.0.0-informational.svg) ![MaiBot](https://img.shields.io/badge/MaiBot-%3E%3D1.3.6-blue.svg) ![MaiBot Plugin SDK](https://img.shields.io/badge/Plugin%20SDK-%3E%3D2.12.0-blueviolet.svg) ![License](https://img.shields.io/badge/License-AGPL--3.0-green.svg)
 
-让麦麦把想象变成画面：在聊天中绘图，也能在独立工作台配置平台、创作图片和管理任务。
+在聊天与可视化工作台中轻松创作，按需接入多个绘图平台，自由搭配模型与风格，集中管理任务与图片结果
 
 </div>
 
-- **聊天与工作台创作**：通过聊天命令或绘图工具发起任务，也可以在工作台输入提示词、上传参考图片，选择模型与风格。工作台默认只生成图片，需要回传聊天时再显式选择会话。
-- **按需管理绘图平台**：只添加自己使用的平台，同类平台可以创建多个独立命名的实例，分别维护服务地址、密钥、模型和参数。模型首选项支持自动选择，备选模型按列表顺序使用。
-- **集中查看任务与结果**：筛选任务、查看状态和失败原因，浏览预览图与原图，结合运行日志排查问题。长时间绘图在后台执行，可以离开创作页后继续查询。
-- **可复用的偏好与风格**：在工作台维护通用参数、权限额度、审核和提示词模板；通用与风格草稿统一保存。其他可信插件也可以接入同一实例的任务服务，复用绘图能力。
+- **聊天与工作台创作**：通过聊天命令或绘图工具发起任务，也可以在工作台输入提示词、上传参考图片，选择模型与风格；工作台默认只生成图片，需要回传聊天时再显式选择会话
+- **按需管理绘图平台**：只添加自己使用的平台，同类平台可以创建多个独立命名的实例，分别维护服务地址、密钥、模型和参数；首选模型支持自动选择，备选模型按列表顺序使用
+- **集中查看任务与结果**：筛选任务、查看状态和失败原因，浏览预览图与原图，结合运行日志排查问题；长时间绘图在后台执行，可以离开创作页后继续查询
+- **可复用的偏好与风格**：在工作台维护通用参数、权限额度、审核和提示词模板，通用与风格草稿统一保存；其他可信插件也可以接入同一实例的任务服务，复用绘图能力
 
 ## 工作台预览
 
@@ -34,22 +34,22 @@
 
 需要 **MaiBot ≥1.3.6、SDK ≥2.12.0、Python ≥3.12**，以及该 MaiBot 版本配套的官方 Dashboard。
 
-### 体验本分支的工作台
+### 源码安装
 
-当前工作台功能位于 **`feat/webui` 开发分支**，尚未合并。首次源码安装，在 MaiBot 目录执行：
+首次安装，在 MaiBot 目录执行：
 
 ```bash
 cd plugins
-git clone --branch feat/webui https://github.com/WhiteCloudOL/maimai-drawpic-plugin.git
+git clone https://github.com/WhiteCloudOL/maimai-drawpic-plugin.git
 ```
 
 重新加载插件或重启 MaiBot，在 WebUI 插件扩展页面打开“麦麦绘图”。已有安装请先备份并在原目录更新，避免安装两份同 ID 插件。[升级与恢复](docs/configuration.md#升级迁移与冲突恢复)。
 
 ### 从插件市场安装
 
-插件市场使用其收录的发布版本，不能假定包含本开发分支的功能。[官方版本选择说明](https://github.com/Mai-with-u/plugin-repo/blob/main/VERSIONING.md)。
+插件市场使用其收录的发布版本，安装后可在插件管理中查看版本。本文介绍 **2.0.0** 的工作台与联动功能；旧版用户请先备份后升级。[官方版本选择说明](https://github.com/Mai-with-u/plugin-repo/blob/main/VERSIONING.md)。
 
-希望体验本文展示的工作台时，请使用上方明确选择分支的源码安装方式。已有安装不要重复克隆，应先备份数据，再更新原插件目录。
+已有安装不要重复克隆，应先备份数据，再更新原插件目录。
 
 ## 开始使用
 
@@ -98,9 +98,13 @@ git clone --branch feat/webui https://github.com/WhiteCloudOL/maimai-drawpic-plu
 
 平台连接与模型在 **绘图平台** 管理，每个平台独立保存。审核、权限额度、模型偏好和风格模板在 **偏好与预设** 管理：右上角与刷新对齐的 **保存全部设置** 会一起保存“通用与审核”和“风格预设”，切换这两个分类会保留草稿。
 
+按模型覆盖分辨率、接口地址时，直接从该平台已添加的模型中选择；常用尺寸、质量和格式提供下拉选项，自定义尺寸可分别填写宽高。多选项直接勾选，扩展参数按文本、数字、开关或 JSON 分别编辑，无需在页面输入 `模型名=参数值`。
+
 风格模板中的 `{prompt}` 会替换为本次绘图描述，`{negative_prompt}` 会替换为本次反向提示词。保留占位符并在周围添加风格描述，就能反复套用同一风格；字段下方提供了具体示例。
 
 插件开关、网络代理和缓存容量继续在 **MaiBot 插件配置页** 管理。图片缓存默认最多 **300 MB**，日志默认最多 **10 MB**，超限会自动清理；重要图片应在缓存过期前另行保存。配置存储位置、备份、迁移和恢复方法见[配置与数据指南](docs/configuration.md)。
+
+平台、通用设置与风格均保存为可直接编辑的 **UTF-8 JSON 文件**，不存入数据库。需要用编辑器修改、备份或批量调整时，请阅读[手动编辑配置](docs/manual-configuration.md)。
 
 ### 权限、额度与审核
 
@@ -120,7 +124,7 @@ git clone --branch feat/webui https://github.com/WhiteCloudOL/maimai-drawpic-plu
 
 ## 完整文档
 
-- 用户：[使用指南](docs/usage.md)、[平台配置](docs/platforms.md)、[配置与数据](docs/configuration.md)。
+- 用户：[使用指南](docs/usage.md)、[平台配置](docs/platforms.md)、[配置与数据](docs/configuration.md)、[手动编辑配置](docs/manual-configuration.md)。
 - 开发者：[插件联动](docs/integration.md)、[独立客户端](clients/README.md)。
 
 ## 插件联动

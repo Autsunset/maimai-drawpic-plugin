@@ -16,7 +16,7 @@
 
 还需要发现接口时再声明 `api.list` 或 `api.get`。绘图服务当前分支要求 MaiBot ≥1.3.6、SDK ≥2.12.0、Python ≥3.12 和配套 Dashboard。
 
-正式 **`DrawingClient` 已实现在本分支**，可整体复制 [clients/maimai_drawing_client](../clients/maimai_drawing_client)，仅依赖标准库。安装到调用插件的 `vendor/` 后：
+正式 **`DrawingClient` 随插件 2.0.0 提供**，可整体复制 [clients/maimai_drawing_client](../clients/maimai_drawing_client)，仅依赖标准库。安装到调用插件的 `vendor/` 后：
 
 ```python
 from .vendor.maimai_drawing_client import DrawingClient, DrawingError
@@ -30,7 +30,7 @@ from .vendor.maimai_drawing_client import DrawingClient, DrawingError
 - 新协议使用 `drawpic_submit_v2`、`drawpic_task_v2`、`drawpic_image_v2`、`drawpic_cancel_v2`、`drawpic_tasks_v2`，同时传 `version="2"`。
 - 使用新名称是为了保留旧的无版本调用：当前 Host 对同名多版本且未给 version 的调用会报歧义。正式客户端显式使用新名称和版本，不自动降级。
 - 模型发现 `drawpic_models` 与预设管理 `drawpic_presets` 继续是 v1；预设写入不是绘图接入的必经步骤。
-- 这些新增能力在 `feat/webui`，不能假定市场安装的旧版本已有相同接口；没有新增长时间阻塞的 `drawpic_generate` RPC。
+- 这些能力要求绘图插件 2.0.0；旧版本可能没有相同接口。没有新增长时间阻塞的 `drawpic_generate` RPC。
 
 ## 最小提交示例
 
@@ -379,7 +379,7 @@ ComfyUI、阿里云异步任务受理后的查询连接失败只重试原远端 
 
 ## 常见接入错误
 
-- **找不到 v2 API**：确认服务已安装本开发分支，名称带 `_v2` 且 version 为 `"2"`；客户端不静默降级。
+- **找不到 v2 API**：确认绘图插件已更新至 2.0.0，名称带 `_v2` 且 version 为 `"2"`；客户端不静默降级。
 - **RPC success=True 却未出图**：它只表示这次 API 调用返回；继续检查 accepted/status/error、results_readable 与 delivery。
 - **工具一直超时**：改为 submit 后返回 task_id，不把整次等待塞进工具/RPC；生命周期后台协程再用 generate/wait。
 - **重复图片或重复发送**：持久保存 request_id 和完整参数，恢复不换键；只有一方负责发送。

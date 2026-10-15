@@ -553,6 +553,110 @@ textarea {
   gap: 8px;
   margin-bottom: 9px;
 }
+.choice-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.choice-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.choice-item:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.choice-item input {
+  flex-shrink: 0;
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent);
+}
+.choice-item span {
+  min-width: 0;
+}
+.model-editor-row,
+.model-override-row,
+.parameter-editor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 34px;
+  gap: 10px;
+  align-items: start;
+  padding: 14px;
+  margin-bottom: 10px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.parameter-editor-row {
+  grid-template-columns: minmax(0, 1fr) 112px minmax(0, 1.3fr) 34px;
+}
+.model-editor-row > *,
+.model-override-row > *,
+.parameter-editor-row > * {
+  min-width: 0;
+}
+.model-editor-row > button,
+.model-override-row > button,
+.parameter-editor-row > button {
+  margin-top: 23px;
+}
+.model-editor-row label,
+.model-override-row label,
+.parameter-editor-row label,
+.control-caption,
+.dimension-inputs label {
+  display: block;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.control-caption {
+  margin-bottom: 3px;
+}
+.dimension-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.dimension-inputs > span {
+  align-self: center;
+  padding-top: 20px;
+}
+[data-custom-value] {
+  margin-top: 8px;
+}
+@media (max-width: 640px) {
+  .choice-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .model-editor-row,
+  .model-override-row,
+  .parameter-editor-row {
+    grid-template-columns: minmax(0, 1fr) 32px;
+    padding: 12px;
+  }
+  .model-editor-row > :not(button),
+  .model-override-row > :not(button),
+  .parameter-editor-row > :not(button) {
+    grid-column: 1;
+  }
+  .model-editor-row > button,
+  .model-override-row > button,
+  .parameter-editor-row > button {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
 .upload-zone {
   border: 1px dashed color-mix(in srgb, var(--accent) 50%, var(--line));
   background: var(--accent-soft);
@@ -1735,6 +1839,451 @@ dialog::backdrop {
 
 (() => {
   "use strict";
+  const U = window.DrawpicUI;
+  const labels = {
+    "": "使用平台默认（不传此参数）",
+    auto: "自动",
+    low: "低",
+    medium: "中",
+    high: "高",
+    standard: "标准",
+    hd: "高清",
+    fast: "速度优先",
+    transparent: "透明背景",
+    opaque: "不透明背景",
+    b64_json: "直接返回图片数据",
+    url: "返回图片链接",
+    disabled: "关闭",
+    single: "单张图片",
+    series: "连续分镜",
+    direct: "直接改写",
+    agent: "智能体改写",
+    anime: "动漫",
+    furry: "兽人",
+    background: "背景画",
+    images_api: "图片接口",
+    chat_completions: "聊天绘图接口（New API）",
+    rinkoai: "RinkoAI NAI 接口",
+    single_prompt: "单提示词节点",
+    positive_negative: "正反提示词分开",
+    daily: "每天",
+    weekly: "每周",
+    monthly: "每月",
+    once: "一次性，不重置",
+    base64: "直接传入图片数据",
+    image_url: "使用原图链接",
+  };
+  const presets = {
+    openai: {
+      quality: ["", "auto", "low", "medium", "high", "standard", "hd"],
+      response_format: ["", "b64_json", "url"],
+      output_format: ["", "png", "jpeg", "webp"],
+      background: ["", "auto", "transparent", "opaque"],
+      moderation: ["", "auto", "low"],
+    },
+    google: {
+      aspect_ratio: [
+        "",
+        "1:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:3",
+        "4:5",
+        "5:4",
+        "9:16",
+        "16:9",
+        "21:9",
+      ],
+      image_size: ["", "512", "1K", "2K", "4K"],
+    },
+    zhipu: { quality: ["", "hd", "standard"] },
+    volcengine: {
+      output_format: ["", "png", "jpeg"],
+      optimize_prompt_mode: ["", "standard", "fast"],
+      background: ["", "opaque", "transparent"],
+    },
+    novelai: {
+      sampler: ["k_euler_ancestral", "k_euler", "k_dpmpp_2m", "ddim"],
+      noise_schedule: [
+        "",
+        "native",
+        "karras",
+        "exponential",
+        "polyexponential",
+      ],
+      v4_noise_schedule: ["", "karras", "exponential", "polyexponential"],
+    },
+  };
+  const dimensions = {
+    openai: ["1024x1024", "1024x1536", "1536x1024", "auto"],
+    zhipu: ["1280x1280", "1024x1024", "768x1344", "1344x768"],
+    aliyun: ["2048*2048", "1328*1328", "1024*1024", "1024*1536", "1536*1024"],
+    volcengine: ["1K", "1.5K", "2K", "4K", "1024x1024", "2048x2048"],
+    siliconflow: ["1024x1024", "768x1024", "1024x768", "512x512"],
+    novelai: ["832x1216", "1216x832", "1024x1024", "768x1024", "1024x768"],
+  };
+  function label(value) {
+    if (value === "") return labels[""];
+    if (Object.hasOwn(labels, value)) return `${labels[value]} · ${value}`;
+    const size = String(value).match(/^(\d+)[x*](\d+)$/);
+    if (size)
+      return `${size[1]} × ${size[2]} · ${+size[1] === +size[2] ? "方形" : +size[1] > +size[2] ? "横向" : "竖向"}`;
+    return value;
+  }
+  U.formOptions = {
+    label,
+    choice: (key, kind) => presets[kind]?.[key],
+    dimensions: (kind) => dimensions[kind] || [],
+    dimensionField: (key, kind) =>
+      kind !== "google" &&
+      ["default_size", "size", "image_size"].includes(key) &&
+      !!dimensions[kind],
+    hint(key) {
+      if (key === "model_size_overrides")
+        return "选择当前平台已添加的模型，再选择常用尺寸或填写宽高。未单独设置的模型继续使用默认尺寸；不同模型的尺寸限制仍以平台说明为准。";
+      if (key === "model_endpoint_overrides")
+        return "从当前平台模型中选择，再填写该模型使用的接口地址。通常无需设置。";
+      if (key.includes("extra_parameters"))
+        return "仅在需要平台扩展参数时添加。分别填写名称、值类型和值；开关直接选择，复杂结构使用 JSON。";
+      if (key === "models" || key === "custom_models")
+        return "按账号实际权限填写模型 ID；可直接粘贴。下方的按模型覆盖选项会随本列表更新。";
+      if (key.endsWith("unsupported_models"))
+        return "从已启用平台的模型中选择，可选择多个。人工限制优先于自动识别。";
+      return "";
+    },
+  };
+})();
+
+(() => {
+  "use strict";
+  const U = window.DrawpicUI,
+    { e, $ } = U;
+  let sequence = 0;
+  const custom = "__workspace_custom__";
+  function optionsHTML(choices, selected) {
+    return choices
+      .map(
+        (value) =>
+          `<option value="${e(value)}" ${value === selected ? "selected" : ""}>${e(U.formOptions.label(value))}</option>`,
+      )
+      .join("");
+  }
+  function choice(
+    value,
+    choices,
+    { id, label, size = false, kind = "", allowCustom = true } = {},
+  ) {
+    const known = choices.includes(value),
+      selected = known ? value : custom;
+    const identity = id || `choice-${++sequence}`;
+    const parts = size ? String(value).match(/^(\d+)[x*×](\d+)$/) : null;
+    const legacySize = size && !known && value && !parts;
+    const active = !known && !legacySize;
+    const controls = size
+      ? `<div class="dimension-inputs" data-custom-panel ${active ? "" : "hidden"}><label>宽度（px）<input data-width type="number" min="1" step="1" value="${e(parts?.[1] || "")}" ${active ? "required" : "disabled"}></label><span aria-hidden="true">×</span><label>高度（px）<input data-height type="number" min="1" step="1" value="${e(parts?.[2] || "")}" ${active ? "required" : "disabled"}></label></div>`
+      : `<input data-custom-value aria-label="自定义${e(label || "参数值")}" value="${e(known ? "" : value)}" placeholder="填写服务要求的值…" autocomplete="off" ${active ? "required" : "hidden disabled"}>`;
+    // 无法解析的旧尺寸仍作为独立选项保留，不打开空的宽高输入覆盖原值。
+    const items = legacySize ? [value, ...choices] : choices;
+    return `<div data-control="${size ? "dimension" : "choice"}" data-kind="${e(kind)}"><select id="${identity}" data-choice-select aria-label="${e(label || "参数值")}">${optionsHTML(items, legacySize ? value : selected)}${allowCustom || !known ? `<option value="${custom}" ${selected === custom && !legacySize ? "selected" : ""}>${size ? "自定义宽高…" : "自定义值…"}</option>` : ""}</select>${controls}</div>`;
+  }
+  function read(node) {
+    const selected = $("[data-choice-select]", node).value;
+    if (selected !== custom) return selected;
+    if (node.dataset.control !== "dimension")
+      return $("[data-custom-value]", node).value;
+    const width = $("[data-width]", node).value,
+      height = $("[data-height]", node).value;
+    if (
+      ![width, height].every(
+        (value) =>
+          /^\d+$/.test(value) && Number.isSafeInteger(+value) && +value > 0,
+      )
+    )
+      throw new Error("自定义尺寸请填写有效的整数宽度和高度");
+    return `${+width}${node.dataset.kind === "aliyun" ? "*" : "x"}${+height}`;
+  }
+  function multi(key, choices, selected, id) {
+    const values = [...new Set([...choices, ...selected])];
+    return `<div class="choice-list" data-multiple="${e(key)}" id="${id}">${values.length ? values.map((value) => `<label class="choice-item"><input type="checkbox" data-choice-value value="${e(value)}" ${selected.includes(value) ? "checked" : ""}><span>${e(U.formOptions.label(value))}</span></label>`).join("") : '<p class="hint">暂无可选模型，请先添加并启用绘图平台。</p>'}</div>`;
+  }
+  function scalar(key, meta, value, id, options = {}) {
+    const kind = options.kind;
+    if (meta.multiple) return multi(key, meta.choices || [], value || [], id);
+    if (key.endsWith("unsupported_models"))
+      return multi(
+        key,
+        U.state.data.models.map((item) => item.name),
+        value || [],
+        id,
+      );
+    if (U.formOptions.dimensionField(key, kind))
+      return choice(value, ["", ...U.formOptions.dimensions(kind)], {
+        id,
+        label: meta.label,
+        size: true,
+        kind,
+      }).replace(
+        "data-choice-select",
+        `data-choice-select data-input="${e(key)}"`,
+      );
+    const choices = U.formOptions.choice(key, kind);
+    if (choices)
+      return choice(value, choices, { id, label: meta.label }).replace(
+        "data-choice-select",
+        `data-choice-select data-input="${e(key)}"`,
+      );
+    return null;
+  }
+  function bind(root) {
+    root.addEventListener("change", (event) => {
+      const select = event.target.closest("[data-choice-select]");
+      if (!select) return;
+      const node = select.closest("[data-control]");
+      const panel = $("[data-custom-panel],[data-custom-value]", node);
+      const active = select.value === custom;
+      panel.hidden = !active;
+      const inputs = panel.matches("input")
+        ? [panel]
+        : [...panel.querySelectorAll("input")];
+      for (const input of inputs) {
+        input.disabled = !active;
+        input.required = active;
+      }
+      if (active) inputs[0]?.focus();
+    });
+  }
+  U.formControls = { choice, multi, read, scalar, bind, optionsHTML };
+})();
+
+(() => {
+  "use strict";
+  const U = window.DrawpicUI,
+    { $, e } = U;
+  function split(value) {
+    const text = String(value),
+      index = text.indexOf("=");
+    return index < 0
+      ? [text, ""]
+      : [text.slice(0, index), text.slice(index + 1)];
+  }
+  const remove =
+    '<button type="button" class="icon-button" data-remove aria-label="移除此项">×</button>';
+  function invalid(input, message) {
+    input.setCustomValidity(message);
+    input.dataset.configInvalid = "true";
+    input.reportValidity();
+    input.focus();
+    throw new Error(message);
+  }
+  function parameterType(raw) {
+    try {
+      const value = JSON.parse(raw);
+      if (typeof value === "number")
+        return Number.isFinite(value) &&
+          (!Number.isInteger(value) || Number.isSafeInteger(value))
+          ? ["number", String(value)]
+          : ["json", raw];
+      if (typeof value === "boolean") return ["boolean", String(value)];
+      if (typeof value === "string") return ["text", value];
+      return ["json", raw];
+    } catch {
+      return ["text", raw];
+    }
+  }
+  function parameterValue(type, value = "") {
+    if (type === "boolean")
+      return `<select data-param-value aria-label="参数开关"><option value="true" ${value !== "false" ? "selected" : ""}>开启 · true</option><option value="false" ${value === "false" ? "selected" : ""}>关闭 · false</option></select>`;
+    if (type === "json")
+      return `<textarea data-param-value aria-label="JSON 参数值" rows="3" spellcheck="false" placeholder='例如 {"enabled": true}…'>${e(value)}</textarea>`;
+    return `<input data-param-value type="${type === "number" ? "number" : "text"}" ${type === "number" ? 'step="any"' : ""} aria-label="参数值" autocomplete="off" value="${e(value)}" placeholder="填写参数值…">`;
+  }
+  function row(key, value, options = {}) {
+    if (key === "models" && options.kind === "openai") {
+      const [alias, model] = split(value);
+      return `<div class="model-editor-row" data-array-row data-model-row><label>模型 ID<input data-model-id aria-label="模型 ID" value="${e(model || alias)}" placeholder="例如 gpt-image-2.5…" autocomplete="off" spellcheck="false"></label><label>显示名称（可选）<input data-model-alias value="${e(model ? alias : "")}" placeholder="例如 日常绘图…" autocomplete="off"></label>${remove}</div>`;
+    }
+    if (key === "model_size_overrides" || key === "model_endpoint_overrides") {
+      const [model, raw] = split(value);
+      const valueControl =
+        key === "model_size_overrides"
+          ? U.formControls.choice(
+              raw,
+              ["", ...U.formOptions.dimensions(options.kind)],
+              { label: "模型分辨率", size: true, kind: options.kind },
+            )
+          : `<input data-value aria-label="此模型的接口地址" value="${e(raw)}" placeholder="完整 URL 或接口路径…" autocomplete="off">`;
+      return `<div class="model-override-row" data-array-row data-model-override><label>绘图模型<select data-model-key aria-label="覆盖配置的模型"><option value="${e(model)}" selected>${e(model || "请先选择模型")}</option></select></label><div><span class="control-caption">${key === "model_size_overrides" ? "输出尺寸" : "接口地址"}</span>${valueControl}</div>${remove}</div>`;
+    }
+    if (key.includes("extra_parameters")) {
+      const [name, raw] = split(value),
+        [type, content] = parameterType(raw);
+      return `<div class="parameter-editor-row" data-array-row data-parameter-row><label>参数名称<input data-key value="${e(name)}" autocomplete="off" spellcheck="false" placeholder="平台文档中的参数名…"></label><label>值类型<select data-param-type aria-label="参数值类型">${[
+        ["text", "文本"],
+        ["number", "数字"],
+        ["boolean", "开关"],
+        ["json", "JSON 对象 / 列表"],
+      ]
+        .map(
+          ([kind, title]) =>
+            `<option value="${kind}" ${kind === type ? "selected" : ""}>${title}</option>`,
+        )
+        .join(
+          "",
+        )}</select></label><div data-param-editor><span class="control-caption">参数值</span>${parameterValue(type, content)}</div>${remove}</div>`;
+    }
+    return null;
+  }
+  function readRow(key, node) {
+    if (node.hasAttribute("data-model-row")) {
+      const model = $("[data-model-id]", node).value.trim(),
+        alias = $("[data-model-alias]", node).value.trim();
+      if (!model && !alias) return "";
+      if (!model)
+        invalid($("[data-model-id]", node), "请为显示名称填写对应的模型 ID");
+      return alias ? `${alias}=${model}` : model;
+    }
+    if (node.hasAttribute("data-model-override")) {
+      const model = $("[data-model-key]", node).value;
+      const control = $("[data-control]", node);
+      const value = control
+        ? U.formControls.read(control)
+        : $("[data-value]", node).value.trim();
+      if (!model && !value) return "";
+      if (!model || !value)
+        invalid(
+          $("[data-model-key]", node),
+          "模型覆盖项请同时选择模型并填写参数值；不需要的项目可移除",
+        );
+      return `${model}=${value}`;
+    }
+    if (node.hasAttribute("data-parameter-row")) {
+      const name = $("[data-key]", node).value.trim(),
+        input = $("[data-param-value]", node);
+      if (!name && !input.value) return "";
+      if (!name || name.includes("="))
+        invalid(
+          $("[data-key]", node),
+          "额外参数请填写有效的参数名称，名称中不能包含等号",
+        );
+      const type = $("[data-param-type]", node).value;
+      let value = input.value;
+      if (type === "text") value = JSON.stringify(value);
+      else if (type === "number") {
+        if (!value.trim() || !Number.isFinite(Number(value)))
+          invalid(input, "数字参数请填写有效数值");
+        if (
+          Number.isInteger(Number(value)) &&
+          !Number.isSafeInteger(Number(value))
+        )
+          invalid(
+            input,
+            "这个整数超出普通数字输入的精确范围，请改用 JSON 类型",
+          );
+        value = JSON.stringify(Number(value));
+      } else if (type === "json") {
+        try {
+          JSON.parse(value, (_, item) => {
+            if (typeof item === "number" && !Number.isFinite(item))
+              throw new Error("非有限数字");
+            return item;
+          });
+          // 校验后保留原 JSON 文本，避免浏览器把大整数重新编码成近似值。
+          value = value.trim();
+        } catch {
+          invalid(
+            input,
+            "JSON 参数格式不正确，请检查引号、括号、逗号及数字范围",
+          );
+        }
+      }
+      return `${name}=${value}`;
+    }
+    return null;
+  }
+  function models(root) {
+    const result = [];
+    for (const key of ["models", "custom_models"]) {
+      const multi = $(`[data-multiple="${key}"]`, root);
+      if (multi)
+        result.push(
+          ...[...multi.querySelectorAll("input:checked")].map((input) => ({
+            id: input.value,
+            label: input.value,
+          })),
+        );
+      const array = $(`[data-array="${key}"]`, root);
+      if (!array) continue;
+      for (const row of array.querySelectorAll(":scope > [data-array-row]")) {
+        const model = row.hasAttribute("data-model-row")
+          ? $("[data-model-id]", row).value.trim()
+          : $("[data-value]", row).value.trim();
+        const alias = $("[data-model-alias]", row)?.value.trim();
+        if (model)
+          result.push({
+            id: model,
+            alias,
+            label: alias ? `${alias} · ${model}` : model,
+          });
+      }
+    }
+    return result.filter(
+      (item, index) =>
+        result.findIndex((other) => other.id === item.id) === index,
+    );
+  }
+  function refresh(root) {
+    for (const input of root.querySelectorAll("[data-config-invalid]")) {
+      input.setCustomValidity("");
+      delete input.dataset.configInvalid;
+    }
+    const choices = models(root);
+    for (const select of root.querySelectorAll("[data-model-key]")) {
+      const value = select.value;
+      const aliasMatch = choices.find((item) => item.alias === value);
+      const present = choices.some((item) => item.id === value);
+      select.innerHTML =
+        '<option value="">请选择本平台模型</option>' +
+        (value && !present
+          ? `<option value="${e(value)}">${e(value)}${aliasMatch ? "（显示名称）" : "（未在当前平台配置，保留原值）"}</option>`
+          : "") +
+        choices
+          .map(
+            (item) => `<option value="${e(item.id)}">${e(item.label)}</option>`,
+          )
+          .join("");
+      select.value = value;
+    }
+  }
+  function validateRows(array, values) {
+    if (!/overrides|extra_parameters/.test(array.dataset.array)) return;
+    const names = values.map((item) => split(item)[0]);
+    if (new Set(names).size !== names.length)
+      invalid(
+        array.querySelector("[data-model-key],[data-key]"),
+        "同一配置列表不能重复设置相同的模型或参数名称",
+      );
+  }
+  function bind(root) {
+    root.addEventListener("input", () => refresh(root));
+    root.addEventListener("change", (event) => {
+      const input = event.target.closest("[data-param-type]");
+      if (input)
+        $(
+          "[data-param-editor]",
+          input.closest("[data-parameter-row]"),
+        ).innerHTML =
+          '<span class="control-caption">参数值</span>' +
+          parameterValue(input.value);
+      refresh(root);
+    });
+    refresh(root);
+  }
+  U.formCollections = { row, readRow, refresh, validateRows, bind };
+})();
+
+(() => {
+  "use strict";
   const U = window.DrawpicUI,
     { e, $, icon, state } = U;
   let sequence = 0;
@@ -1769,7 +2318,7 @@ dialog::backdrop {
       return `<input id="${id}" type="checkbox" class="toggle" data-input="${e(key)}" ${value ? "checked" : ""}>`;
     if (type === "select") {
       const selected = meta.multiple ? new Set(value || []) : new Set([value]);
-      return `<select id="${id}" data-input="${e(key)}" ${meta.multiple ? "multiple" : ""}>${!meta.multiple && !meta.choices?.includes(value) ? `<option value="${e(value)}">${e(value) || "使用默认值"}</option>` : ""}${(meta.choices || []).map((item) => `<option value="${e(item)}" ${selected.has(item) ? "selected" : ""}>${e(item)}</option>`).join("")}</select>`;
+      return `<select id="${id}" data-input="${e(key)}">${!meta.choices?.includes(value) ? `<option value="${e(value)}">${e(value) || "使用默认值"}</option>` : ""}${(meta.choices || []).map((item) => `<option value="${e(item)}" ${selected.has(item) ? "selected" : ""}>${e(U.formOptions.label(item))}</option>`).join("")}</select>`;
     }
     if (type === "integer" || type === "number")
       return `<input id="${id}" type="number" data-input="${e(key)}" value="${e(value)}" step="${meta.step || (type === "integer" ? 1 : "any")}" ${meta.min != null ? `min="${e(meta.min)}"` : ""} ${meta.max != null ? `max="${e(meta.max)}"` : ""}>`;
@@ -1811,26 +2360,35 @@ dialog::backdrop {
           const value = values[key] ?? structuredClone(meta.default);
           const id = `field-${++sequence}`;
           const hint = [
-            localized(meta, "hint"),
-            key === "default_model" && state.data.default_model_error
-              ? `${state.data.default_model_error}。请选择完整的“平台实例 / 模型”名称后保存。`
-              : "",
-          ].filter(Boolean).join(" "),
+              meta.multiple
+                ? `${localized(meta, "hint")} 直接勾选所需项目，无需按住 Ctrl 或 Shift。`
+                : U.formOptions.hint(key) || localized(meta, "hint"),
+              key === "default_model" && state.data.default_model_error
+                ? `${state.data.default_model_error}。请选择完整的“平台实例 / 模型”名称后保存。`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" "),
             description = hint ? ` aria-describedby="${id}-hint"` : "";
-          let control;
-          if (meta.type === "array") {
+          let control = U.formControls.scalar(key, meta, value, id, options);
+          if (control)
+            control = control.replace(`id="${id}"`, `id="${id}"${description}`);
+          else if (meta.type === "array") {
             const keyvalue = /extra_parameters|overrides/.test(key);
-            control = `<div data-array="${e(key)}" data-object="${meta.item_type === "object"}" data-keyvalue="${keyvalue}">${(value || []).map((item, index) => (meta.item_type === "object" ? objectRow(meta, item, index) : row(item, keyvalue, key === "fallback_models"))).join("")}<button type="button" class="button secondary compact" data-add-array>${icon("plus")}添加${meta.item_type === "object" ? "项目" : "一项"}</button></div>`;
+            control = `<div data-array="${e(key)}" data-object="${meta.item_type === "object"}" data-keyvalue="${keyvalue}">${(value || []).map((item, index) => (meta.item_type === "object" ? objectRow(meta, item, index) : U.formCollections.row(key, item, options) || row(item, keyvalue, key === "fallback_models"))).join("")}<button type="button" class="button secondary compact" data-add-array>${icon("plus")}添加${meta.item_type === "object" ? "项目" : key === "model_size_overrides" || key === "model_endpoint_overrides" ? "模型覆盖" : key.includes("extra_parameters") ? "参数" : "一项"}</button></div>`;
           } else
             control = scalar(key, meta, value, id, values).replace(
               `id="${id}"`,
               `id="${id}"${description}`,
             );
-          const full = meta.type === "array" || /prompt|description/.test(key);
+          const full =
+            meta.type === "array" ||
+            meta.multiple ||
+            /prompt|description/.test(key);
           const array = meta.type === "array",
-            tag = array ? "fieldset" : "div",
+            tag = array || meta.multiple ? "fieldset" : "div",
             label = e(localized(meta, "label") || key);
-          return `<${tag} class="field ${meta.type === "boolean" ? "field-toggle" : ""} ${full ? "full" : ""}" data-field="${e(key)}"${array ? description : ""}>${array ? `<legend>${label}</legend>` : `<label for="${id}">${label}</label>`}${control}${hint ? `<p id="${id}-hint" class="hint">${e(hint)}</p>` : ""}</${tag}>`;
+          return `<${tag} class="field ${meta.type === "boolean" ? "field-toggle" : ""} ${full ? "full" : ""}" data-field="${e(key)}"${tag === "fieldset" ? description : ""}>${tag === "fieldset" ? `<legend>${label}</legend>` : `<label for="${id}">${label}</label>`}${control}${hint ? `<p id="${id}-hint" class="hint">${e(hint)}</p>` : ""}</${tag}>`;
         })
         .join("") +
       "</div>"
@@ -1845,7 +2403,14 @@ dialog::backdrop {
         root.querySelectorAll(":scope > .form-grid > [data-field]"),
       ).find((n) => n.dataset.field === key);
       if (!field) continue;
-      if (meta.type === "array") {
+      const multiple = $(":scope > [data-multiple]", field),
+        control = $(":scope > [data-control]", field);
+      if (multiple)
+        result[key] = [...multiple.querySelectorAll("input:checked")].map(
+          (input) => input.value,
+        );
+      else if (control) result[key] = U.formControls.read(control);
+      else if (meta.type === "array") {
         const array = $("[data-array]", field);
         if (meta.item_type === "object")
           result[key] = Array.from(array.children)
@@ -1854,12 +2419,15 @@ dialog::backdrop {
         else
           result[key] = Array.from(array.children)
             .filter((n) => n.hasAttribute("data-array-row"))
-            .map((n) =>
-              array.dataset.keyvalue === "true"
-                ? `${$("[data-key]", n).value.trim()}=${$("[data-value]", n).value}`
-                : $("[data-value]", n).value.trim(),
+            .map(
+              (n) =>
+                U.formCollections.readRow(key, n) ??
+                (array.dataset.keyvalue === "true"
+                  ? `${$("[data-key]", n).value.trim()}=${$("[data-value]", n).value}`
+                  : $("[data-value]", n).value.trim()),
             )
             .filter((n) => n && !n.startsWith("="));
+        U.formCollections.validateRows(array, result[key]);
       } else {
         const input = $("[data-input]", field);
         if (!input) continue;
@@ -1898,6 +2466,8 @@ dialog::backdrop {
     if (!names.some((item) => item.name === selected)) select.value = "";
   }
   function bind(root, fields, values, options = {}) {
+    U.formControls.bind(root);
+    U.formCollections.bind(root);
     root.addEventListener("input", () => refreshStyleChoices(root));
     root.onclick = (event) => {
       const move = event.target.closest("[data-move]");
@@ -1921,6 +2491,7 @@ dialog::backdrop {
       if (remove) {
         remove.closest("[data-array-row],[data-array-object]").remove();
         refreshStyleChoices(root);
+        U.formCollections.refresh(root);
         state.dirty = true;
         const notice = $("[data-unsaved]", root);
         if (notice) notice.hidden = false;
@@ -1948,13 +2519,15 @@ dialog::backdrop {
               {},
               array.querySelectorAll(":scope > [data-array-object]").length,
             )
-          : row(
+          : U.formCollections.row(key, "", options) ||
+            row(
               "",
               array.dataset.keyvalue === "true",
               key === "fallback_models",
             );
       add.insertAdjacentHTML("beforebegin", html);
       refreshStyleChoices(root);
+      U.formCollections.refresh(root);
       state.dirty = true;
       const notice = $("[data-unsaved]", root);
       if (notice) notice.hidden = false;
@@ -1988,10 +2561,10 @@ dialog::backdrop {
     delete values.instances;
     const node = modal(
       record ? "编辑绘图平台" : "添加绘图平台",
-      `<p class="hint" style="margin:0 0 20px">${e(catalog.name)} · 参数会在保存后应用到新任务，正在执行的任务继续使用原配置。</p><form id="provider-form"><div class="field"><label for="provider-name">平台名称</label><input id="provider-name" maxlength="80" required value="${e(record?.name || defaultName)}" placeholder="给这个平台起一个容易辨认的名字"></div>${U.forms.html(fields, values, { platform: true })}${record?.has_api_key ? '<div class="field-toggle"><label for="clear-api-key">清除已保存的 API Key</label><input id="clear-api-key" class="toggle" type="checkbox"></div>' : ""}<div class="modal-footer"><button type="button" id="reset-provider" class="button ghost compact">恢复参数默认</button><span data-unsaved class="unsaved" hidden>有未保存的修改</span><button type="button" id="provider-back" class="button secondary">取消</button><button type="submit" class="button">${icon("check")}保存平台</button></div></form>`,
+      `<p class="hint" style="margin:0 0 20px">${e(catalog.name)} · 先填写连接信息和模型，其他选项可按需调整。保存后应用到新任务。</p><form id="provider-form"><div class="field"><label for="provider-name">平台名称</label><input id="provider-name" maxlength="80" required value="${e(record?.name || defaultName)}" placeholder="给这个平台起一个容易辨认的名字"></div>${U.forms.html(fields, values, { platform: true, kind })}${record?.has_api_key ? '<div class="field-toggle"><label for="clear-api-key">清除已保存的 API Key</label><input id="clear-api-key" class="toggle" type="checkbox"></div>' : ""}<div class="modal-footer"><button type="button" id="reset-provider" class="button ghost compact">恢复参数默认</button><span data-unsaved class="unsaved" hidden>有未保存的修改</span><button type="button" id="provider-back" class="button secondary">取消</button><button type="submit" class="button">${icon("check")}保存平台</button></div></form>`,
     );
     const form = $("#provider-form", node),
-      read = U.forms.bind(form, fields, values, { platform: true });
+      read = U.forms.bind(form, fields, values, { platform: true, kind });
     const modalVersion = state.modalVersion,
       revision = state.data.revision;
     const current = () =>
@@ -2107,7 +2680,8 @@ dialog::backdrop {
           let refreshError = null;
           try {
             await U.bootstrap();
-            if (card.isConnected && state.view === "platforms") await U.render();
+            if (card.isConnected && state.view === "platforms")
+              await U.render();
           } catch (error) {
             refreshError = error;
           }

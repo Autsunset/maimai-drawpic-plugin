@@ -53,6 +53,7 @@ function harness(file, extra = {}) {
     setTimeout: (fn, delay) => { const id = ++timerId; timers.set(id, { fn, delay }); return id; },
     clearTimeout: id => timers.delete(id) });
   const run = name => vm.runInContext(read(name + '.js'), context, { filename: name + '.js' });
+  if (file === 'forms') for (const name of ['forms/options', 'forms/controls', 'forms/collections']) run(name);
   run(file);
   return { U, nodes, get, calls, errors, actions, timers, context, document, run,
     tick: async delay => {
@@ -328,6 +329,37 @@ test('invalid default model: diagnostics remain linked to the configuration cont
   assert.match(html, /请选择完整/);
   assert.match(read('studio.js'), /<option value="" selected>请选择平台实例 \/ 模型<\/option>/);
 });
+test('typed values retain zero, false, literal strings and exact JSON integers', () => {
+  const h = harness('forms');
+  const row = node({ hasAttribute: name => name === 'data-parameter-row' });
+  h.get('[data-key]').value = 'value';
+  const input = h.get('[data-param-value]');
+  input.setCustomValidity = message => { input.error = message; };
+  input.reportValidity = () => false;
+  for (const [type, value, encoded] of [
+    ['number', '0', '0'], ['boolean', 'false', 'false'], ['text', '123', '"123"'],
+    ['json', '{"id":9007199254740993}', '{"id":9007199254740993}'],
+  ]) {
+    h.get('[data-param-type]').value = type; input.value = value;
+    assert.equal(h.U.formCollections.readRow('extra_parameters', row), `value=${encoded}`);
+  }
+  h.get('[data-param-type]').value = 'json'; input.value = '{"value":1e999}';
+  assert.throws(() => h.U.formCollections.readRow('extra_parameters', row), /JSON 参数格式/);
+  assert.match(input.error, /数字范围/);
+});
+
+test('dimensions use the platform separator and preserve nonstandard saved values', () => {
+  const h = harness('forms');
+  const control = node({ dataset: { control: 'dimension', kind: 'aliyun' } });
+  h.get('[data-choice-select]').value = '__workspace_custom__';
+  h.get('[data-width]').value = '2048'; h.get('[data-height]').value = '1024';
+  assert.equal(h.U.formControls.read(control), '2048*1024');
+  control.dataset.kind = 'openai';
+  assert.equal(h.U.formControls.read(control), '2048x1024');
+  h.get('[data-choice-select]').value = 'legacy-size-value';
+  assert.equal(h.U.formControls.read(control), 'legacy-size-value');
+});
+
 test('light theme small text and selected foreground meet 4.5:1; dark colors stay covered', () => {
   const css = read('style.css');
   const contrast = (a, b) => {

@@ -546,6 +546,110 @@ textarea {
   gap: 8px;
   margin-bottom: 9px;
 }
+.choice-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.choice-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.choice-item:has(input:checked) {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.choice-item input {
+  flex-shrink: 0;
+  width: 17px;
+  height: 17px;
+  accent-color: var(--accent);
+}
+.choice-item span {
+  min-width: 0;
+}
+.model-editor-row,
+.model-override-row,
+.parameter-editor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 34px;
+  gap: 10px;
+  align-items: start;
+  padding: 14px;
+  margin-bottom: 10px;
+  background: var(--soft);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.parameter-editor-row {
+  grid-template-columns: minmax(0, 1fr) 112px minmax(0, 1.3fr) 34px;
+}
+.model-editor-row > *,
+.model-override-row > *,
+.parameter-editor-row > * {
+  min-width: 0;
+}
+.model-editor-row > button,
+.model-override-row > button,
+.parameter-editor-row > button {
+  margin-top: 23px;
+}
+.model-editor-row label,
+.model-override-row label,
+.parameter-editor-row label,
+.control-caption,
+.dimension-inputs label {
+  display: block;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.control-caption {
+  margin-bottom: 3px;
+}
+.dimension-inputs {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: end;
+  gap: 8px;
+  margin-top: 8px;
+}
+.dimension-inputs > span {
+  align-self: center;
+  padding-top: 20px;
+}
+[data-custom-value] {
+  margin-top: 8px;
+}
+@media (max-width: 640px) {
+  .choice-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .model-editor-row,
+  .model-override-row,
+  .parameter-editor-row {
+    grid-template-columns: minmax(0, 1fr) 32px;
+    padding: 12px;
+  }
+  .model-editor-row > :not(button),
+  .model-override-row > :not(button),
+  .parameter-editor-row > :not(button) {
+    grid-column: 1;
+  }
+  .model-editor-row > button,
+  .model-override-row > button,
+  .parameter-editor-row > button {
+    grid-column: 2;
+    grid-row: 1;
+  }
+}
 .upload-zone {
   border: 1px dashed color-mix(in srgb, var(--accent) 50%, var(--line));
   background: var(--accent-soft);

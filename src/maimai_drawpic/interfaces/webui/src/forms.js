@@ -34,7 +34,7 @@
       return `<input id="${id}" type="checkbox" class="toggle" data-input="${e(key)}" ${value ? "checked" : ""}>`;
     if (type === "select") {
       const selected = meta.multiple ? new Set(value || []) : new Set([value]);
-      return `<select id="${id}" data-input="${e(key)}" ${meta.multiple ? "multiple" : ""}>${!meta.multiple && !meta.choices?.includes(value) ? `<option value="${e(value)}">${e(value) || "使用默认值"}</option>` : ""}${(meta.choices || []).map((item) => `<option value="${e(item)}" ${selected.has(item) ? "selected" : ""}>${e(item)}</option>`).join("")}</select>`;
+      return `<select id="${id}" data-input="${e(key)}">${!meta.choices?.includes(value) ? `<option value="${e(value)}">${e(value) || "使用默认值"}</option>` : ""}${(meta.choices || []).map((item) => `<option value="${e(item)}" ${selected.has(item) ? "selected" : ""}>${e(U.formOptions.label(item))}</option>`).join("")}</select>`;
     }
     if (type === "integer" || type === "number")
       return `<input id="${id}" type="number" data-input="${e(key)}" value="${e(value)}" step="${meta.step || (type === "integer" ? 1 : "any")}" ${meta.min != null ? `min="${e(meta.min)}"` : ""} ${meta.max != null ? `max="${e(meta.max)}"` : ""}>`;
@@ -76,26 +76,35 @@
           const value = values[key] ?? structuredClone(meta.default);
           const id = `field-${++sequence}`;
           const hint = [
-            localized(meta, "hint"),
-            key === "default_model" && state.data.default_model_error
-              ? `${state.data.default_model_error}。请选择完整的“平台实例 / 模型”名称后保存。`
-              : "",
-          ].filter(Boolean).join(" "),
+              meta.multiple
+                ? `${localized(meta, "hint")} 直接勾选所需项目，无需按住 Ctrl 或 Shift。`
+                : U.formOptions.hint(key) || localized(meta, "hint"),
+              key === "default_model" && state.data.default_model_error
+                ? `${state.data.default_model_error}。请选择完整的“平台实例 / 模型”名称后保存。`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" "),
             description = hint ? ` aria-describedby="${id}-hint"` : "";
-          let control;
-          if (meta.type === "array") {
+          let control = U.formControls.scalar(key, meta, value, id, options);
+          if (control)
+            control = control.replace(`id="${id}"`, `id="${id}"${description}`);
+          else if (meta.type === "array") {
             const keyvalue = /extra_parameters|overrides/.test(key);
-            control = `<div data-array="${e(key)}" data-object="${meta.item_type === "object"}" data-keyvalue="${keyvalue}">${(value || []).map((item, index) => (meta.item_type === "object" ? objectRow(meta, item, index) : row(item, keyvalue, key === "fallback_models"))).join("")}<button type="button" class="button secondary compact" data-add-array>${icon("plus")}添加${meta.item_type === "object" ? "项目" : "一项"}</button></div>`;
+            control = `<div data-array="${e(key)}" data-object="${meta.item_type === "object"}" data-keyvalue="${keyvalue}">${(value || []).map((item, index) => (meta.item_type === "object" ? objectRow(meta, item, index) : U.formCollections.row(key, item, options) || row(item, keyvalue, key === "fallback_models"))).join("")}<button type="button" class="button secondary compact" data-add-array>${icon("plus")}添加${meta.item_type === "object" ? "项目" : key === "model_size_overrides" || key === "model_endpoint_overrides" ? "模型覆盖" : key.includes("extra_parameters") ? "参数" : "一项"}</button></div>`;
           } else
             control = scalar(key, meta, value, id, values).replace(
               `id="${id}"`,
               `id="${id}"${description}`,
             );
-          const full = meta.type === "array" || /prompt|description/.test(key);
+          const full =
+            meta.type === "array" ||
+            meta.multiple ||
+            /prompt|description/.test(key);
           const array = meta.type === "array",
-            tag = array ? "fieldset" : "div",
+            tag = array || meta.multiple ? "fieldset" : "div",
             label = e(localized(meta, "label") || key);
-          return `<${tag} class="field ${meta.type === "boolean" ? "field-toggle" : ""} ${full ? "full" : ""}" data-field="${e(key)}"${array ? description : ""}>${array ? `<legend>${label}</legend>` : `<label for="${id}">${label}</label>`}${control}${hint ? `<p id="${id}-hint" class="hint">${e(hint)}</p>` : ""}</${tag}>`;
+          return `<${tag} class="field ${meta.type === "boolean" ? "field-toggle" : ""} ${full ? "full" : ""}" data-field="${e(key)}"${tag === "fieldset" ? description : ""}>${tag === "fieldset" ? `<legend>${label}</legend>` : `<label for="${id}">${label}</label>`}${control}${hint ? `<p id="${id}-hint" class="hint">${e(hint)}</p>` : ""}</${tag}>`;
         })
         .join("") +
       "</div>"
@@ -110,7 +119,14 @@
         root.querySelectorAll(":scope > .form-grid > [data-field]"),
       ).find((n) => n.dataset.field === key);
       if (!field) continue;
-      if (meta.type === "array") {
+      const multiple = $(":scope > [data-multiple]", field),
+        control = $(":scope > [data-control]", field);
+      if (multiple)
+        result[key] = [...multiple.querySelectorAll("input:checked")].map(
+          (input) => input.value,
+        );
+      else if (control) result[key] = U.formControls.read(control);
+      else if (meta.type === "array") {
         const array = $("[data-array]", field);
         if (meta.item_type === "object")
           result[key] = Array.from(array.children)
@@ -119,12 +135,15 @@
         else
           result[key] = Array.from(array.children)
             .filter((n) => n.hasAttribute("data-array-row"))
-            .map((n) =>
-              array.dataset.keyvalue === "true"
-                ? `${$("[data-key]", n).value.trim()}=${$("[data-value]", n).value}`
-                : $("[data-value]", n).value.trim(),
+            .map(
+              (n) =>
+                U.formCollections.readRow(key, n) ??
+                (array.dataset.keyvalue === "true"
+                  ? `${$("[data-key]", n).value.trim()}=${$("[data-value]", n).value}`
+                  : $("[data-value]", n).value.trim()),
             )
             .filter((n) => n && !n.startsWith("="));
+        U.formCollections.validateRows(array, result[key]);
       } else {
         const input = $("[data-input]", field);
         if (!input) continue;
@@ -163,6 +182,8 @@
     if (!names.some((item) => item.name === selected)) select.value = "";
   }
   function bind(root, fields, values, options = {}) {
+    U.formControls.bind(root);
+    U.formCollections.bind(root);
     root.addEventListener("input", () => refreshStyleChoices(root));
     root.onclick = (event) => {
       const move = event.target.closest("[data-move]");
@@ -186,6 +207,7 @@
       if (remove) {
         remove.closest("[data-array-row],[data-array-object]").remove();
         refreshStyleChoices(root);
+        U.formCollections.refresh(root);
         state.dirty = true;
         const notice = $("[data-unsaved]", root);
         if (notice) notice.hidden = false;
@@ -213,13 +235,15 @@
               {},
               array.querySelectorAll(":scope > [data-array-object]").length,
             )
-          : row(
+          : U.formCollections.row(key, "", options) ||
+            row(
               "",
               array.dataset.keyvalue === "true",
               key === "fallback_models",
             );
       add.insertAdjacentHTML("beforebegin", html);
       refreshStyleChoices(root);
+      U.formCollections.refresh(root);
       state.dirty = true;
       const notice = $("[data-unsaved]", root);
       if (notice) notice.hidden = false;
