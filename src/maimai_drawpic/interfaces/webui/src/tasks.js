@@ -8,11 +8,13 @@
       info,
       parts = [];
     do {
+      if (!button.isConnected || !$("#modal").open) return;
       info = await call("query", "original", {
         task_id: taskId,
         index,
         offset,
       });
+      if (!button.isConnected || !$("#modal").open) return;
       const decoded = atob(info.data);
       const bytes = Uint8Array.from(decoded, (ch) => ch.charCodeAt(0));
       parts.push(bytes);
@@ -22,7 +24,7 @@
     const url = URL.createObjectURL(new Blob(parts, { type: info.mime }));
     const node = U.modal(
       "原图预览",
-      `<img class="detail-image" src="${e(url)}" alt="生成的原图"><p class="hint">${e(info.filename)} · ${(info.size / 1024 / 1024).toFixed(2)} MiB · 原文件保存在当前实例的数据目录。</p>`,
+      `<img class="detail-image" src="${e(url)}" alt="生成的原图"><p class="hint">${e(info.filename)} · ${(info.size / 1024 / 1024).toFixed(2)} MiB · 原文件位于插件图片缓存目录，会按容量和保留期清理。</p>`,
       () => URL.revokeObjectURL(url),
     );
     node.scrollTop = 0;
@@ -51,9 +53,15 @@
           toast("已取消任务");
           await openTask(taskId, index);
         });
+    const modalVersion = state.modalVersion;
     if (data.images.length) {
       const image = await call("query", "image", { task_id: taskId, index });
-      if (!node.isConnected || !$("#detail-preview", node)) return;
+      if (
+        modalVersion !== state.modalVersion ||
+        !$("#modal").open ||
+        !$("#detail-preview", node)
+      )
+        return;
       $("#detail-preview", node).innerHTML =
         `<img class="detail-image" src="${e(image.data_url)}" alt="任务生成图片 ${index + 1}"><p class="hint">${image.width} × ${image.height} · ${(image.size / 1024 / 1024).toFixed(2)} MiB · 页面先显示压缩预览，原文件独立保存。</p>`;
       $("#view-original", node).onclick = (event) =>
@@ -62,7 +70,10 @@
         );
     }
   }
-  async function renderTasks() {
+  function editingFilters() {
+    return $("#task-search")?.contains(document.activeElement);
+  }
+  async function renderTasks(polling = false) {
     clearTimeout(timer);
     const result = await call("query", "tasks", {
       page: state.taskPage,
@@ -70,6 +81,10 @@
       search: state.taskSearch,
     });
     if (state.view !== "tasks") return;
+    if (polling && (editingFilters() || $("#modal").open)) {
+      timer = setTimeout(() => renderTasks(true).catch(U.error), 5000);
+      return;
+    }
     const active = result.counts.pending + result.counts.running;
     $("#active-count").hidden = !active;
     $("#active-count").textContent = active;
@@ -93,6 +108,10 @@
       button.onclick = () => openTask(button.dataset.task).catch(U.error);
     });
     U.bindSubmit($("#task-search"));
+    $("#task-search-text").value = state.taskSearchDraft ?? state.taskSearch;
+    $("#task-search-text").oninput = (event) => {
+      state.taskSearchDraft = event.currentTarget.value;
+    };
     $("#task-search").onsubmit = (event) => {
       event.preventDefault();
       state.taskSearch = $("#task-search-text").value;
@@ -112,11 +131,16 @@
     if (active) {
       const poll = () => {
         if (state.view !== "tasks") return;
-        if (document.hidden || $("#modal").open || state.busy) {
+        if (
+          document.hidden ||
+          $("#modal").open ||
+          state.busy ||
+          editingFilters()
+        ) {
           timer = setTimeout(poll, 5000);
           return;
         }
-        renderTasks().catch(U.error);
+        renderTasks(true).catch(U.error);
       };
       timer = setTimeout(poll, 5000);
     }

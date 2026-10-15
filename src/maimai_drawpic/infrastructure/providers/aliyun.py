@@ -12,7 +12,10 @@ import re
 import time
 
 from ..media.images import detect_mime_type
-from ..http import HttpProxySettings, read_response_bytes, read_response_text, sanitize_provider_url
+from ..http import provider_response_error, sanitized_log_args
+from ..media.downloads import download_image
+from ...domain.errors import ProviderResultError
+from ..http import HttpProxySettings, read_response_text, sanitize_provider_url
 from ...domain.models.aliyun_profiles import (
     AliyunRequestOptions,
     build_aliyun_parameters,
@@ -410,6 +413,7 @@ class AliyunImage:
                 url,
                 headers=self._build_headers(extra_headers),
                 json=payload,
+                allow_redirects=False,
                 **self.proxy_settings.aiohttp_request_kwargs(),
             ) as response:
                 response_text = await read_response_text(response)
@@ -444,11 +448,10 @@ class AliyunImage:
                         message,
                         request_id,
                     )
-                    raise RuntimeError(
-                        f"阿里云图片接口 HTTP 错误：status={response.status}, "
-                        f"code={code}, message={message}, "
-                        f"request_id={request_id}, duration={duration:.2f}s"
-                    )
+                    error = provider_response_error(response.status, response_json, self.api_key, "aliyun 图片接口拒绝")
+                    if method.upper() != "POST":
+                        raise ProviderResultError(f"已提交任务的查询失败，未重新生成：{error}")
+                    raise error
                 return response_json
 
     def _raise_for_business_error(
@@ -471,9 +474,12 @@ class AliyunImage:
             message,
             request_id,
         )
-        raise RuntimeError(
-            f"阿里云模型 {model} {operation}失败：code={code}, message={message}, request_id={request_id}"
+        error = provider_response_error(
+            400, response, self.api_key, f"阿里云模型 {model} {operation}失败 request_id={request_id}"
         )
+        if operation == "异步任务查询" and not error.rejected:
+            raise ProviderResultError(str(error))
+        raise error
 
     def _extract_error_fields(
         self,
@@ -559,28 +565,17 @@ class AliyunImage:
     async def _download_image(self, url: str) -> bytes:
         """下载生成图片，日志中不记录签名查询参数。"""
 
-        timeout = aiohttp.ClientTimeout(total=self.request_timeout_seconds)
-        async with aiohttp.ClientSession(
-            timeout=timeout,
-            **self.proxy_settings.aiohttp_session_kwargs(),
-        ) as session:
-            async with session.get(
-                url,
-                **self.proxy_settings.aiohttp_request_kwargs(),
-            ) as response:
-                if response.status != 200:
-                    self._log_error(
-                        "下载阿里云生成图片失败: status=%s url=%s",
-                        response.status,
-                        self._sanitize_url(url),
-                    )
-                    raise RuntimeError(f"下载阿里云生成图片失败：status={response.status}")
-                return await read_response_bytes(response)
+        return await download_image(
+            url,
+            base_url=self.base_url,
+            proxy_settings=self.proxy_settings,
+            timeout_seconds=self.request_timeout_seconds,
+        )
 
     def _log_info(self, message: str, *args: Any) -> None:
         if self.logger is not None:
-            self.logger.info(message, *args)
+            self.logger.info(message, *sanitized_log_args(args, self.api_key))
 
     def _log_error(self, message: str, *args: Any) -> None:
         if self.logger is not None:
-            self.logger.error(message, *args)
+            self.logger.error(message, *sanitized_log_args(args, self.api_key))

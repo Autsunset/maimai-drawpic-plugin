@@ -24,6 +24,7 @@ async def prepare_workspace(plugin: Any, config_path: Path) -> None:
     raw = plugin.get_plugin_config_data()
     store = WorkspaceConfigStore(plugin.ctx.paths.data_dir, config_path)
     await asyncio.to_thread(store.initialize, raw)
+    plugin._redactor.add(store.secrets())
     plugin._platform_store = store
     plugin._effective_config = await asyncio.to_thread(store.effective_config, raw)
     plugin._result_store = ImageResultStore(
@@ -41,6 +42,8 @@ async def prepare_workspace(plugin: Any, config_path: Path) -> None:
 
 
 async def refresh_runtime(plugin: Any) -> None:
+    plugin._redactor.add(plugin._platform_store.secrets())
+    plugin._redactor.add_config(plugin.get_plugin_config_data())
     plugin._effective_config = await asyncio.to_thread(
         plugin._platform_store.effective_config, plugin.get_plugin_config_data()
     )

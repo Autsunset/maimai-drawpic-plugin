@@ -19,20 +19,45 @@ async def call_drawpic(self, name: str, **kwargs: Any) -> Dict[str, Any]:
         raise RuntimeError(response["error"])
     return response["result"]
 
-async def draw_and_wait(self, prompt: str, request_id: str) -> Dict[str, Any]:
-    submitted = await call_drawpic(
-        self, "drawpic_submit", prompt=prompt, request_id=request_id
-    )
-    # 只返回任务 ID，生成与审核在后台继续。请限制轮询频率和总等待时间。
-    for _ in range(120):
-        result = await call_drawpic(self, "drawpic_task", task_id=submitted["task_id"])
-        if result["status"] in {"completed", "failed", "rejected"}:
-            return result
-        await asyncio.sleep(5)
-    raise TimeoutError(f"绘图仍在执行: {submitted['task_id']}")
+async def draw_and_wait(
+    self, prompt: str, request_id: str, wait_seconds: float = 20
+) -> Dict[str, Any]:
+    # request_id 应在第一次调用前由调用方持久保存，重试使用相同 ID 和参数。
+    if not 0 < wait_seconds <= 20:
+        raise ValueError("单轮等待预算应为 0～20 秒（不含 0）")
+    deadline = asyncio.get_running_loop().time() + wait_seconds
+    task_id = None
+    result = {"status": "pending"}
+    try:
+        # 总预算包括提交、查询与 sleep，不把完整生图塞进一次长 RPC。
+        async with asyncio.timeout(wait_seconds):
+            submitted = await call_drawpic(
+                self, "drawpic_submit", prompt=prompt, request_id=request_id
+            )
+            task_id = submitted["task_id"]
+            while True:
+                result = await call_drawpic(self, "drawpic_task", task_id=task_id)
+                if result["status"] in {"completed", "failed", "rejected"}:
+                    return {**result, "wait_expired": False}
+                await asyncio.sleep(min(3, max(0, deadline - asyncio.get_running_loop().time())))
+    except TimeoutError:
+        # 仅停止等待，不取消任务；提交超时也可能已受理，不可换新 request_id 重绘。
+        return {
+            "task_id": task_id,
+            "request_id": request_id,
+            "status": result["status"] if task_id else "submission_unknown",
+            "wait_expired": True,
+            "retry_after_ms": 3000,
+        }
 ```
 
-上例普通函数的 `self` 是调用方插件。超时后保留任务 ID 继续查询。提交重试应使用相同 `request_id` 与完全相同的参数；同 ID 不同参数会被拒绝。幂等范围为保留的任务记录，当前最多 500 条，不是永久任务键。
+上例是**调用方的本地 helper**，`self` 是调用方插件，不是新增的绘图 API。每次只等待至多 20 秒，过期返回可继续查询的句柄。`submission_unknown` 只属于此 helper，表示尚未取得任务 ID；用原 `request_id` 和原参数恢复提交结果。`completed` 也可能已清理图片，要检查 `images` 是否可用。幂等范围为保留的任务记录，当前最多 500 条；不是永久任务键，也不承诺进程崩溃后的 exactly-once。
+
+普通插件后台协程可以保存 `task_id`，间隔至少 3 秒恢复查询。**LLM Tool 处理器应短调用 `drawpic_submit` 后立即返回任务 ID**，由后续查询工具获取结果；先校验并保存用户／会话与任务的归属关系，不把实例管理接口直接暴露给所有用户。确需短等待时可用上述 helper 的更短预算，并为工具自身处理留余量。
+
+当前 Host 的 Tool/API 默认调用边界为 60 秒，调用方 SDK capability 默认 30 秒，WebUI 绑定请求另有 10 秒边界。插件的 `request_timeout_seconds` 是单次平台尝试预算，不是整个任务或调用方等待预算；额外重试和备选会增加总执行时间。没有持久化等待队列，达到并发限制直接拒绝。提高 Tool 超时不同时提高 SDK 或 WebUI 边界；给 `ctx.api.call` 传 `timeout_ms` 会作为业务参数传给目标接口，不能用来调整外层超时。
+
+等待超时或调用方协程取消只表示调用方停止等待，不能证明远端停止执行。显式 `drawpic_cancel` 取消本地任务，也不保证上游撤单或停止收费；同步客户端的工作线程还可能继续运行。聊天额度回退与平台计费是两回事。上游审核拒绝、结果处理失败、未知受理状态不会自动重绘，先核对任务和提供商记录。
 
 ## API 一览
 

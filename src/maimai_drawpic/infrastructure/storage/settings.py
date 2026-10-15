@@ -29,7 +29,27 @@ class WorkspaceSettingsStore:
         self.config_path = config_path
         self.values: Dict[str, Any] = {}
 
+    def check_legacy_conflicts(self, document: Dict[str, Any]) -> None:
+        sections = set(document) & set(WORKSPACE_SECTIONS)
+        if not self.path.exists() or not sections:
+            return
+        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        if (
+            not isinstance(payload, dict)
+            or payload.get("schema_version") != 1
+            or not isinstance(payload.get("settings"), dict)
+        ):
+            raise ValueError("workspace_settings.json 格式或版本不正确")
+        saved = workspace_config(DrawpicConfig.model_validate(payload["settings"]).model_dump(mode="json"))
+        restored = workspace_config(DrawpicConfig.model_validate(document).model_dump(mode="json"))
+        if any(saved[section] != restored[section] for section in sections):
+            raise ValueError(
+                "旧 config.toml 与 workspace_settings.json 存在冲突，已保留原文件。请先备份，确认保留哪份绘图设置，再移走另一份后重新加载插件。"
+            )
+
     def initialize(self, legacy: Dict[str, Any]) -> None:
+        if self.config_path.exists():
+            self.check_legacy_conflicts(tomlkit.parse(self.config_path.read_text(encoding="utf-8")))
         if self.path.exists():
             payload = json.loads(self.path.read_text(encoding="utf-8"))
             if (

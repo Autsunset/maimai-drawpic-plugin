@@ -5,11 +5,12 @@ from datetime import datetime
 from functools import wraps
 from pathlib import Path
 from threading import RLock
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 from uuid import uuid4
 import json
 
 from .atomic import write_json_atomically
+from ..http import sanitize_provider_text
 
 
 DrawTaskStatus = Literal["pending", "running", "completed", "failed", "rejected"]
@@ -52,10 +53,13 @@ class DrawTaskStore:
 
     MAX_TASK_RECORDS = 500
 
-    def __init__(self, path: Path, logger: Any | None = None) -> None:
+    def __init__(
+        self, path: Path, logger: Any | None = None, *, sanitize: Callable[[str], str] = sanitize_provider_text
+    ) -> None:
         self._lock = RLock()
         self.path = path
         self.logger = logger
+        self.sanitize_message = sanitize
         self._tasks: dict[str, DrawTaskRecord] = {}
         self._latest_task_id_by_session: dict[str, str] = {}
 
@@ -132,8 +136,15 @@ class DrawTaskStore:
                     normalized_latest[session_key.strip()] = task_id.strip()
 
         self._tasks = normalized_tasks
+        changed = False
+        for record in self._tasks.values():
+            safe_message = self.sanitize_message(record.message)
+            changed = changed or safe_message != record.message
+            record.message = safe_message
         self._latest_task_id_by_session = normalized_latest
         self._prune_tasks()
+        if changed:
+            self.save()
 
     @_synchronized
     def save(self) -> None:
@@ -174,7 +185,7 @@ class DrawTaskStore:
             prompt="",
             model=model,
             provider=provider,
-            message=message,
+            message=self.sanitize_message(message),
         )
         self._tasks[task_id] = record
         self._latest_task_id_by_session[record.session_key] = task_id
@@ -214,7 +225,7 @@ class DrawTaskStore:
             self._log_warning("更新任务状态时未找到 task_id=%s，可能已被配置重载清理", task_id)
             return None
         record.status = status
-        record.message = message
+        record.message = self.sanitize_message(message)
         if result_count is not None:
             record.result_count = result_count
         if sent_count is not None:

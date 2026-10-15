@@ -5,7 +5,7 @@
 # 麦麦绘图
 
 ![Plugin Version](https://img.shields.io/badge/Plugin-1.12.6-informational.svg)
-![MaiBot](https://img.shields.io/badge/MaiBot-%3E%3D1.3.7-blue.svg)
+![MaiBot](https://img.shields.io/badge/MaiBot-%3E%3D1.3.6-blue.svg)
 ![MaiBot Plugin SDK](https://img.shields.io/badge/Plugin%20SDK-%3E%3D2.12.0-blueviolet.svg)
 ![License](https://img.shields.io/badge/License-AGPL--3.0-green.svg)
 
@@ -27,7 +27,7 @@
 
 ## 安装
 
-运行要求：MaiBot `>=1.3.7`、MaiBot Plugin SDK `>=2.12.0`，Python `>=3.12`。
+运行要求：MaiBot `>=1.3.6`、MaiBot Plugin SDK `>=2.12.0`，Python `>=3.12`，使用该 MaiBot 版本配套的官方 Dashboard。
 
 可以通过插件市场安装，或使用 CLI：
 
@@ -39,7 +39,7 @@ maibot plugin install WhiteCloudOL/maimai-drawpic-plugin
 
 ```bash
 cd plugins
-git clone https://github.com/WhiteCloudOL/maimai-drawpic-plugin.git
+git clone --branch feat/webui https://github.com/WhiteCloudOL/maimai-drawpic-plugin.git
 ```
 
 安装后重启 MaiBot，在 WebUI 的插件扩展页面打开“麦麦绘图”。升级已有安装时保留原有插件目录和数据，避免创建重复安装。
@@ -77,7 +77,13 @@ git clone https://github.com/WhiteCloudOL/maimai-drawpic-plugin.git
 
 首次加载会识别已有平台及通用配置。先保存新数据、按原始字节备份 TOML，再移除迁出的配置节；重启沿用已迁移的内容。没有旧平台时从空列表开始。编辑密钥留空保留原值，也可显式勾选清除。配置采用修订号，多个页面同时编辑时提示刷新。
 
-默认首选模型与默认风格使用下拉选择，备选模型按需添加并可上移、下移。备选按顺序尝试；“最多重试次数”是每个模型失败后的额外重试次数，默认 0，最多 5。图片审核拒绝不会触发重试。恢复默认先回填当前表单，保存后生效，已有密钥保留。
+默认首选模型与默认风格使用下拉选择，备选模型按需添加并可上移、下移。“最多重试次数”默认 0、最多 5，只对连接未建立、明确限流等可安全重试的失败生效；认证、参数和配额拒绝可按顺序改用备选，但不重复请求同一模型。审核拒绝、生成结果解析/下载失败，以及超时等远端受理状态不确定的情况均不自动重绘。恢复默认先回填当前表单，保存后生效，已有密钥保留。
+
+图片结果下载仅允许 HTTP(S)，禁止地址内嵌凭据；DNS 解析后固定连接目标，并逐跳检查重定向。默认阻止内网、回环和链路本地地址；只有管理员所配置服务的**相同协议、主机及端口**可作为自托管结果地址使用，不增加额外配置开关。
+
+平台 API 地址应填写最终服务地址，生成请求与模型查询不会自动跟随重定向。
+
+如果新 JSON 配置与恢复的旧 TOML 内容不同，插件会报告冲突并保留原文件。先备份 `config.toml` 和数据目录：保留工作台配置时移走 TOML 中的旧绘图配置节；恢复旧 TOML 时先移走相应的 `platforms.json` 或 `workspace_settings.json`，再重新加载插件迁移。不要在没有备份时覆盖配置文件。
 
 在 **MaiBot 插件配置 → 插件基础配置** 中，图片缓存、日志和上传缓存可分别设置容量上限，单位 MB（按 1024² 字节计算）。默认图片 **300 MB**、日志 **10 MB**，保存配置后立即按新上限清理较旧内容，工作台不重复展示这些设置。
 

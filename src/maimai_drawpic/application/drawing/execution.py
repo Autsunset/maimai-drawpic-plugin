@@ -4,6 +4,7 @@ import inspect
 
 from ..chat import ImageDeliveryError
 from ...infrastructure.storage.retention import CacheCapacityError
+from ...domain.errors import ProviderError
 
 
 class ImageExecutionMixin:
@@ -33,6 +34,7 @@ class ImageExecutionMixin:
         """后台执行绘图任务，源图为空时文生图，存在源图时图生图。"""
 
         async def _notify_task_unsuccessful(status: str, reason: str) -> None:
+            reason = self.task_store.sanitize_message(reason)
             if on_task_unsuccessful is None:
                 return
             try:
@@ -50,6 +52,7 @@ class ImageExecutionMixin:
                 )
 
         async def _notify_task_successful(status: str, reason: str) -> None:
+            reason = self.task_store.sanitize_message(reason)
             if on_task_successful is None:
                 return
             try:
@@ -228,6 +231,12 @@ class ImageExecutionMixin:
                 "绘图任务已取消: task_id=%s task_type=%s model=%s", task_id, task_type, resolved_model
             )
             raise
+        except ProviderError as exc:
+            status = "rejected" if exc.rejected else "failed"
+            message = self.task_store.sanitize_message(str(exc))
+            await asyncio.to_thread(self.task_store.update_task, task_id, status=status, message=message)
+            await _notify_task_unsuccessful(status, message)
+            self.ctx.logger.warning("绘图请求已终止: task_id=%s status=%s reason=%s", task_id, status, message)
         except ImageDeliveryError as exc:
             if exc.sent_count <= 0:
                 await asyncio.to_thread(

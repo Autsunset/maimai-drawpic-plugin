@@ -11,8 +11,10 @@ import secrets
 import time
 import uuid
 
+from ..http import sanitized_log_args
 from ..storage.migration import resolve_workflow_path
-from ..http import HttpProxySettings, read_response_bytes, read_response_text, sanitize_provider_text
+from ..media.downloads import download_image
+from ..http import HttpProxySettings, read_response_text, sanitize_provider_text
 from ..media.images import detect_mime_type
 
 
@@ -427,15 +429,13 @@ class ComfyUIImage:
     async def _download_image(self, descriptor: dict[str, str]) -> bytes:
         """下载 ComfyUI 输出图片。"""
 
-        query = urlencode(descriptor)
-        url = f"{self.base_url}/view?{query}"
-        timeout = aiohttp.ClientTimeout(total=self.request_timeout_seconds)
-        async with aiohttp.ClientSession(timeout=timeout, **self.proxy_settings.aiohttp_session_kwargs()) as session:
-            async with session.get(url, **self.proxy_settings.aiohttp_request_kwargs()) as response:
-                if response.status != 200:
-                    error_text = sanitize_provider_text(await read_response_text(response))
-                    raise RuntimeError(f"下载 ComfyUI 图片失败 ({response.status})：{error_text[:1000]}")
-                return await read_response_bytes(response)
+        url = f"{self.base_url}/view?{urlencode(descriptor)}"
+        return await download_image(
+            url,
+            base_url=self.base_url,
+            proxy_settings=self.proxy_settings,
+            timeout_seconds=self.request_timeout_seconds,
+        )
 
     async def _post_json(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         """向 ComfyUI 发送 JSON 请求。"""
@@ -459,7 +459,7 @@ class ComfyUIImage:
         timeout = aiohttp.ClientTimeout(total=self.request_timeout_seconds)
         async with aiohttp.ClientSession(timeout=timeout, **self.proxy_settings.aiohttp_session_kwargs()) as session:
             async with session.request(
-                method, url, **kwargs, **self.proxy_settings.aiohttp_request_kwargs()
+                method, url, **kwargs, allow_redirects=False, **self.proxy_settings.aiohttp_request_kwargs()
             ) as response:
                 response_text = await read_response_text(response)
                 try:
@@ -483,18 +483,15 @@ class ComfyUIImage:
 
     def _log_info(self, message: str, *args: Any) -> None:
         """记录信息日志。"""
-
         if self.logger is not None:
-            self.logger.info(message, *args)
+            self.logger.info(message, *sanitized_log_args(args, ""))
 
     def _log_warning(self, message: str, *args: Any) -> None:
         """记录警告日志。"""
-
         if self.logger is not None:
-            self.logger.warning(message, *args)
+            self.logger.warning(message, *sanitized_log_args(args, ""))
 
     def _log_error(self, message: str, *args: Any) -> None:
         """记录错误日志。"""
-
         if self.logger is not None:
-            self.logger.error(message, *(sanitize_provider_text(arg) if isinstance(arg, str) else arg for arg in args))
+            self.logger.error(message, *sanitized_log_args(args, ""))

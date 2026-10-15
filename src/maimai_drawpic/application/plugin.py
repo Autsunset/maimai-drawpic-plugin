@@ -21,6 +21,7 @@ from ..infrastructure.storage.tasks import DrawTaskStore
 from ..infrastructure.storage.quotas import UserQuotaStore
 from ..infrastructure.storage.platforms import PLATFORM_NAMES, WorkspaceConfigStore, host_config
 from ..infrastructure.storage.results import ImageResultStore
+from ..infrastructure.observability.redaction import SecretRedactor
 from .workspace.lifecycle import attach_workspace, close_workspace, prepare_workspace, refresh_runtime
 from .workspace.service import WorkspaceService
 
@@ -33,6 +34,7 @@ class DrawpicRuntime(MaiBotPlugin):
 
     def __init__(self) -> None:
         super().__init__()
+        self._redactor = SecretRedactor()
         # 数据路径和存储对象在 on_load 获得 Runner 上下文后初始化。
         self._data_dir: Path
         self._workflows_dir: Path
@@ -72,6 +74,13 @@ class DrawpicRuntime(MaiBotPlugin):
         normalized_config, changed = super().normalize_plugin_config(migrated_config)
         normalized_config.pop("prompt_review", None)
         normalized_config.pop("image_review", None)
+        # SDK 会补齐模型默认值；不可把已迁出的节在每次加载时重新写回 TOML。
+        present = set(config_data or {})
+        if present & {"prompt_review", "image_review"}:
+            present.add("general")
+        for section in (*PLATFORM_NAMES, "general", "style"):
+            if section not in present:
+                normalized_config.pop(section, None)
         if self._platform_store is not None:
             normalized_config = host_config(normalized_config)
         return normalized_config, changed or normalized_config != dict(config_data or {})
@@ -125,7 +134,9 @@ class DrawpicRuntime(MaiBotPlugin):
         for backup in backups:
             self.ctx.logger.info("旧插件数据已迁移: data_dir=%s backup=%s", self._data_dir, backup)
         self._prepare_workflows_dir()
-        self._task_store = DrawTaskStore(path=self._data_dir / "draw_tasks.json", logger=self.ctx.logger)
+        self._task_store = DrawTaskStore(
+            path=self._data_dir / "draw_tasks.json", logger=self.ctx.logger, sanitize=self._redactor.redact
+        )
         self._usage_store = UserQuotaStore(path=self._data_dir / "user_quotas.json", logger=self.ctx.logger)
 
     def _prepare_workflows_dir(self) -> None:
@@ -146,7 +157,7 @@ class DrawpicRuntime(MaiBotPlugin):
 
 普通“保存”得到的画布 JSON 不能直接使用；它通常包含 nodes、links 等字段。
 请在插件配置中填写提示词、种子和图生图源图片对应的 API 工作流节点 ID。
-详细配置说明请查看插件根目录 README.md 的“ComfyUI 本地工作流”章节。
+详细配置说明请查看插件 docs/platforms.md 的 ComfyUI 章节。
 """,
             encoding="utf-8",
         )
@@ -243,6 +254,8 @@ class DrawpicRuntime(MaiBotPlugin):
     async def on_load(self) -> None:
         """插件加载时初始化平台。"""
 
+        self._redactor.add_config(self.get_plugin_config_data())
+        self.ctx.logger.addFilter(self._redactor)
         await asyncio.to_thread(self._prepare_data_dir)
         await prepare_workspace(self, PLUGIN_DIR / "config.toml")
         await asyncio.to_thread(self._refresh_services)
@@ -291,6 +304,7 @@ class DrawpicRuntime(MaiBotPlugin):
         await asyncio.to_thread(self._task_store.save)
         await asyncio.to_thread(self._usage_store.save)
         self.ctx.logger.info("麦麦绘图插件已卸载")
+        self.ctx.logger.removeFilter(self._redactor)
 
     async def on_config_update(self, scope: str, config_data: dict[str, Any], version: str) -> None:
         """配置变更时重新初始化平台。"""

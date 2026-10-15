@@ -5,12 +5,10 @@ from __future__ import annotations
 from importlib import import_module
 from pathlib import Path
 from typing import Any
-
+from maibot_sdk.config import generate_plugin_config_schema
 import json
 import sys
 import types
-
-from maibot_sdk.config import generate_plugin_config_schema
 
 
 _PLUGIN_DIR = Path(__file__).resolve().parent.parent
@@ -148,5 +146,5 @@ def test_manifest_requires_current_maibot_and_sdk() -> None:
 
     manifest = json.loads((_PLUGIN_DIR / "_manifest.json").read_text(encoding="utf-8"))
 
-    assert manifest["host_application"]["min_version"] == "1.3.7"
+    assert manifest["host_application"]["min_version"] == "1.3.6"
     assert manifest["sdk"]["min_version"] == "2.12.0"

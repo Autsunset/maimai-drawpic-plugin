@@ -12,6 +12,8 @@ import time
 import zipfile
 
 from ..media.images import MAX_IMAGE_BYTES, detect_image_dimensions
+from ..http import provider_response_error, sanitized_log_args
+from ..media.downloads import download_image
 from ..http import HttpProxySettings, MAX_PROVIDER_RESPONSE_BYTES, read_response_bytes, sanitize_provider_text
 
 
@@ -430,10 +432,13 @@ class NovelAIImage:
                 url,
                 headers=self._build_headers(),
                 json=payload,
+                allow_redirects=False,
                 **self.proxy_settings.aiohttp_request_kwargs(),
             ) as response:
                 duration = time.time() - start_time
-                content = await read_response_bytes(response)
+                content = await read_response_bytes(
+                    response, max_bytes=MAX_PROVIDER_RESPONSE_BYTES if response.status in {200, 201} else 64 * 1024
+                )
                 content_type = response.headers.get("Content-Type", "")
                 if response.status not in {200, 201}:
                     error_preview = sanitize_provider_text(
@@ -446,8 +451,8 @@ class NovelAIImage:
                         url,
                         error_preview,
                     )
-                    raise RuntimeError(
-                        f"NovelAI 图片接口错误 ({response.status}, 耗时: {duration:.2f}s): {error_preview}"
+                    raise provider_response_error(
+                        response.status, content.decode("utf-8", errors="replace"), self.api_key, "novelai 图片接口拒绝"
                     )
                 self._log_info("NovelAI 接口成功: status=%s duration=%.2fs", response.status, duration)
                 return content, content_type
@@ -555,32 +560,24 @@ class NovelAIImage:
     async def _download_image(self, url: str) -> bytes:
         """下载 URL 形式返回的图片。"""
 
-        timeout = aiohttp.ClientTimeout(total=self.request_timeout_seconds)
-        async with aiohttp.ClientSession(timeout=timeout, **self.proxy_settings.aiohttp_session_kwargs()) as session:
-            async with session.get(url, **self.proxy_settings.aiohttp_request_kwargs()) as response:
-                if response.status != 200:
-                    self._log_error("下载 NovelAI 生成图片失败: status=%s url=%s", response.status, url)
-                    raise RuntimeError(f"下载 NovelAI 生成图片失败: status={response.status}")
-                return await read_response_bytes(response)
+        return await download_image(
+            url,
+            base_url=self.base_url,
+            proxy_settings=self.proxy_settings,
+            timeout_seconds=self.request_timeout_seconds,
+        )
 
     def _log_info(self, message: str, *args: Any) -> None:
         """记录信息日志。"""
-
         if self.logger is not None:
-            self.logger.info(message, *args)
+            self.logger.info(message, *sanitized_log_args(args, self.api_key))
 
     def _log_warning(self, message: str, *args: Any) -> None:
         """记录警告日志。"""
-
         if self.logger is not None:
-            self.logger.warning(
-                message, *(sanitize_provider_text(arg, self.api_key) if isinstance(arg, str) else arg for arg in args)
-            )
+            self.logger.warning(message, *sanitized_log_args(args, self.api_key))
 
     def _log_error(self, message: str, *args: Any) -> None:
         """记录错误日志。"""
-
         if self.logger is not None:
-            self.logger.error(
-                message, *(sanitize_provider_text(arg, self.api_key) if isinstance(arg, str) else arg for arg in args)
-            )
+            self.logger.error(message, *sanitized_log_args(args, self.api_key))

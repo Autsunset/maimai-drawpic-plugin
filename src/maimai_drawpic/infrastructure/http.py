@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Tuple
 from urllib.parse import quote, urlsplit, urlunsplit
 import aiohttp
 import asyncio
 import json
 import re
+
+from ..domain.errors import ProviderRequestError
 
 MAX_PROVIDER_RESPONSE_BYTES = 64 * 1024 * 1024
 
@@ -26,18 +28,50 @@ def sanitize_provider_url(url: str) -> str:
         return "[INVALID_URL]"
 
 
-def sanitize_provider_text(value: Any, api_key: str = "") -> str:
+def sanitize_provider_text(value: Any, api_key: str = "", *, max_chars: int = 500) -> str:
     """所有平台的错误与日志均移除凭证、图片数据和签名参数。"""
 
     text = str(value)
     if api_key:
         text = text.replace(api_key, "[REDACTED]")
-    text = re.sub(r"Bearer\s+\S+", "Bearer [REDACTED]", text, flags=re.IGNORECASE)
+    text = re.sub(r"\b(Bearer|Basic)\s+(?:\[REDACTED\]|[^\s,;\"'<>\]}]+)", r"\1 [REDACTED]", text, flags=re.IGNORECASE)
+    text = re.sub(
+        r"(?i)((?:api[_-]?key|authorization|password|access[_-]?token)\s*[\"']?\s*[:=]\s*[\"']?)([^\s\"',;}]+)",
+        lambda match: (
+            match.group(0) if match.group(2).casefold() in {"bearer", "basic"} else match.group(1) + "[REDACTED]"
+        ),
+        text,
+    )
     text = re.sub(r"data:image/[^;\s]+;base64,[A-Za-z0-9+/=_-]+", "[BASE64_REDACTED]", text, flags=re.IGNORECASE)
     text = re.sub(r"[A-Za-z0-9+/=_-]{80,}", "[LONG_DATA_REDACTED]", text)
     for url in re.findall(r"https?://[^\s\"'<>]+", text):
         text = text.replace(url, sanitize_provider_url(url))
-    return text[:500]
+    return text[:max_chars]
+
+
+def sanitized_log_args(args: Tuple[Any, ...], api_key: str = "") -> Tuple[Any, ...]:
+    """列表、字典、异常也要在交给任何宿主日志 handler 前脱敏。"""
+    return tuple(value if isinstance(value, (int, float)) else sanitize_provider_text(value, api_key) for value in args)
+
+
+def provider_response_error(status: int, value: Any, api_key: str, label: str) -> ProviderRequestError:
+    """仅在实际 HTTP 拒绝响应边界提取业务码，保留可重试语义。"""
+    data = value
+    if isinstance(value, str):
+        try:
+            data = json.loads(value)
+        except json.JSONDecodeError:
+            data = {}
+    code = ""
+    if isinstance(data, dict):
+        code = data.get("code") or data.get("error_code") or ""
+        if isinstance(data.get("error"), dict):
+            code = data["error"].get("code") or data["error"].get("type") or code
+    return ProviderRequestError(
+        status,
+        sanitize_provider_text(code, api_key),
+        f"{label}: HTTP {status} {sanitize_provider_text(value, api_key)}",
+    )
 
 
 async def read_response_bytes(

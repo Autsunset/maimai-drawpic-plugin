@@ -1,8 +1,10 @@
 from google import genai
 from google.genai import types
 from typing import Any, Dict, List
+from google.genai.errors import APIError
 
 from ..http import HttpProxySettings, sanitize_provider_text
+from ...domain.errors import ProviderRequestError, ProviderResultError
 from ..media.images import detect_mime_type
 
 
@@ -103,7 +105,13 @@ class GoogleImage:
             feedback = response.prompt_feedback
             reason = str(feedback.block_reason) if feedback and feedback.block_reason else "未返回图片"
             finish_reasons = [str(candidate.finish_reason) for candidate in response.candidates or []]
-            raise RuntimeError(f"Google 图片请求未完成：{reason}；finish_reason={','.join(finish_reasons)}")
+            detail = f"Google 图片请求未完成：{reason}；finish_reason={','.join(finish_reasons)}"
+            if any(
+                marker in detail.casefold()
+                for marker in ("safety", "prohibited", "blocklist", "image_safety", "recitation")
+            ):
+                raise ProviderRequestError(400, "content_policy_violation", detail)
+            raise ProviderResultError(detail)
         return images
 
     def _generate(self, prompt: str, model: str, images: List[bytes], n: int) -> List[bytes]:
@@ -128,6 +136,12 @@ class GoogleImage:
         try:
             with genai.Client(**self._client_kwargs) as client:
                 response = client.models.generate_content(model=model, contents=contents, config=config)
+        except APIError as exc:
+            raise ProviderRequestError(
+                exc.code or 500,
+                str(exc.status or ""),
+                f"Google 图片请求失败：{sanitize_provider_text(exc, self.api_key)}",
+            ) from None
         except Exception as exc:
             raise RuntimeError(f"Google 图片请求失败：{sanitize_provider_text(exc, self.api_key)}") from None
         return self._extract_images_from_generate_content_response(response)

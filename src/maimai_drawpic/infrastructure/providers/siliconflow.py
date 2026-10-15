@@ -7,9 +7,10 @@ import base64
 import time
 
 from ..media.images import detect_mime_type
+from ..http import provider_response_error, sanitized_log_args
+from ..media.downloads import download_image
 from ..http import (
     HttpProxySettings,
-    read_response_bytes,
     read_response_json,
     read_response_text,
     sanitize_provider_text,
@@ -154,11 +155,13 @@ class SiliconFlowImage:
                 url,
                 headers=self._build_headers(),
                 json=payload,
+                allow_redirects=False,
                 **self.proxy_settings.aiohttp_request_kwargs(),
             ) as response:
                 duration = time.time() - start_time
                 if response.status != 200:
-                    error_text = sanitize_provider_text(await read_response_text(response), self.api_key)
+                    raw_error = await read_response_text(response, max_bytes=64 * 1024)
+                    error_text = sanitize_provider_text(raw_error, self.api_key)
                     self._log_error(
                         "硅基流动图片接口失败: status=%s duration=%.2fs url=%s response_preview=%s",
                         response.status,
@@ -166,9 +169,7 @@ class SiliconFlowImage:
                         url,
                         error_text[:1200],
                     )
-                    raise RuntimeError(
-                        f"硅基流动图片接口错误 ({response.status}, 耗时: {duration:.2f}s): {error_text[:1200]}"
-                    )
+                    raise provider_response_error(response.status, raw_error, self.api_key, "siliconflow 图片接口拒绝")
                 response_json = await read_response_json(response)
                 self._log_info("硅基流动接口成功: status=%s duration=%.2fs", response.status, duration)
                 return response_json
@@ -203,32 +204,24 @@ class SiliconFlowImage:
     async def _download_image(self, url: str) -> bytes:
         """下载 URL 形式返回的图片。"""
 
-        timeout = aiohttp.ClientTimeout(total=self.request_timeout_seconds)
-        async with aiohttp.ClientSession(timeout=timeout, **self.proxy_settings.aiohttp_session_kwargs()) as session:
-            async with session.get(url, **self.proxy_settings.aiohttp_request_kwargs()) as response:
-                if response.status != 200:
-                    self._log_error("下载硅基流动生成图片失败: status=%s url=%s", response.status, url)
-                    raise RuntimeError(f"下载硅基流动生成图片失败: status={response.status}")
-                return await read_response_bytes(response)
+        return await download_image(
+            url,
+            base_url=self._BASE_URL,
+            proxy_settings=self.proxy_settings,
+            timeout_seconds=self.request_timeout_seconds,
+        )
 
     def _log_info(self, message: str, *args: Any) -> None:
         """记录信息日志。"""
-
         if self.logger is not None:
-            self.logger.info(message, *args)
+            self.logger.info(message, *sanitized_log_args(args, self.api_key))
 
     def _log_warning(self, message: str, *args: Any) -> None:
         """记录警告日志。"""
-
         if self.logger is not None:
-            self.logger.warning(
-                message, *(sanitize_provider_text(arg, self.api_key) if isinstance(arg, str) else arg for arg in args)
-            )
+            self.logger.warning(message, *sanitized_log_args(args, self.api_key))
 
     def _log_error(self, message: str, *args: Any) -> None:
         """记录错误日志。"""
-
         if self.logger is not None:
-            self.logger.error(
-                message, *(sanitize_provider_text(arg, self.api_key) if isinstance(arg, str) else arg for arg in args)
-            )
+            self.logger.error(message, *sanitized_log_args(args, self.api_key))

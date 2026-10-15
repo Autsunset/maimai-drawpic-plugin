@@ -1432,6 +1432,7 @@ dialog::backdrop {
     }
   }
   function modal(title, html, cleanup = null) {
+    state.modalVersion = (state.modalVersion || 0) + 1;
     if (modalCleanup) modalCleanup();
     modalCleanup = cleanup;
     $("#modal-title").textContent = title;
@@ -1439,15 +1440,46 @@ dialog::backdrop {
     if (!$("#modal").open) $("#modal").showModal();
     return $("#modal-content");
   }
-  function closeModal() {
+  async function confirmDiscard() {
+    if (!state.dirty) return true;
+    const dialog = document.createElement("dialog");
+    dialog.innerHTML =
+      '<div class="modal-header"><h2>放弃未保存的修改？</h2></div><div style="padding:24px"><p class="muted">关闭或离开后，这次编辑的内容不会保存。</p><div class="modal-footer"><button class="button secondary" data-keep>继续编辑</button><button class="button" data-discard>放弃修改</button></div></div>';
+    document.body.append(dialog);
+    return new Promise((resolve) => {
+      let discard = false;
+      dialog.querySelector("[data-keep]").onclick = () => dialog.close();
+      dialog.querySelector("[data-discard]").onclick = () => {
+        discard = true;
+        dialog.close();
+      };
+      dialog.addEventListener(
+        "close",
+        () => {
+          dialog.remove();
+          resolve(discard);
+        },
+        { once: true },
+      );
+      dialog.showModal();
+    });
+  }
+  async function closeModal(force = false) {
+    if (!force && $("#provider-form") && !(await confirmDiscard())) return;
     $("#modal").close();
   }
   $("#modal").addEventListener("close", () => {
+    state.modalVersion = (state.modalVersion || 0) + 1;
     if ($("#provider-form")) state.dirty = false;
     if (modalCleanup) modalCleanup();
     modalCleanup = null;
+    $("#modal-content").replaceChildren();
   });
-  $("#modal-close").onclick = closeModal;
+  $("#modal").addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeModal();
+  });
+  $("#modal-close").onclick = () => closeModal();
   async function bootstrap() {
     state.data = await call("query", "bootstrap");
     $("#connection").textContent = "已连接当前实例";
@@ -1490,24 +1522,23 @@ dialog::backdrop {
   }
   new ResizeObserver(updateNavigationIndicator).observe($("#navigation"));
   async function navigate(view) {
-    if (state.dirty) {
-      const node = modal(
-        "离开未保存的配置？",
-        '<p class="muted">这次编辑还没有保存。离开后需要重新填写。</p><div class="modal-footer"><button class="button secondary" id="keep-editing">继续编辑</button><button class="button" id="discard-editing">离开</button></div>',
-      );
-      $("#keep-editing", node).onclick = closeModal;
-      $("#discard-editing", node).onclick = () => {
-        state.dirty = false;
-        closeModal();
-        navigate(view);
-      };
+    if (!views[view]) return;
+    if (!(await confirmDiscard())) {
+      if (window.location.hash !== `#${state.view}`)
+        window.location.replace(`#${state.view}`);
       return;
     }
+    state.dirty = false;
+    await closeModal(true);
     state.view = view;
-    window.location.hash = view;
+    if (window.location.hash !== `#${view}`) window.location.hash = view;
     await render();
     window.scrollTo({ top: 0, behavior: "instant" });
   }
+  window.addEventListener("hashchange", () => {
+    const view = window.location.hash.slice(1) || "studio";
+    if (view !== state.view) navigate(view).catch(error);
+  });
   function empty(title, description, button = "") {
     return `<div class="panel empty">${icon("sparkles")}<h3>${e(title)}</h3><p>${e(description)}</p>${button}</div>`;
   }
@@ -1594,22 +1625,17 @@ dialog::backdrop {
     event.preventDefault();
     navigate("studio").catch(error);
   };
-  $("#refresh").onclick = () => {
+  $("#refresh").onclick = async () => {
+    if (!(await confirmDiscard())) return;
     const refresh = () =>
       buttonAction($("#refresh"), async () => {
         await bootstrap();
         state.dirty = false;
-        closeModal();
+        await closeModal(true);
         await render();
         toast("已刷新");
       });
-    if (!state.dirty) return refresh();
-    const node = modal(
-      "放弃未保存的修改？",
-      '<p class="muted">刷新会重新读取已保存的配置。</p><div class="modal-footer"><button id="refresh-keep" class="button secondary">继续编辑</button><button id="refresh-discard" class="button">放弃并刷新</button></div>',
-    );
-    $("#refresh-keep", node).onclick = closeModal;
-    $("#refresh-discard", node).onclick = refresh;
+    return refresh();
   };
 })();
 
@@ -1859,7 +1885,6 @@ dialog::backdrop {
     const form = $("#provider-form", node),
       read = U.forms.bind(form, fields, values, { platform: true });
     $("#provider-back", node).onclick = () => {
-      state.dirty = false;
       closeModal();
     };
     $("#reset-provider", node).onclick = () => {
@@ -2204,11 +2229,13 @@ dialog::backdrop {
       info,
       parts = [];
     do {
+      if (!button.isConnected || !$("#modal").open) return;
       info = await call("query", "original", {
         task_id: taskId,
         index,
         offset,
       });
+      if (!button.isConnected || !$("#modal").open) return;
       const decoded = atob(info.data);
       const bytes = Uint8Array.from(decoded, (ch) => ch.charCodeAt(0));
       parts.push(bytes);
@@ -2218,7 +2245,7 @@ dialog::backdrop {
     const url = URL.createObjectURL(new Blob(parts, { type: info.mime }));
     const node = U.modal(
       "原图预览",
-      `<img class="detail-image" src="${e(url)}" alt="生成的原图"><p class="hint">${e(info.filename)} · ${(info.size / 1024 / 1024).toFixed(2)} MiB · 原文件保存在当前实例的数据目录。</p>`,
+      `<img class="detail-image" src="${e(url)}" alt="生成的原图"><p class="hint">${e(info.filename)} · ${(info.size / 1024 / 1024).toFixed(2)} MiB · 原文件位于插件图片缓存目录，会按容量和保留期清理。</p>`,
       () => URL.revokeObjectURL(url),
     );
     node.scrollTop = 0;
@@ -2247,9 +2274,15 @@ dialog::backdrop {
           toast("已取消任务");
           await openTask(taskId, index);
         });
+    const modalVersion = state.modalVersion;
     if (data.images.length) {
       const image = await call("query", "image", { task_id: taskId, index });
-      if (!node.isConnected || !$("#detail-preview", node)) return;
+      if (
+        modalVersion !== state.modalVersion ||
+        !$("#modal").open ||
+        !$("#detail-preview", node)
+      )
+        return;
       $("#detail-preview", node).innerHTML =
         `<img class="detail-image" src="${e(image.data_url)}" alt="任务生成图片 ${index + 1}"><p class="hint">${image.width} × ${image.height} · ${(image.size / 1024 / 1024).toFixed(2)} MiB · 页面先显示压缩预览，原文件独立保存。</p>`;
       $("#view-original", node).onclick = (event) =>
@@ -2258,7 +2291,10 @@ dialog::backdrop {
         );
     }
   }
-  async function renderTasks() {
+  function editingFilters() {
+    return $("#task-search")?.contains(document.activeElement);
+  }
+  async function renderTasks(polling = false) {
     clearTimeout(timer);
     const result = await call("query", "tasks", {
       page: state.taskPage,
@@ -2266,6 +2302,10 @@ dialog::backdrop {
       search: state.taskSearch,
     });
     if (state.view !== "tasks") return;
+    if (polling && (editingFilters() || $("#modal").open)) {
+      timer = setTimeout(() => renderTasks(true).catch(U.error), 5000);
+      return;
+    }
     const active = result.counts.pending + result.counts.running;
     $("#active-count").hidden = !active;
     $("#active-count").textContent = active;
@@ -2289,6 +2329,10 @@ dialog::backdrop {
       button.onclick = () => openTask(button.dataset.task).catch(U.error);
     });
     U.bindSubmit($("#task-search"));
+    $("#task-search-text").value = state.taskSearchDraft ?? state.taskSearch;
+    $("#task-search-text").oninput = (event) => {
+      state.taskSearchDraft = event.currentTarget.value;
+    };
     $("#task-search").onsubmit = (event) => {
       event.preventDefault();
       state.taskSearch = $("#task-search-text").value;
@@ -2308,11 +2352,16 @@ dialog::backdrop {
     if (active) {
       const poll = () => {
         if (state.view !== "tasks") return;
-        if (document.hidden || $("#modal").open || state.busy) {
+        if (
+          document.hidden ||
+          $("#modal").open ||
+          state.busy ||
+          editingFilters()
+        ) {
           timer = setTimeout(poll, 5000);
           return;
         }
-        renderTasks().catch(U.error);
+        renderTasks(true).catch(U.error);
       };
       timer = setTimeout(poll, 5000);
     }

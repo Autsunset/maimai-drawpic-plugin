@@ -1,14 +1,16 @@
 """运行产物的容量与过期策略，只清理本插件拥有的缓存目录。"""
 
 from pathlib import Path
+from hashlib import sha256
 from threading import RLock
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
+from uuid import uuid4
 import re
 import shutil
 import time
 
-
 from ..concurrency import synchronized
+from ..media.images import validate_image_bytes
 
 
 class CacheCapacityError(ValueError):
@@ -46,14 +48,16 @@ class ArtifactRetention:
             path.unlink()
 
     @synchronized
-    def prune_inputs(self, incoming: int = 0) -> Dict[str, int]:
+    def prune_inputs(self, incoming: int = 0, exclude: Optional[Path] = None) -> Dict[str, int]:
         files: List[Path] = []
         for name in ("inputs", "uploads"):
             root = self.data_dir / name
             if root.is_symlink():
                 raise ValueError("缓存根目录不能为符号链接")
             if root.exists():
-                files.extend(path for path in root.iterdir() if path.is_file() and not path.is_symlink())
+                files.extend(
+                    path for path in root.iterdir() if path != exclude and path.is_file() and not path.is_symlink()
+                )
         now = time.time()
         removed = 0
         remaining = []
@@ -76,6 +80,30 @@ class ArtifactRetention:
             total -= size
             removed += 1
         return {"removed": removed, "bytes": total}
+
+    @synchronized
+    def claim_input(self, path: Path, digest: str) -> Tuple[str, bytes]:
+        """校验、清理配额、原子接管上传共用锁，与其他上传和定时清理互斥。"""
+        root = self.data_dir / "uploads"
+        self._owned(path, root)
+        if path.parent.resolve() != root.resolve():
+            raise ValueError("上传文件不属于当前插件")
+        try:
+            raw = path.read_bytes()
+        except FileNotFoundError:
+            raise ValueError("上传图片已过期或被清理，请重新上传") from None
+        if len(raw) > 20 * 1024 * 1024 or sha256(raw).hexdigest() != digest:
+            raise ValueError("上传图片大小或校验值异常")
+        validate_image_bytes(raw)
+        identifier = uuid4().hex
+        directory = self.data_dir / "inputs"
+        if directory.is_symlink():
+            raise ValueError("输入缓存目录不安全")
+        directory.mkdir(parents=True, exist_ok=True)
+        self.prune_inputs(len(raw), exclude=path)
+        # 同一数据目录内 rename 不复制图片，不存在先写出双份再释放上传的超额窗口。
+        path.replace(directory / f"{identifier}.image")
+        return identifier, raw
 
     @synchronized
     def prune_results(self, protected: Set[str], incoming: int = 0) -> Dict[str, int]:

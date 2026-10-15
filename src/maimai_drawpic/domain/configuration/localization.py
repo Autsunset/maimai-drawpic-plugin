@@ -456,9 +456,9 @@ _FIELD_HINT_OVERRIDES: Dict[str, Tuple[str, str, str]] = {
         "필요한 모델을 추가하고 순서를 변경하세요. 재시도 소진 후 다음 모델을 시도하며 비어 있으면 사용하지 않습니다.",
     ),
     "GeneralConfig.request_retry_count": (
-        "Extra attempts per model, 0–5. Zero means one attempt per model. Review rejection is never retried.",
-        "モデルごとの追加試行回数は0～5です。0は各モデル1回のみ。審査拒否は再試行しません。",
-        "모델별 추가 시도 횟수는 0~5입니다. 0은 모델당 한 번 시도하며 심사 거부는 재시도하지 않습니다.",
+        "Up to 0–5 extra attempts only for safe failures such as an unestablished connection or explicit rate limiting. Never regenerate after review rejection, result download failure, or an uncertain remote outcome.",
+        "接続未確立や明示的なレート制限など、安全な失敗のみ0～5回追加試行します。審査拒否、結果取得失敗、リモート状態不明時は再生成しません。",
+        "연결 전 실패나 명시적 속도 제한 등 안전한 실패만 0~5회 추가 시도합니다. 심사 거부, 결과 다운로드 실패, 원격 처리 상태 불명 시 재생성하지 않습니다.",
     ),
     "ComfyUIModelConfig.t2i_workflow_path": (
         "The data/ prefix maps to the plugin data directory; default: data/workflows/t2i.json. Other relative paths remain relative to the plugin source directory. Absolute paths are supported. Export an API-format workflow from ComfyUI.",

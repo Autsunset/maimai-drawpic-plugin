@@ -3,12 +3,10 @@
 from io import BytesIO
 from pathlib import Path
 from types import ModuleType
-
 from maibot_sdk import PluginContext
 from maibot_sdk.components import collect_components
 from maibot_sdk.context import PluginPaths
 from PIL import Image
-
 import asyncio
 import base64
 import importlib
@@ -280,7 +278,8 @@ def test_ordered_fallbacks_obey_retry_limit(make_plugin, monkeypatch):
                 model = kwargs["attempt"].model.rsplit(" / ", 1)[1]
                 calls.append(model)
                 if model != "backup-two":
-                    raise RuntimeError("temporary fixture failure")
+                    errors = importlib.import_module(f"{_PACKAGE}.src.maimai_drawpic.domain.errors")
+                    raise errors.ProviderConnectionError("temporary fixture connection failure")
                 return [image_bytes()]
 
             monkeypatch.setattr(service, "_run_image_request_attempt", generate)

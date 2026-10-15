@@ -26,7 +26,6 @@
     const form = $("#provider-form", node),
       read = U.forms.bind(form, fields, values, { platform: true });
     $("#provider-back", node).onclick = () => {
-      state.dirty = false;
       closeModal();
     };
     $("#reset-provider", node).onclick = () => {

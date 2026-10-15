@@ -107,6 +107,7 @@
     }
   }
   function modal(title, html, cleanup = null) {
+    state.modalVersion = (state.modalVersion || 0) + 1;
     if (modalCleanup) modalCleanup();
     modalCleanup = cleanup;
     $("#modal-title").textContent = title;
@@ -114,15 +115,46 @@
     if (!$("#modal").open) $("#modal").showModal();
     return $("#modal-content");
   }
-  function closeModal() {
+  async function confirmDiscard() {
+    if (!state.dirty) return true;
+    const dialog = document.createElement("dialog");
+    dialog.innerHTML =
+      '<div class="modal-header"><h2>放弃未保存的修改？</h2></div><div style="padding:24px"><p class="muted">关闭或离开后，这次编辑的内容不会保存。</p><div class="modal-footer"><button class="button secondary" data-keep>继续编辑</button><button class="button" data-discard>放弃修改</button></div></div>';
+    document.body.append(dialog);
+    return new Promise((resolve) => {
+      let discard = false;
+      dialog.querySelector("[data-keep]").onclick = () => dialog.close();
+      dialog.querySelector("[data-discard]").onclick = () => {
+        discard = true;
+        dialog.close();
+      };
+      dialog.addEventListener(
+        "close",
+        () => {
+          dialog.remove();
+          resolve(discard);
+        },
+        { once: true },
+      );
+      dialog.showModal();
+    });
+  }
+  async function closeModal(force = false) {
+    if (!force && $("#provider-form") && !(await confirmDiscard())) return;
     $("#modal").close();
   }
   $("#modal").addEventListener("close", () => {
+    state.modalVersion = (state.modalVersion || 0) + 1;
     if ($("#provider-form")) state.dirty = false;
     if (modalCleanup) modalCleanup();
     modalCleanup = null;
+    $("#modal-content").replaceChildren();
   });
-  $("#modal-close").onclick = closeModal;
+  $("#modal").addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeModal();
+  });
+  $("#modal-close").onclick = () => closeModal();
   async function bootstrap() {
     state.data = await call("query", "bootstrap");
     $("#connection").textContent = "已连接当前实例";
@@ -165,24 +197,23 @@
   }
   new ResizeObserver(updateNavigationIndicator).observe($("#navigation"));
   async function navigate(view) {
-    if (state.dirty) {
-      const node = modal(
-        "离开未保存的配置？",
-        '<p class="muted">这次编辑还没有保存。离开后需要重新填写。</p><div class="modal-footer"><button class="button secondary" id="keep-editing">继续编辑</button><button class="button" id="discard-editing">离开</button></div>',
-      );
-      $("#keep-editing", node).onclick = closeModal;
-      $("#discard-editing", node).onclick = () => {
-        state.dirty = false;
-        closeModal();
-        navigate(view);
-      };
+    if (!views[view]) return;
+    if (!(await confirmDiscard())) {
+      if (window.location.hash !== `#${state.view}`)
+        window.location.replace(`#${state.view}`);
       return;
     }
+    state.dirty = false;
+    await closeModal(true);
     state.view = view;
-    window.location.hash = view;
+    if (window.location.hash !== `#${view}`) window.location.hash = view;
     await render();
     window.scrollTo({ top: 0, behavior: "instant" });
   }
+  window.addEventListener("hashchange", () => {
+    const view = window.location.hash.slice(1) || "studio";
+    if (view !== state.view) navigate(view).catch(error);
+  });
   function empty(title, description, button = "") {
     return `<div class="panel empty">${icon("sparkles")}<h3>${e(title)}</h3><p>${e(description)}</p>${button}</div>`;
   }
@@ -269,21 +300,16 @@
     event.preventDefault();
     navigate("studio").catch(error);
   };
-  $("#refresh").onclick = () => {
+  $("#refresh").onclick = async () => {
+    if (!(await confirmDiscard())) return;
     const refresh = () =>
       buttonAction($("#refresh"), async () => {
         await bootstrap();
         state.dirty = false;
-        closeModal();
+        await closeModal(true);
         await render();
         toast("已刷新");
       });
-    if (!state.dirty) return refresh();
-    const node = modal(
-      "放弃未保存的修改？",
-      '<p class="muted">刷新会重新读取已保存的配置。</p><div class="modal-footer"><button id="refresh-keep" class="button secondary">继续编辑</button><button id="refresh-discard" class="button">放弃并刷新</button></div>',
-    );
-    $("#refresh-keep", node).onclick = closeModal;
-    $("#refresh-discard", node).onclick = refresh;
+    return refresh();
   };
 })();

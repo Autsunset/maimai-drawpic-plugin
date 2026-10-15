@@ -1,8 +1,10 @@
 """按配置顺序执行模型尝试，并在单个模型内进行有界重试。"""
 
 from typing import List, Optional, Tuple
+import aiohttp
 import asyncio
 
+from ...domain.errors import ProviderConnectionError, ProviderError, ProviderOutcomeUnknown, ProviderResultError
 from .types import ImageRequestAttempt
 
 
@@ -71,7 +73,7 @@ class RequestAttemptRunnerMixin:
                         request_negative_prompt=request_negative_prompt,
                     )
                     if not images:
-                        raise RuntimeError("图片平台没有返回任何图片结果")
+                        raise ProviderResultError("已收到图片平台响应，但没有可用图片；未重新提交生成")
                     self.ctx.logger.info(
                         "模型尝试成功: task_id=%s task_type=%s provider=%s model=%s attempt=%s source_image_count=%s",
                         task_id,
@@ -82,10 +84,23 @@ class RequestAttemptRunnerMixin:
                         len(source_image_bytes_list),
                     )
                     return images, attempt, errors
-                except TimeoutError:
-                    reason = f"图片请求超时，超过 {self.resolve_request_timeout_seconds()} 秒"
                 except Exception as exc:
-                    reason = str(exc) or type(exc).__name__
+                    if isinstance(exc, ProviderError):
+                        failure = exc
+                    elif isinstance(exc, aiohttp.ClientConnectorError):
+                        failure = ProviderConnectionError("连接图片服务失败，请求尚未发出")
+                    elif isinstance(exc, (TimeoutError, aiohttp.ClientConnectionError)):
+                        failure = ProviderOutcomeUnknown(
+                            "图片请求超时或连接中断，远端受理状态不确定，未自动重绘；请先检查提供商记录"
+                        )
+                    else:
+                        # 未分类异常不代表请求未受理；禁止根据错误字符串猜测可重绘。
+                        failure = ProviderError(str(exc) or type(exc).__name__)
+                    reason = self.task_store.sanitize_message(str(failure))
+                    if failure.outcome_unknown and not isinstance(failure, ProviderOutcomeUnknown):
+                        reason = "远端受理状态不确定，未自动重绘；" + reason
+                    if failure.rejected:
+                        raise failure from None
                 errors.append(self._format_attempt_error(attempt, reason))
                 self.ctx.logger.warning(
                     "模型尝试失败: task_id=%s task_type=%s provider=%s model=%s attempt=%s retry_limit=%s reason=%s",
@@ -97,4 +112,8 @@ class RequestAttemptRunnerMixin:
                     retry_count,
                     reason,
                 )
+                if not failure.retryable:
+                    break
+            if not failure.allow_fallback:
+                return [], None, errors
         return [], None, errors

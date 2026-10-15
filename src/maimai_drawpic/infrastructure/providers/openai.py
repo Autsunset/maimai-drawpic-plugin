@@ -10,8 +10,11 @@ import mimetypes
 import re
 import time
 
+from ..http import sanitized_log_args, sanitize_provider_text
 from ..media.images import detect_image_dimensions, detect_mime_type, validate_image_bytes
-from ..http import HttpProxySettings, read_response_bytes, read_response_json, read_response_text
+from ..media.downloads import download_image
+from ...domain.errors import ProviderConnectionError, ProviderError, ProviderOutcomeUnknown, ProviderRequestError
+from ..http import HttpProxySettings, read_response_json, read_response_text
 from ...domain.models.openai_profiles import (
     build_newapi_chat_payload,
     is_endpoint_unsupported,
@@ -27,7 +30,7 @@ from ...domain.models.rinkoai_profiles import (
 )
 
 
-class OpenAIRequestError(RuntimeError):
+class OpenAIRequestError(ProviderRequestError):
     """携带脱敏后的协议错误分类，避免根据普通异常盲目重绘。"""
 
     def __init__(
@@ -40,7 +43,9 @@ class OpenAIRequestError(RuntimeError):
         duration: float = 0.0,
     ) -> None:
         super().__init__(
-            f"HTTP {status} code={code or 'unknown'}: {message} request_id={request_id} duration={duration:.2f}s"
+            status,
+            code,
+            f"HTTP {status} code={code or 'unknown'}: {message} request_id={request_id} duration={duration:.2f}s",
         )
         self.status = status
         self.code = code
@@ -124,6 +129,12 @@ class OpenaiImage:
                 if not exc.can_retry_endpoint or index + 1 == len(modes):
                     raise
                 self._log_endpoint_switch(model, mode, modes[index + 1], exc)
+            except ProviderError:
+                raise
+            except aiohttp.ClientConnectorError:
+                raise ProviderConnectionError("图片服务连接未建立，请求尚未发出") from None
+            except (TimeoutError, aiohttp.ClientConnectionError):
+                raise ProviderOutcomeUnknown("图片请求超时或中断，远端受理状态不确定，未自动重绘") from None
             except Exception as exc:
                 raise RuntimeError(f"OpenAI 文生图失败: {self._sanitize_text(exc)}") from None
         raise RuntimeError("未找到可用的文生图端点")
@@ -169,6 +180,12 @@ class OpenaiImage:
                 if not exc.can_retry_endpoint or index + 1 == len(modes):
                     raise
                 self._log_endpoint_switch(model, mode, modes[index + 1], exc)
+            except ProviderError:
+                raise
+            except aiohttp.ClientConnectorError:
+                raise ProviderConnectionError("图片服务连接未建立，请求尚未发出") from None
+            except (TimeoutError, aiohttp.ClientConnectionError):
+                raise ProviderOutcomeUnknown("图片请求超时或中断，远端受理状态不确定，未自动重绘") from None
             except Exception as exc:
                 raise RuntimeError(f"OpenAI 图生图失败: {self._sanitize_text(exc)}") from None
         raise RuntimeError("未找到可用的图生图端点")
@@ -195,8 +212,12 @@ class OpenaiImage:
             for image_bytes in images:
                 await asyncio.to_thread(validate_image_bytes, image_bytes)
             return images
-        except OpenAIRequestError:
+        except ProviderError:
             raise
+        except aiohttp.ClientConnectorError:
+            raise ProviderConnectionError("图片服务连接未建立，请求尚未发出") from None
+        except (TimeoutError, aiohttp.ClientConnectionError):
+            raise ProviderOutcomeUnknown("图片请求超时或中断，远端受理状态不确定，未自动重绘") from None
         except Exception as exc:
             raise RuntimeError(f"{mode_label} 绘图失败: {self._sanitize_text(exc)}") from None
 
@@ -253,7 +274,10 @@ class OpenaiImage:
                 timeout=timeout, **self.proxy_settings.aiohttp_session_kwargs()
             ) as session:
                 async with session.get(
-                    url, headers=self._build_headers(), **self.proxy_settings.aiohttp_request_kwargs()
+                    url,
+                    headers=self._build_headers(),
+                    allow_redirects=False,
+                    **self.proxy_settings.aiohttp_request_kwargs(),
                 ) as response:
                     if response.status != 200:
                         self._log_info("OpenAI 端点信息不可用: status=%s", response.status)
@@ -489,6 +513,7 @@ class OpenaiImage:
                 url,
                 headers=self._build_headers(with_json_content_type=True),
                 json=payload,
+                allow_redirects=False,
                 **self.proxy_settings.aiohttp_request_kwargs(),
             ) as response:
                 duration = time.time() - start_time
@@ -510,6 +535,7 @@ class OpenaiImage:
                 url,
                 headers=self._build_headers(),
                 data=form,
+                allow_redirects=False,
                 **self.proxy_settings.aiohttp_request_kwargs(),
             ) as response:
                 duration = time.time() - start_time
@@ -876,17 +902,12 @@ class OpenaiImage:
     async def _download_image(self, url: str) -> bytes:
         """下载 URL 形式返回的图片。"""
 
-        timeout = aiohttp.ClientTimeout(total=self.request_timeout_seconds)
-        async with aiohttp.ClientSession(timeout=timeout, **self.proxy_settings.aiohttp_session_kwargs()) as session:
-            async with session.get(url, **self.proxy_settings.aiohttp_request_kwargs()) as response:
-                if response.status != 200:
-                    self._log_error(
-                        "OpenAI API错误: 下载图片失败 status=%s url=%s",
-                        response.status,
-                        self._sanitize_url(url),
-                    )
-                    raise RuntimeError(f"下载生成图片失败: status={response.status}")
-                return await read_response_bytes(response)
+        return await download_image(
+            url,
+            base_url=self.base_url,
+            proxy_settings=self.proxy_settings,
+            timeout_seconds=self.request_timeout_seconds,
+        )
 
     def _raise_response_error(self, response: dict[str, Any]) -> None:
         """HTTP 200 也可能携带业务失败，不能把它当作正常图片响应。"""
@@ -899,29 +920,18 @@ class OpenaiImage:
             message = error.get("message") or "上游未提供错误说明"
         else:
             code, message = "unknown", error
-        raise RuntimeError(
+        raise OpenAIRequestError(
+            400,
+            self._sanitize_text(code),
+            "",
             "OpenAI 图片接口业务失败: "
             f"code={self._sanitize_text(code)} message={self._sanitize_text(message)} "
-            f"request_id={self._sanitize_text(response.get('request_id') or response.get('id') or 'unknown')}"
+            f"request_id={self._sanitize_text(response.get('request_id') or response.get('id') or 'unknown')}",
         )
 
     def _sanitize_text(self, value: Any) -> str:
         """错误诊断不得包含凭证、图片数据或签名 URL。"""
-
-        text = str(value)
-        if self.api_key:
-            text = text.replace(self.api_key, "[REDACTED]")
-        text = re.sub(r"Bearer\s+\S+", "Bearer [REDACTED]", text, flags=re.IGNORECASE)
-        text = re.sub(
-            r"data:image/[^;\s]+;base64,[A-Za-z0-9+/=_-]+",
-            "[BASE64_REDACTED]",
-            text,
-            flags=re.IGNORECASE,
-        )
-        text = re.sub(r"[A-Za-z0-9+/=_-]{80,}", "[LONG_DATA_REDACTED]", text)
-        for url in re.findall(r"https?://[^\s\"'<>]+", text):
-            text = text.replace(url, self._sanitize_url(url))
-        return text[:500]
+        return sanitize_provider_text(value, self.api_key)
 
     @staticmethod
     def _sanitize_url(url: str) -> str:
@@ -932,18 +942,15 @@ class OpenaiImage:
 
     def _log_error(self, message: str, *args: Any) -> None:
         """记录错误日志。"""
-
         if self.logger is not None:
-            self.logger.error(message, *args)
+            self.logger.error(message, *sanitized_log_args(args, self.api_key))
 
     def _log_info(self, message: str, *args: Any) -> None:
         """记录信息日志。"""
-
         if self.logger is not None:
-            self.logger.info(message, *args)
+            self.logger.info(message, *sanitized_log_args(args, self.api_key))
 
     def _log_warning(self, message: str, *args: Any) -> None:
         """记录警告日志。"""
-
         if self.logger is not None:
-            self.logger.warning(message, *args)
+            self.logger.warning(message, *sanitized_log_args(args, self.api_key))

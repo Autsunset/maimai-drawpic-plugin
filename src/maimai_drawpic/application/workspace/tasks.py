@@ -10,7 +10,6 @@ import json
 import re
 
 from ...infrastructure.media.images import validate_image_bytes
-from ...infrastructure.http import sanitize_provider_text
 from ...interfaces.chat.message_images import decode_image_base64
 from ...infrastructure.storage.results import ImageResultStore
 from ...infrastructure.storage.atomic import write_json_atomically
@@ -67,15 +66,7 @@ class WorkspaceTaskService:
         """任务诊断可被其他插件读取，不能携带提示词、内部会话键或上游凭证。"""
         record.pop("session_key", None)
         record.pop("prompt", None)
-        config = self.get_config().model_dump(mode="json")
-        secrets = [
-            section["api_key"] for section in config.values() if isinstance(section, dict) and section.get("api_key")
-        ]
-        secrets.extend(item.api_key for item in self.get_config().openai.instances if item.api_key)
-        text = record["message"]
-        for secret in secrets:
-            text = text.replace(secret, "[REDACTED]")
-        record["message"] = sanitize_provider_text(text)
+        record["message"] = self.task_store.sanitize_message(record["message"])
         return record
 
     async def claim_source(self, upload_id: str) -> Dict[str, Any]:
@@ -83,20 +74,11 @@ class WorkspaceTaskService:
         path = Path(claimed["path"])
         if not path.resolve().is_relative_to((self.data_dir / "uploads").resolve()) or path.is_symlink():
             raise ValueError("上传文件不属于当前插件")
-        raw = await asyncio.to_thread(path.read_bytes)
-        if len(raw) > 20 * 1024 * 1024 or sha256(raw).hexdigest() != claimed["sha256"]:
-            raise ValueError("上传图片大小或校验值异常")
-        await asyncio.to_thread(validate_image_bytes, raw)
-        identifier = uuid4().hex
-        directory = self.data_dir / "inputs"
-        await asyncio.to_thread(directory.mkdir, parents=True, exist_ok=True)
-        await asyncio.to_thread(self.results.retention.prune_inputs, len(raw))
-        await asyncio.to_thread((directory / f"{identifier}.image").write_bytes, raw)
-        await asyncio.to_thread(path.unlink, missing_ok=True)
+        identifier, raw = await asyncio.to_thread(self.results.retention.claim_input, path, claimed["sha256"])
         preview = await asyncio.to_thread(ImageResultStore._preview, raw, 480, 40000)
         return {
             "source_id": identifier,
-            "preview": "data:image/jpeg;base64," + base64.b64encode(preview).decode("ascii"),
+            "preview": "data:image/webp;base64," + base64.b64encode(preview).decode("ascii"),
         }
 
     async def _sources(self, source_ids: List[str], source_images: List[str]) -> List[bytes]:

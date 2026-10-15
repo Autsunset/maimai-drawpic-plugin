@@ -127,6 +127,9 @@ class WorkspaceConfigStore:
 
     def initialize(self, legacy_config: Dict[str, Any]) -> None:
         """平台配置成功持久化并备份之后，才移除 TOML 平台节。"""
+        # 在写 JSON、重命名平台或移除任何 TOML 节之前完成全部冲突检查。
+        document = tomlkit.parse(self.config_path.read_text(encoding="utf-8")) if self.config_path.exists() else {}
+        self.settings.check_legacy_conflicts(document)
         if self.path.exists():
             payload = json.loads(self.path.read_text(encoding="utf-8"))
             if (
@@ -142,6 +145,16 @@ class WorkspaceConfigStore:
             if type(payload.get("revision")) is not int or payload["revision"] < 0:
                 raise ValueError("platforms.json 修订号无效")
             self.revision = payload["revision"]
+            legacy = WorkspaceConfigStore(self.path.parent, self.config_path)
+            legacy._import_legacy_platforms(document)
+
+            def comparable(records):
+                return sorted((item["kind"], json.dumps(item["config"], sort_keys=True)) for item in records)
+
+            if legacy.providers and comparable(legacy.providers) != comparable(self.providers):
+                raise ValueError(
+                    "旧 config.toml 与 platforms.json 存在冲突，已保留原文件。请先备份，确认保留哪份平台配置，再移走另一份后重新加载插件。"
+                )
             names = set()
             renamed = False
             for record in self.providers:
@@ -161,30 +174,7 @@ class WorkspaceConfigStore:
                 self.revision += 1
                 self._save()
         else:
-            normalized = DrawpicConfig.model_validate(legacy_config).model_dump(mode="json")
-            defaults = DrawpicConfig().model_dump(mode="json")
-            for kind in PLATFORM_NAMES:
-                values = deepcopy(normalized[kind])
-                instances = values.pop("instances", []) if kind == "openai" else []
-                # 只迁移启用、填过密钥或修改过参数的平台，不展示无用的默认平台。
-                meaningful = bool(values.get("api_key", "")) and values.get("api_key") != defaults[kind].get("api_key")
-                meaningful = meaningful or (kind == "comfyui" and values.get("enabled", False))
-                meaningful = meaningful or any(
-                    value != defaults[kind].get(key) for key, value in values.items() if key != "enabled"
-                )
-                if meaningful:
-                    self.providers.append(self._new_record(kind, PLATFORM_NAMES[kind], values))
-                for index, instance in enumerate(instances, 1):
-                    values = deepcopy(instance)
-                    name = values.pop("name") or f"兼容服务 {index}"
-                    model_text = values.pop("models")
-                    values["models"] = [
-                        f"{display}={upstream}" if display != upstream else upstream
-                        for display, upstream in ProviderRouter._parse_model_routes(model_text)
-                    ]
-                    for field in ("model_size_overrides", "extra_parameters"):
-                        values[field] = ProviderRouter._parse_key_value_text(values[field])
-                    self.providers.append(self._new_record("openai", name, values))
+            self._import_legacy_platforms(legacy_config)
             self.revision = 1
             self._save()
 
@@ -202,6 +192,33 @@ class WorkspaceConfigStore:
                 write_text_atomically(self.config_path, tomlkit.dumps(document))
 
         self.settings.initialize(legacy_config)
+
+    def _import_legacy_platforms(self, legacy_config: Dict[str, Any]) -> None:
+        """只导入有实际配置的平台，用于首次迁移与无副作用冲突检查。"""
+        normalized = DrawpicConfig.model_validate(legacy_config).model_dump(mode="json")
+        defaults = DrawpicConfig().model_dump(mode="json")
+        for kind in PLATFORM_NAMES:
+            values = deepcopy(normalized[kind])
+            instances = values.pop("instances", []) if kind == "openai" else []
+            # 只迁移启用、填过密钥或修改过参数的平台，不展示无用的默认平台。
+            meaningful = bool(values.get("api_key", "")) and values.get("api_key") != defaults[kind].get("api_key")
+            meaningful = meaningful or (kind == "comfyui" and values.get("enabled", False))
+            meaningful = meaningful or any(
+                value != defaults[kind].get(key) for key, value in values.items() if key != "enabled"
+            )
+            if meaningful:
+                self.providers.append(self._new_record(kind, PLATFORM_NAMES[kind], values))
+            for index, instance in enumerate(instances, 1):
+                values = deepcopy(instance)
+                name = values.pop("name") or f"兼容服务 {index}"
+                model_text = values.pop("models")
+                values["models"] = [
+                    f"{display}={upstream}" if display != upstream else upstream
+                    for display, upstream in ProviderRouter._parse_model_routes(model_text)
+                ]
+                for field in ("model_size_overrides", "extra_parameters"):
+                    values[field] = ProviderRouter._parse_key_value_text(values[field])
+                self.providers.append(self._new_record("openai", name, values))
 
     def _validate_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(record, dict) or set(record) != {"id", "kind", "name", "config"}:
