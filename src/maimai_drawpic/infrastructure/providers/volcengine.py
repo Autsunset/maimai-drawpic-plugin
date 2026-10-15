@@ -7,6 +7,7 @@ import asyncio
 import base64
 import time
 
+from ..media.collection import bounded_results, decode_result_base64
 from ..media.images import detect_mime_type
 from .requests import generation_submission
 from ..http import provider_response_error, sanitized_log_args
@@ -441,6 +442,7 @@ class VolcengineImage:
             error_message = error_object
         return str(error_code or "unknown_error"), str(error_message)
 
+    @bounded_results
     async def _extract_images(self, response: dict[str, Any]) -> list[bytes]:
         """从火山引擎响应中提取图片。"""
 
@@ -503,6 +505,7 @@ class VolcengineImage:
         self._log_error("火山引擎响应解析失败: 未找到图片列表，response_preview=%s", response_preview)
         raise RuntimeError(f"火山引擎响应中未找到图片列表，response_preview={response_preview}")
 
+    @bounded_results
     async def _extract_image_bytes_from_item(self, item: Any) -> bytes | None:
         """从单个响应条目中提取图片。"""
 
@@ -514,7 +517,7 @@ class VolcengineImage:
 
         image_base64 = item.get("b64_json") or item.get("base64") or item.get("image_base64")
         if isinstance(image_base64, str) and image_base64:
-            return await asyncio.to_thread(base64.b64decode, image_base64)
+            return await asyncio.to_thread(decode_result_base64, image_base64)
 
         for key in ("url", "image_url", "image", "content"):
             value = item.get(key)
@@ -544,13 +547,14 @@ class VolcengineImage:
 
         return None
 
+    @bounded_results
     async def _extract_image_bytes_from_string(self, value: str) -> bytes | None:
         """从字符串中提取图片数据。"""
 
         if value.startswith("data:image/") and ";base64," in value:
             _prefix, image_base64 = value.split(";base64,", maxsplit=1)
             if image_base64:
-                return await asyncio.to_thread(base64.b64decode, image_base64)
+                return await asyncio.to_thread(decode_result_base64, image_base64)
             return None
 
         if value.startswith("http://") or value.startswith("https://"):

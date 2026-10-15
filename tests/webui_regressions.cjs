@@ -24,7 +24,7 @@ function node(values = {}) {
     removeAttribute(k) { delete this.attrs[k]; },
     addEventListener(k, fn) { this.listeners[k] = fn; },
     querySelectorAll() { return []; },
-    classList: { toggle() {} }, focus() {}, ...values };
+    classList: { toggle() {} }, contains() { return false; }, focus() {}, ...values };
 }
 function harness(file, extra = {}) {
   const nodes = new Map();
@@ -350,4 +350,198 @@ test('mode state, mobile save label and allowed animations stay explicit', () =>
   assert.match(studio, /id="mode-edit" aria-pressed="\$\{mode === "edit_image"\}"/);
   assert.doesNotMatch(studio, /duration: 190|translateY\(-5px\)/);
   assert.match(read('index.html'), /class="save-label-short" aria-hidden="true">保存<\/span>/);
+});
+
+// Use the actual production bridge queue: ordering bugs must not be tested with
+// independently resolving RPC promises that the application cannot issue.
+function fifoController(file = 'studio') {
+  const state = { view: file, busy: 0, lastTask: null, sources: [],
+    data: { models: [{ name: 'model', draw: true }], presets: [], default_model: 'model' },
+    taskPage: 1, taskStatus: '', taskSearch: '' };
+  const calls = [];
+  const bridge = (name, args) => {
+    const d = deferred(); calls.push({ name, args, ...d }); return d.promise;
+  };
+  const app = read('app.js');
+  const callSource = app.slice(app.indexOf('  let queue = Promise.resolve()'), app.indexOf('  function toast('));
+  const call = new Function('window', 'state', callSource + ';return call;')(
+    { maibot: { ready: Promise.resolve(), query: bridge, action: bridge } }, state);
+  let keys = 0;
+  const h = harness(file, { state, call, statusLabel: String, uid: () => `request-key-${++keys}` });
+  h.calls = calls;
+  return h;
+}
+const taskSnapshot = (id, extra = {}) => ({ task_id: id, images: [], status: 'running',
+  message: id, model: 'model', ...extra });
+const taskList = active => ({ counts: { pending: 0, running: active, completed: 0, failed: 0, rejected: 0 },
+  items: [], total: 0, page_size: 20 });
+test('studio FIFO: late A receipt cannot clear queued B key; lost receipt reuses exact snapshot after rebuild', async () => {
+  const h = fifoController();
+  await h.U.views.studio();
+  h.get('#draw-model').value = 'model'; h.get('#draw-prompt').value = 'A';
+  h.get('#draw-form').onsubmit(event); await flush();
+  h.get('#draw-prompt').value = 'B'; h.get('#draw-form').oninput();
+  h.U.state.view = 'tasks'; h.U.state.view = 'studio'; await h.U.views.studio();
+  h.get('#draw-form').onsubmit(event); await flush();
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.U.state.requestId, 'request-key-2');
+  h.calls[0].resolve({ task_id: 'A' }); await flush();
+  assert.equal(h.U.state.requestId, 'request-key-2');
+  assert.equal(h.U.state.lastTask, null);
+  const original = h.calls[1].args.request_json;
+  h.calls[1].reject(Error('B accepted but receipt lost')); await flush();
+  await h.U.views.studio();
+  assert.match(h.get('#studio-submissions').innerHTML, /恢复原提交/);
+  h.get('#draw-form').onsubmit(event); await flush();
+  assert.equal(h.calls[2].args.request_json, original);
+  h.calls[2].resolve({ task_id: 'B' }); await flush();
+  h.calls[3].resolve(taskSnapshot('B', { status: 'completed' })); await flush();
+  assert.equal(h.U.state.lastTask, 'B'); assert.equal(h.U.state.requestId, null);
+  assert.equal(h.get('#studio-submissions').innerHTML, '');
+});
+test('studio FIFO: same pending snapshot is not submitted twice after rebuild or input events', async () => {
+  const h = fifoController(); await h.U.views.studio();
+  h.get('#draw-model').value = 'model'; h.get('#draw-prompt').value = 'same';
+  h.get('#draw-form').onsubmit(event); await flush();
+  h.get('#draw-form').oninput(); await h.U.views.studio();
+  h.get('#draw-form').onsubmit(event); await flush();
+  assert.equal(h.calls.length, 1);
+  h.calls[0].reject(Error('receipt lost')); await flush();
+  h.get('#draw-form').onsubmit(event); await flush();
+  assert.equal(h.calls[1].args.request_json, h.calls[0].args.request_json);
+});
+test('studio FIFO: superseded A task response does not enqueue preview after queued B query', async () => {
+  const h = fifoController(); h.U.state.lastTask = 'A';
+  const old = h.U.views.studio(); await flush();
+  h.U.state.lastTask = 'B'; const fresh = h.U.views.studio(); await flush();
+  assert.equal(h.calls.length, 1);
+  h.calls[0].resolve(taskSnapshot('A', { status: 'completed', images: [{}] })); await old; await flush();
+  assert.equal(h.calls[1].args.task_id, 'B');
+  h.calls[1].resolve(taskSnapshot('B')); await fresh;
+  assert.equal(h.calls.length, 2);
+  assert.match(h.get('#studio-result').innerHTML, /B/);
+  assert.equal(h.timers.size, 1);
+});
+test('studio FIFO: an in-flight old preview cannot render or schedule after a new task/page generation', async () => {
+  const h = fifoController(); h.U.state.lastTask = 'A';
+  const old = h.U.views.studio(); await flush();
+  h.calls[0].resolve(taskSnapshot('A', { images: [{}] })); await flush();
+  assert.equal(h.calls[1].name, 'image');
+  h.U.state.lastTask = 'B'; const fresh = h.U.views.studio(); await flush();
+  h.get('#studio-result').innerHTML = 'new page';
+  h.calls[1].resolve({ data_url: 'old-preview', width: 1, height: 1 }); await old; await flush();
+  assert.equal(h.get('#studio-result').innerHTML, 'new page');
+  assert.equal(h.timers.size, 0);
+  h.calls[2].resolve(taskSnapshot('B')); await fresh;
+  assert.doesNotMatch(h.get('#studio-result').innerHTML, /old-preview/);
+  assert.equal(h.timers.size, 1);
+});
+test('studio FIFO: transient task and preview failures preserve last good view and retry only reads', async () => {
+  const h = fifoController(); h.U.state.lastTask = 'A';
+  const opening = h.U.views.studio(); await flush();
+  h.calls[0].resolve(taskSnapshot('A')); await opening;
+  const previous = h.get('#studio-result').innerHTML;
+  for (let i = 0; i < 2; i++) {
+    await h.tick(5000); h.calls.at(-1).reject(Error('temporary read failure')); await flush();
+    assert.equal(h.timers.size, 1); assert.equal(h.get('#studio-result').innerHTML, previous);
+  }
+  assert.equal(h.errors.length, 1);
+  await h.tick(5000); h.calls.at(-1).resolve(taskSnapshot('A', { images: [{}], status: 'completed' })); await flush();
+  h.calls.at(-1).reject(Error('preview unavailable')); await flush();
+  assert.equal(h.timers.size, 1); assert.equal(h.errors.length, 1);
+  await h.tick(5000); h.calls.at(-1).resolve(taskSnapshot('A', { images: [{}], status: 'completed' })); await flush();
+  h.calls.at(-1).resolve({ data_url: 'new-preview', width: 1, height: 1 }); await flush();
+  assert.equal(h.timers.size, 0); assert.match(h.get('#studio-result').innerHTML, /new-preview/);
+  assert.ok(h.calls.every(c => ['task', 'image'].includes(c.name)));
+});
+test('studio FIFO: leaving during failed query does not retry or notify on another page', async () => {
+  const h = fifoController(); h.U.state.lastTask = 'A';
+  const opening = h.U.views.studio(); await flush();
+  h.U.state.view = 'tasks'; h.calls[0].reject(Error('stale')); await opening;
+  assert.equal(h.timers.size, 0); assert.equal(h.errors.length, 0);
+});
+test('tasks FIFO: transient failures retry at five seconds without erasing filter drafts or flooding errors', async () => {
+  const h = fifoController('tasks'); h.U.empty = () => 'empty';
+  const opening = h.U.views.tasks(); await flush(); h.calls[0].resolve(taskList(1)); await opening;
+  h.get('#task-search-text').value = 'unsent draft';
+  h.get('#task-search-text').oninput({ currentTarget: h.get('#task-search-text') });
+  const previous = h.get('#workspace-content').innerHTML;
+  for (let i = 0; i < 2; i++) {
+    await h.tick(5000); h.calls.at(-1).reject(Error('temporary')); await flush();
+    assert.equal(h.timers.size, 1); assert.equal(h.get('#workspace-content').innerHTML, previous);
+    assert.equal(h.get('#task-search-text').value, 'unsent draft');
+  }
+  assert.equal(h.errors.length, 1);
+  await h.tick(5000); h.calls.at(-1).resolve(taskList(0)); await flush();
+  assert.equal(h.timers.size, 0); assert.equal(h.get('#task-search-text').value, 'unsent draft');
+  assert.ok(h.calls.every(c => c.name === 'tasks'));
+});
+test('tasks FIFO: editing pauses retries and navigation invalidates outstanding read failures', async () => {
+  const h = fifoController('tasks'); h.U.empty = () => 'empty';
+  const opening = h.U.views.tasks(); await flush(); h.calls[0].reject(Error('temporary')); await opening;
+  h.get('#task-search').contains = () => true;
+  await h.tick(5000); assert.equal(h.calls.length, 1); assert.equal(h.timers.size, 1);
+  h.get('#task-search').contains = () => false;
+  await h.tick(5000); assert.equal(h.calls.length, 2);
+  h.U.state.view = 'studio'; h.calls[1].reject(Error('stale')); await flush();
+  assert.equal(h.timers.size, 0); assert.equal(h.errors.length, 1);
+});
+test('studio FIFO: explicit recovery resends immutable original content despite a different current draft', async () => {
+  const h = fifoController();
+  const buttons = [];
+  h.get('#studio-submissions').querySelectorAll = () => buttons;
+  await h.U.views.studio();
+  h.get('#draw-model').value = 'model'; h.get('#draw-prompt').value = 'original';
+  h.get('#draw-form').onsubmit(event); await flush();
+  const original = h.calls[0].args.request_json;
+  const id = JSON.parse(original).request_id;
+  buttons.push(node({ dataset: { retryRequest: id } }));
+  h.calls[0].reject(Error('receipt lost')); await flush();
+  h.get('#draw-prompt').value = 'different draft'; h.get('#draw-form').oninput();
+  await h.U.views.studio();
+  buttons[0].onclick(); await flush();
+  assert.equal(h.calls[1].args.request_json, original);
+  assert.equal(h.get('#draw-prompt').value, 'different draft');
+});
+test('tasks FIFO: newer filter request suppresses old success and its polling timer', async () => {
+  const h = fifoController('tasks'); h.U.empty = () => 'empty';
+  const old = h.U.views.tasks(); await flush();
+  h.U.state.taskSearch = 'new filter'; const fresh = h.U.views.tasks();
+  h.get('#workspace-content').innerHTML = 'keep';
+  h.calls[0].resolve(taskList(1)); await old; await flush();
+  assert.equal(h.get('#workspace-content').innerHTML, 'keep'); assert.equal(h.timers.size, 0);
+  assert.equal(h.calls[1].args.search, 'new filter');
+  h.calls[1].resolve(taskList(0)); await fresh;
+  assert.equal(h.timers.size, 0);
+});
+test('bootstrap: pending transaction/runtime notices survive read refresh until server confirms clear', async () => {
+  const nodes = new Map();
+  const get = selector => {
+    if (!nodes.has(selector)) nodes.set(selector, node());
+    return nodes.get(selector);
+  };
+  const state = {};
+  let response;
+  const app = read('app.js');
+  const source = app.slice(app.indexOf('  async function bootstrap()'), app.indexOf('  function savedNotice('));
+  const bootstrap = new Function('state', '$', 'call', source + ';return bootstrap;')(
+    state, get, async () => { if (response instanceof Error) throw response; return response; });
+  response = { config_update_pending: true, runtime_refresh_pending: true };
+  await bootstrap();
+  assert.equal(get('#load-error').hidden, false);
+  assert.match(get('#load-error').textContent, /提交与运行配置刷新尚未确认完成/);
+  await bootstrap(); // The toolbar refresh uses this same production function.
+  assert.equal(get('#load-error').hidden, false);
+  response = { config_update_pending: false, runtime_refresh_pending: true };
+  await bootstrap();
+  assert.equal(get('#load-error').hidden, false);
+  assert.match(get('#load-error').textContent, /页面刷新只重新查询状态/);
+  response = Error('read failed');
+  await assert.rejects(bootstrap(), /read failed/);
+  assert.equal(get('#load-error').hidden, false);
+  response = { config_update_pending: false, runtime_refresh_pending: false };
+  await bootstrap();
+  assert.equal(get('#load-error').hidden, true);
+  assert.equal(get('#load-error').textContent, '');
+  assert.doesNotMatch(read('boot.js'), /hidden\s*=\s*true/);
 });

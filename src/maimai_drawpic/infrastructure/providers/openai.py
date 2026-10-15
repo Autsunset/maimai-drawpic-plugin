@@ -11,6 +11,7 @@ import re
 import time
 
 from .requests import generation_submission
+from ..media.collection import bounded_results, decode_result_base64
 from ..http import sanitized_log_args, sanitize_provider_text
 from ..media.images import detect_image_dimensions, detect_mime_type, validate_image_bytes
 from ..media.downloads import download_image
@@ -682,6 +683,7 @@ class OpenaiImage:
             raise last_error
         raise RuntimeError("图片编辑表单提交失败")
 
+    @bounded_results
     async def _extract_images(self, response: dict[str, Any]) -> list[bytes]:
         """从接口响应中提取图片。"""
 
@@ -695,7 +697,7 @@ class OpenaiImage:
                 continue
             image_base64 = item.get("b64_json")
             if isinstance(image_base64, str) and image_base64:
-                image_bytes_list.append(await asyncio.to_thread(base64.b64decode, image_base64))
+                image_bytes_list.append(await asyncio.to_thread(decode_result_base64, image_base64))
                 continue
 
             image_url = item.get("url")
@@ -706,6 +708,7 @@ class OpenaiImage:
             raise RuntimeError("未找到有效的图片数据")
         return image_bytes_list
 
+    @bounded_results
     async def _extract_images_auto(self, response: dict[str, Any]) -> list[bytes]:
         """自动尝试多种图片响应格式。"""
 
@@ -717,10 +720,13 @@ class OpenaiImage:
         for parser in parsers:
             try:
                 return await parser(response)
+            except ProviderError:
+                raise
             except Exception as exc:
                 errors.append(f"{parser.__name__}: {self._sanitize_text(exc)}")
         raise RuntimeError("未能从响应中解析图片数据: " + " | ".join(errors))
 
+    @bounded_results
     async def _extract_chat_completion_images(self, response: dict[str, Any]) -> list[bytes]:
         """从 chat completions 响应中提取图片。"""
 
@@ -771,6 +777,7 @@ class OpenaiImage:
             f"聊天绘图响应中未找到可解析的图片数据；request_id={self._sanitize_text(response.get('id', 'unknown'))}"
         )
 
+    @bounded_results
     async def _extract_images_from_string(self, value: str) -> List[bytes]:
         """解析所有 Markdown 图片，避免多图响应只返回第一张。"""
 
@@ -784,6 +791,7 @@ class OpenaiImage:
                 images.append(extracted)
         return images
 
+    @bounded_results
     async def _extract_images_from_content_item(self, item: Any) -> List[bytes]:
         """保留结构化内容中所有图片，而不是每个片段只取一张。"""
 
@@ -807,6 +815,7 @@ class OpenaiImage:
         extracted = await self._extract_image_bytes_from_content_item(item)
         return [extracted] if extracted is not None else []
 
+    @bounded_results
     async def _extract_image_bytes_from_content_item(self, item: Any) -> bytes | None:
         """从单个内容片段中提取图片。"""
 
@@ -835,19 +844,19 @@ class OpenaiImage:
 
         image_base64 = item.get("b64_json") or item.get("image_base64") or item.get("base64")
         if isinstance(image_base64, str) and image_base64:
-            return await asyncio.to_thread(base64.b64decode, image_base64)
+            return await asyncio.to_thread(decode_result_base64, image_base64)
 
         inline_data = item.get("inline_data") or item.get("inlineData")
         if isinstance(inline_data, dict):
             inline_base64 = inline_data.get("data")
             if isinstance(inline_base64, str) and inline_base64:
-                return await asyncio.to_thread(base64.b64decode, inline_base64)
+                return await asyncio.to_thread(decode_result_base64, inline_base64)
 
         source = item.get("source")
         if isinstance(source, dict):
             source_base64 = source.get("data")
             if isinstance(source_base64, str) and source_base64:
-                return await asyncio.to_thread(base64.b64decode, source_base64)
+                return await asyncio.to_thread(decode_result_base64, source_base64)
             source_url = source.get("url")
             if isinstance(source_url, str) and source_url:
                 return await self._extract_image_bytes_from_string(source_url)
@@ -878,13 +887,14 @@ class OpenaiImage:
 
         return None
 
+    @bounded_results
     async def _extract_image_bytes_from_string(self, value: str) -> bytes | None:
         """从字符串中提取图片数据。"""
 
         if value.startswith("data:image/") and ";base64," in value:
             _prefix, image_base64 = value.split(";base64,", maxsplit=1)
             if image_base64:
-                return await asyncio.to_thread(base64.b64decode, image_base64, validate=True)
+                return await asyncio.to_thread(decode_result_base64, image_base64, validate=True)
             return None
 
         if value.startswith("http://") or value.startswith("https://"):

@@ -1,5 +1,7 @@
 """commands/novelai.py 的插件组件。"""
 
+from ...infrastructure.observability.redaction import outward_error
+
 from typing import Any
 
 from ..chat.texts import build_novelai_text
@@ -262,7 +264,7 @@ class NovelAICommandMixin:
         except Exception as exc:
             self.ctx.logger.error("/绘图 nai 命令启动失败: %s", exc, exc_info=True)
             await self._send_draw_failure_notice(
-                reason=str(exc),
+                reason=outward_error(self, exc),
                 stream_id=stream_id,
                 user_id=user_id,
                 group_id=group_id,

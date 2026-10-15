@@ -2,7 +2,7 @@
   "use strict";
   const U = window.DrawpicUI,
     { state, $, e, icon, call, buttonAction, toast } = U;
-  let timer;
+  let timer, listVersion = 0, queryFailed = false;
   async function original(taskId, index, button) {
     const modalVersion = state.modalVersion;
     const current = () =>
@@ -94,14 +94,39 @@
   }
   async function renderTasks(polling = false) {
     clearTimeout(timer);
-    const result = await call("query", "tasks", {
-      page: state.taskPage,
-      status: state.taskStatus,
-      search: state.taskSearch,
-    });
-    if (state.view !== "tasks") return;
+    const version = ++listVersion, pageVersion = state.renderVersion;
+    const current = () => state.view === "tasks" &&
+      version === listVersion && pageVersion === state.renderVersion;
+    const schedule = () => {
+      if (!current()) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        if (!current()) return;
+        if (document.hidden || $("#modal").open || state.busy || editingFilters()) {
+          schedule();
+          return;
+        }
+        renderTasks(true).catch(U.error);
+      }, 5000);
+    };
+    let result;
+    try {
+      result = await call("query", "tasks", {
+        page: state.taskPage,
+        status: state.taskStatus,
+        search: state.taskSearch,
+      });
+    } catch (error) {
+      if (!current()) return;
+      if (!queryFailed) U.error(error);
+      queryFailed = true;
+      schedule();
+      return;
+    }
+    if (!current()) return;
+    queryFailed = false;
     if (polling && (editingFilters() || $("#modal").open)) {
-      timer = setTimeout(() => renderTasks(true).catch(U.error), 5000);
+      schedule();
       return;
     }
     const active = result.counts.pending + result.counts.running;
@@ -147,22 +172,7 @@
       state.taskPage++;
       renderTasks().catch(U.error);
     };
-    if (active) {
-      const poll = () => {
-        if (state.view !== "tasks") return;
-        if (
-          document.hidden ||
-          $("#modal").open ||
-          state.busy ||
-          editingFilters()
-        ) {
-          timer = setTimeout(poll, 5000);
-          return;
-        }
-        renderTasks(true).catch(U.error);
-      };
-      timer = setTimeout(poll, 5000);
-    }
+    if (active) schedule();
   }
   U.views.tasks = renderTasks;
   U.openTask = openTask;

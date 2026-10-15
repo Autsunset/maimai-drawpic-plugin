@@ -6,6 +6,7 @@ import asyncio
 import base64
 import time
 
+from ..media.collection import bounded_results, decode_result_base64
 from ..media.images import detect_mime_type
 from .requests import generation_submission
 from ..http import provider_response_error, sanitized_log_args
@@ -176,6 +177,7 @@ class SiliconFlowImage:
                 self._log_info("硅基流动接口成功: status=%s duration=%.2fs", response.status, duration)
                 return response_json
 
+    @bounded_results
     async def _extract_images(self, response: dict[str, Any]) -> list[bytes]:
         """从硅基流动响应中提取图片。"""
 
@@ -191,7 +193,7 @@ class SiliconFlowImage:
                 continue
             image_base64 = item.get("b64_json")
             if isinstance(image_base64, str) and image_base64:
-                image_bytes_list.append(await asyncio.to_thread(base64.b64decode, image_base64))
+                image_bytes_list.append(await asyncio.to_thread(decode_result_base64, image_base64))
                 continue
 
             image_url = item.get("url") or item.get("image_url") or item.get("image")

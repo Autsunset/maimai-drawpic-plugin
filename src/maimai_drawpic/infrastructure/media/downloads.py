@@ -11,6 +11,7 @@ import socket
 from ...domain.errors import ProviderDownloadError, ProviderResultError
 from ..http import HttpProxySettings, read_response_bytes, sanitize_provider_url
 from .images import validate_image_bytes
+from .collection import bounded_results, current_budget
 
 
 def _public_address(value: str) -> bool:
@@ -53,15 +54,18 @@ async def _addresses(host: str, port: int) -> List[str]:
         return list(dict.fromkeys(record[4][0] for record in records))
 
 
+@bounded_results
 async def download_image(url: str, *, base_url: str, proxy_settings: HttpProxySettings, timeout_seconds: int) -> bytes:
     """在有限预算内只恢复同一结果地址；每次重新检查 DNS 与重定向。"""
+    current_budget().available()
     try:
         async with asyncio.timeout(timeout_seconds):
             for attempt in range(3):
                 try:
-                    return await _download_image(
+                    raw = await _download_image(
                         url, base_url=base_url, proxy_settings=proxy_settings, timeout_seconds=timeout_seconds
                     )
+                    return current_budget().accept(raw)
                 except ProviderDownloadError:
                     if attempt == 2:
                         raise
@@ -109,13 +113,13 @@ async def _download_image(url: str, *, base_url: str, proxy_settings: HttpProxyS
                             raise ProviderResultError(
                                 f"图片结果下载失败: HTTP {response.status} url={sanitize_provider_url(str(current))}"
                             )
-                        raw = await read_response_bytes(response)
+                        raw = await read_response_bytes(response, max_bytes=current_budget().available())
                         await asyncio.to_thread(validate_image_bytes, raw)
                         return raw
     except ProviderResultError:
         raise
     except (aiohttp.ClientConnectionError, aiohttp.ClientPayloadError, TimeoutError) as exc:
         raise ProviderDownloadError(f"图片结果传输中断（{type(exc).__name__}），未重新提交生成请求") from None
-    except (aiohttp.ClientError, OSError, ValueError) as exc:
+    except (aiohttp.ClientError, OSError, ValueError, RuntimeError) as exc:
         raise ProviderResultError(f"图片结果下载或校验失败（{type(exc).__name__}），未重新提交生成请求") from None
     raise ProviderResultError("图片结果下载未完成")

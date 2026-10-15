@@ -3,6 +3,7 @@ from google.genai import types
 from typing import Any, Dict, List
 from google.genai.errors import APIError
 
+from ..media.collection import bounded_results, current_budget
 from ..http import HttpProxySettings, sanitize_provider_text
 from ...domain.errors import ProviderRequestError, ProviderResultError
 from ..media.images import detect_mime_type
@@ -88,6 +89,7 @@ class GoogleImage:
         return types.GenerateContentConfig(**kwargs)
 
     @staticmethod
+    @bounded_results
     def _extract_images_from_generate_content_response(response: types.GenerateContentResponse) -> List[bytes]:
         """只提取最终图片，不发送模型内部的思考图片。"""
 
@@ -100,7 +102,7 @@ class GoogleImage:
                     continue
                 blob = part.inline_data
                 if blob.data and blob.mime_type and blob.mime_type.startswith("image/"):
-                    images.append(blob.data)
+                    images.append(current_budget().accept(blob.data))
         if not images:
             feedback = response.prompt_feedback
             reason = str(feedback.block_reason) if feedback and feedback.block_reason else "未返回图片"

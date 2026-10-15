@@ -9,6 +9,7 @@ from ..chat.message_images import (
     decode_image_base64,
     find_source_image_inputs,
 )
+from ...infrastructure.observability.redaction import outward_error
 from .schemas import DRAW_STYLES_TOOL_PARAMETERS_SCHEMA, STYLED_DRAW_TOOL_PARAMETERS_SCHEMA
 
 
@@ -131,13 +132,14 @@ class StyleToolMixin:
                 notify_start=True,
             )
         except Exception as exc:
+            reason = outward_error(self, exc)
             self.ctx.logger.error("启动风格化绘图失败: %s", exc, exc_info=True)
             if runtime_context.get("stream_id"):
                 await self._send_draw_failure_notice(
-                    reason=str(exc),
+                    reason=reason,
                     stream_id=runtime_context["stream_id"],
                     user_id=runtime_context["user_id"],
                     group_id=runtime_context["group_id"],
                     platform=runtime_context["platform"],
                 )
-            return {"success": False, "message": f"启动风格化绘图失败：{exc}"}
+            return {"success": False, "message": reason}

@@ -63,7 +63,10 @@ class TaskQueryMixin:
                 int((datetime.now() - record.last_status_query_at).total_seconds()),
                 0,
             )
-        self.task_store.mark_status_queried(record.task_id)
+        self.task_store.retry_pending_terminal()
+        record = self.task_store.get_task(record.task_id) or record
+        if not record.persistence_pending:
+            self.task_store.mark_status_queried(record.task_id)
 
         next_check_after_seconds = 0
         if record.status in {"pending", "running"}:
@@ -76,6 +79,8 @@ class TaskQueryMixin:
                 )
 
         message = self.build_task_status_message(record)
+        if record.persistence_pending:
+            message += " 终态尚未落盘，请恢复存储后查询以重试保存；不要重新生成或发送。"
         if record.status in {"pending", "running"} and seconds_since_last_query is not None:
             message = (
                 f"绘图任务仍在处理中：task_id={record.task_id}，类型={record.task_type}，模型={record.model}。"
@@ -87,6 +92,7 @@ class TaskQueryMixin:
             "success": record.status in {"pending", "running", "completed"},
             "message": message,
             "task_id": record.task_id,
+            "persistence_pending": record.persistence_pending,
             "status": record.status,
             "task_type": record.task_type,
             "model": record.model,

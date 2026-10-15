@@ -6,7 +6,7 @@ from ..chat import ImageDeliveryError, ImageDeliveryUnconfirmedError
 from ...infrastructure.storage.retention import CacheCapacityError
 from ...domain.errors import ProviderError
 from ...domain.task_errors import provider_task_error, task_error
-from .admission import update_task_owned, wait_for_admission
+from .admission import update_task_owned
 
 
 class ImageExecutionMixin:
@@ -40,12 +40,7 @@ class ImageExecutionMixin:
         delivery_started = False
 
         async def _update_terminal(**changes) -> None:
-            try:
-                pending = asyncio.create_task(asyncio.to_thread(self.task_store.update_task, task_id, **changes))
-                await wait_for_admission(pending)
-            except Exception:
-                # Settlement must not depend on the task file remaining writable.
-                self.ctx.logger.exception("绘图任务终态保存失败: task_id=%s status=%s", task_id, changes["status"])
+            await self.persist_terminal(task_id, **changes)
 
         async def _notify_task_unsuccessful(status: str, reason: str) -> None:
             nonlocal notified

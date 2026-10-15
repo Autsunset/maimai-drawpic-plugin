@@ -1,5 +1,7 @@
 """commands/images.py 的插件组件。"""
 
+from ...infrastructure.observability.redaction import outward_error
+
 from typing import Any
 import asyncio
 import re
@@ -90,7 +92,7 @@ class ImageCommandMixin:
             self.ctx.logger.warning("/绘图 图生图命令配置校验失败: model=%s error=%s", resolved_model, exc)
             await self._send_command_reply(
                 title="图生图配置错误",
-                body=str(exc),
+                body=outward_error(self, exc),
                 stream_id=stream_id,
                 user_id=user_id,
                 group_id=group_id,
@@ -114,7 +116,7 @@ class ImageCommandMixin:
             self.ctx.logger.error("/绘图 图生图命令收集源图片失败: %s", exc, exc_info=True)
             await self._send_command_reply(
                 title="读取源图片失败",
-                body=str(exc),
+                body=outward_error(self, exc),
                 stream_id=stream_id,
                 user_id=user_id,
                 group_id=group_id,
@@ -160,7 +162,7 @@ class ImageCommandMixin:
         except PermissionError as exc:
             await self._send_command_reply(
                 title="绘图次数不足",
-                body=f"{exc}。请联系管理员调整次数后再使用图生图。",
+                body=f"{outward_error(self, exc)}。请联系管理员调整次数后再使用图生图。",
                 stream_id=stream_id,
                 user_id=user_id,
                 group_id=group_id,
@@ -171,7 +173,7 @@ class ImageCommandMixin:
             self.ctx.logger.error("/绘图 图生图命令启动失败: %s", exc, exc_info=True)
             await self._send_command_reply(
                 title="图生图请求未能启动",
-                body=str(exc),
+                body=outward_error(self, exc),
                 stream_id=stream_id,
                 user_id=user_id,
                 group_id=group_id,

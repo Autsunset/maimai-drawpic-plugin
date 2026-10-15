@@ -1,5 +1,7 @@
 """commands/dispatcher.py 的插件组件。"""
 
+from ...infrastructure.observability.redaction import outward_error
+
 from maibot_sdk import Command
 from typing import Any
 import asyncio
@@ -296,7 +298,7 @@ class CommandMixin:
                 self.ctx.logger.warning("/绘图 文生图命令配置校验失败: error=%s", exc)
                 await self._send_command_reply(
                     title="文生图配置错误",
-                    body=str(exc),
+                    body=outward_error(self, exc),
                     stream_id=normalized_stream_id,
                     user_id=normalized_user_id,
                     group_id=normalized_group_id,
@@ -365,7 +367,7 @@ class CommandMixin:
                 self.ctx.logger.error("/绘图 文生图命令启动失败: %s", exc, exc_info=True)
                 await self._send_command_reply(
                     title="绘图请求未能启动",
-                    body=str(exc),
+                    body=outward_error(self, exc),
                     stream_id=normalized_stream_id,
                     user_id=normalized_user_id,
                     group_id=normalized_group_id,

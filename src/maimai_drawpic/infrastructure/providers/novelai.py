@@ -11,7 +11,9 @@ import re
 import time
 import zipfile
 
-from ..media.images import MAX_IMAGE_BYTES, detect_image_dimensions
+from ..media.collection import bounded_results, current_budget, decode_result_base64
+from ..media.images import detect_image_dimensions
+from ...domain.errors import ProviderResultError
 from .requests import generation_submission
 from ..http import provider_response_error, sanitized_log_args
 from ..media.downloads import download_image
@@ -459,6 +461,7 @@ class NovelAIImage:
                 self._log_info("NovelAI 接口成功: status=%s duration=%.2fs", response.status, duration)
                 return content, content_type
 
+    @bounded_results
     async def _extract_images(self, content: bytes, content_type: str) -> list[bytes]:
         """从 NovelAI 官方 zip、兼容 JSON 或直接图片响应中提取图片。"""
 
@@ -474,34 +477,33 @@ class NovelAIImage:
             return await asyncio.to_thread(self._extract_images_from_zip, content)
 
         if normalized_content_type.startswith("image/"):
-            return [content]
+            return [current_budget().accept(content)]
 
         response_preview = sanitize_provider_text(content[:1200].decode("utf-8", errors="replace"), self.api_key)
         raise RuntimeError(f"NovelAI 响应不是可解析的图片、zip 或 JSON，response_preview={response_preview}")
 
+    @bounded_results
     def _extract_images_from_zip(self, content: bytes) -> list[bytes]:
         """从 NovelAI 官方 zip 响应中提取图片文件。"""
 
         image_bytes_list: list[bytes] = []
         with zipfile.ZipFile(BytesIO(content)) as image_zip:
-            extracted_bytes = 0
             for file_info in image_zip.infolist():
                 if file_info.is_dir():
                     continue
                 filename = file_info.filename.lower()
                 if not filename.endswith((".png", ".jpg", ".jpeg", ".webp")):
                     continue
-                if file_info.file_size > MAX_IMAGE_BYTES:
-                    raise RuntimeError(f"NovelAI zip 图片超过大小限制：{file_info.filename}")
-                extracted_bytes += file_info.file_size
-                if extracted_bytes > MAX_PROVIDER_RESPONSE_BYTES:
-                    raise RuntimeError("NovelAI zip 解压后内容超过大小限制")
-                image_bytes_list.append(image_zip.read(file_info))
+                if file_info.file_size > current_budget().available():
+                    raise ProviderResultError("NovelAI zip 图片超过剩余结果预算，未重新生成")
+                with image_zip.open(file_info) as member:
+                    image_bytes_list.append(current_budget().accept(member.read(current_budget().available() + 1)))
 
         if not image_bytes_list:
             raise RuntimeError("NovelAI zip 响应中没有可用图片文件")
         return image_bytes_list
 
+    @bounded_results
     async def _extract_images_from_json(self, response: dict[str, Any]) -> list[bytes]:
         """从 NovelAPI 兼容 JSON 响应中提取图片。"""
 
@@ -546,16 +548,19 @@ class NovelAIImage:
             return [image]
         return []
 
+    @bounded_results
     async def _extract_image_from_string(self, value: str) -> bytes | None:
         """从字符串中提取图片字节。"""
 
         if value.startswith("data:image/") and ";base64," in value:
             _prefix, image_base64 = value.split(";base64,", maxsplit=1)
-            return await asyncio.to_thread(base64.b64decode, image_base64)
+            return await asyncio.to_thread(decode_result_base64, image_base64)
         if value.startswith("http://") or value.startswith("https://"):
             return await self._download_image(value)
         try:
-            return await asyncio.to_thread(base64.b64decode, value)
+            return await asyncio.to_thread(decode_result_base64, value)
+        except ProviderResultError:
+            raise
         except Exception:
             return None
 

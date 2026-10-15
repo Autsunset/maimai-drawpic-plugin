@@ -11,6 +11,7 @@ import secrets
 import time
 import uuid
 
+from ..media.collection import bounded_results
 from ..http import sanitized_log_args
 from ..storage.migration import resolve_workflow_path
 from ..media.downloads import download_image
@@ -312,6 +313,7 @@ class ComfyUIImage:
             )
         return inputs
 
+    @bounded_results
     async def _execute_workflow(self, workflow: dict[str, Any], task_name: str) -> list[bytes]:
         """提交工作流、轮询执行结果并下载输出图片。"""
 

@@ -1,6 +1,7 @@
+from __future__ import annotations
+
 """阿里云百炼图像平台传输适配器。"""
 
-from __future__ import annotations
 
 from typing import Any
 from urllib.parse import urlsplit
@@ -11,6 +12,7 @@ import json
 import re
 import time
 
+from ..media.collection import bounded_results
 from ..media.images import detect_mime_type
 from ..http import provider_response_error, sanitized_log_args
 from ..media.downloads import download_image
@@ -542,6 +544,7 @@ class AliyunImage:
 
         return sanitize_provider_url(str(url))
 
+    @bounded_results
     async def _extract_images(
         self,
         response: dict[str, Any],

@@ -217,7 +217,8 @@ def test_task_write_failure_cannot_skip_refund(make_plugin, monkeypatch):
             receipt = await plugin._start_background_image_request(prompt="cat", stream_id="mock-stream")
             await asyncio.gather(*tuple(service.background_tasks))
             assert remaining(plugin) == 1 and not calls
-            assert store.get_task(receipt["task_id"]).status == "pending"
+            assert store.get_task(receipt["task_id"]).status == "failed"
+            assert store.get_task(receipt["task_id"]).persistence_pending
             assert json.loads(store.path.read_text())["tasks"][receipt["task_id"]]["status"] == "pending"
         finally:
             monkeypatch.setattr(store, "save", original_save)

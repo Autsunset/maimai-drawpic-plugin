@@ -4,6 +4,7 @@ from functools import wraps
 from typing import Any, Awaitable, Callable, Dict, Optional
 
 from ...application.workspace.service import WorkspaceService
+from ...infrastructure.observability.redaction import outward_error
 
 
 class WorkspaceAPIBase:
@@ -23,6 +24,6 @@ def workspace_endpoint(handler: Callable[..., Awaitable[Dict[str, Any]]]) -> Cal
         try:
             return await handler(*args, **kwargs)
         except (ValueError, PermissionError) as exc:
-            return {"__workspace_error__": str(exc)}
+            return {"__workspace_error__": outward_error(args[0], exc)}
 
     return invoke

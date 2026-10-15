@@ -4,7 +4,7 @@ from threading import RLock
 from typing import Any, Dict, Iterable
 import logging
 
-from ..http import sanitize_provider_text
+from ..http import normalize_provider_diagnostic, sanitize_provider_text
 
 
 class SecretRedactor(logging.Filter):
@@ -33,7 +33,7 @@ class SecretRedactor(logging.Filter):
         self.add(secrets)
 
     def redact(self, value: Any, *, max_chars: int = 2000) -> str:
-        text = str(value)
+        text = normalize_provider_diagnostic(value)
         with self._lock:
             for secret in sorted(self._secrets, key=len, reverse=True):
                 text = text.replace(secret, "[REDACTED]")
@@ -46,3 +46,19 @@ class SecretRedactor(logging.Filter):
             record.exc_text = self.redact(logging.Formatter().formatException(record.exc_info), max_chars=12000)
             record.exc_info = None
         return True
+
+
+def outward_error(owner: Any, error: Exception) -> str:
+    """Keep expected validation useful; unexpected failures expose only a log ID."""
+    from uuid import uuid4
+    from ...domain.errors import ProviderError
+
+    redactor = getattr(owner, "_redactor", None)
+    redact = redactor.redact if redactor is not None else sanitize_provider_text
+    if isinstance(error, (ValueError, PermissionError, ProviderError)):
+        return redact(error)
+    reference = uuid4().hex[:12]
+    owner.ctx.logger.error(
+        "请求处理异常: error_id=%s error=%s", reference, redact(error),
+    )
+    return f"请求处理失败，请稍后重试或联系管理员（错误 ID：{reference}）"

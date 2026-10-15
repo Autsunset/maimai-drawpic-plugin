@@ -75,6 +75,8 @@ class WorkspaceTaskService:
         record.pop("prompt", None)
         record.pop("submission", None)
         record["message"] = self.task_store.sanitize_message(record["message"])
+        if record.get("persistence_pending"):
+            record["message"] += "；终态尚未落盘，请恢复存储后查询以重试保存，不会重新生成或发送"
         return record
 
     async def claim_source(self, upload_id: str) -> Dict[str, Any]:
@@ -242,6 +244,7 @@ class WorkspaceTaskService:
             raise ValueError("任务状态无效")
         if len(search) > 200:
             raise ValueError("搜索内容过长")
+        await asyncio.to_thread(self.task_store.retry_pending_terminal)
         records = await asyncio.to_thread(self.task_store.snapshot)
         records.sort(key=lambda item: item["created_at"], reverse=True)
         counts = {
@@ -273,6 +276,7 @@ class WorkspaceTaskService:
 
     async def detail(self, task_id: str, *, include_prompt: bool = False) -> Dict[str, Any]:
         validate_task_id(task_id)
+        await asyncio.to_thread(self.task_store.retry_pending_terminal)
         record = next(
             (item for item in await asyncio.to_thread(self.task_store.snapshot) if item["task_id"] == task_id), None
         )
@@ -296,7 +300,10 @@ class WorkspaceTaskService:
             if task is not None:
                 if not task.cancel():
                     raise ValueError("该任务已经结束")
-                await asyncio.gather(task, return_exceptions=True)
+                _, pending = await asyncio.wait({task}, timeout=service.CANCEL_WAIT_SECONDS)
+                if pending:
+                    return {"task_id": task_id, "cancelled": False, "cancel_requested": True,
+                            "message": "取消已请求，仍等待本地工作线程退出；不代表上游撤单或停止计费"}
                 await service.wait_settlement()
                 settled = await self.detail(task_id)
                 if settled["status"] not in {"pending", "running"}:

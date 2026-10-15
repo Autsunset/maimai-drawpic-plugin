@@ -126,6 +126,10 @@ async def maintain_workspace(plugin: Any) -> None:
 
 
 async def close_workspace(plugin: Any) -> None:
+    # Finish an already committed configuration refresh before taking the final
+    # service snapshot; it may retire/create a drawing service.
+    if plugin._workspace_service is not None:
+        await plugin._workspace_service.close()
     # Stop new admissions before awaiting any shutdown work.
     with plugin._service_lifecycle_lock:
         plugin._closing = True
@@ -140,6 +144,10 @@ async def close_workspace(plugin: Any) -> None:
     for service in services:
         await service.cancel_submissions()
         await service.cancel_background_tasks()
+    # Flush known terminal outcomes before releasing diagnostics. Unlike a
+    # read-only query retry, unload must report a persistent storage failure.
+    if any(record["persistence_pending"] for record in plugin._task_store.snapshot()):
+        await asyncio.to_thread(plugin._task_store.save)
     if plugin._workspace_service is not None:
         await asyncio.to_thread(plugin._workspace_service.logs.close)
         plugin._workspace_service = None

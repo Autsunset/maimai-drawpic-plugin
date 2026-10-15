@@ -47,6 +47,7 @@ class DrawTaskRecord:
     generated_count: int = 0
     expected_delivery_count: int = 0
     delivery_unconfirmed: bool = False
+    persistence_pending: bool = False
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     last_status_query_at: datetime | None = None
@@ -173,12 +174,47 @@ class DrawTaskStore:
 
         if self._load_failed:
             raise ValueError("绘图任务文件尚未恢复，拒绝覆盖原件或接受新任务；未清空幂等记录")
-        serialized_tasks = {task_id: self._serialize_record(record) for task_id, record in self._tasks.items()}
+        serialized_tasks = {
+            task_id: self._serialize_record(replace(record, persistence_pending=False))
+            for task_id, record in self._tasks.items()
+        }
         payload = {
             "tasks": serialized_tasks,
             "latest_task_id_by_session": self._latest_task_id_by_session,
         }
         write_json_atomically(self.path, payload)
+        for task_id, record in tuple(self._tasks.items()):
+            if record.persistence_pending:
+                self._tasks[task_id] = replace(record, persistence_pending=False)
+
+    @_synchronized
+    def defer_terminal(self, task_id: str, **changes: Any) -> None:
+        """Keep the known outcome queryable when disk is unavailable.
+
+        A later save persists this exact outcome. A process crash before recovery
+        still leaves the old durable state; restart must never replay that task.
+        """
+        record = self._tasks.get(task_id)
+        if record is None:
+            return
+        if changes.get("status") not in {"completed", "failed", "rejected"}:
+            raise ValueError("只能保留待落盘的终态")
+        changes = dict(changes)
+        changes["message"] = self.sanitize_message(changes["message"])
+        if changes.get("error") is not None:
+            changes["error"] = {**changes["error"], "message": self.sanitize_message(changes["error"]["message"])}
+        self._tasks[task_id] = replace(record, **changes, persistence_pending=True, updated_at=datetime.now())
+
+    @_synchronized
+    def retry_pending_terminal(self) -> None:
+        if not any(record.persistence_pending for record in self._tasks.values()):
+            return
+        try:
+            self.save()
+        except OSError:
+            # The original failure was logged. Polling must remain useful even
+            # during a prolonged outage and must not flood the log.
+            pass
 
     def get_task_count(self) -> int:
         """返回当前缓存中的任务数量。"""
@@ -200,7 +236,8 @@ class DrawTaskStore:
     ) -> DrawTaskRecord:
         """创建任务记录。"""
 
-        if sum(item.status in {"pending", "running"} for item in self._tasks.values()) >= self.MAX_TASK_RECORDS:
+        if sum(item.persistence_pending or item.status in {"pending", "running"}
+               for item in self._tasks.values()) >= self.MAX_TASK_RECORDS:
             raise ValueError("活动任务记录已满，请等待现有任务结束")
         task_id = uuid4().hex[:12]
         record = DrawTaskRecord(
@@ -438,7 +475,7 @@ class DrawTaskStore:
         if len(self._tasks) > self.MAX_TASK_RECORDS:
             newest_tasks = sorted(
                 reversed(list(self._tasks.values())),
-                key=lambda record: (record.status in {"pending", "running"}, record.created_at),
+                key=lambda record: (record.persistence_pending or record.status in {"pending", "running"}, record.created_at),
                 reverse=True,
             )[: self.MAX_TASK_RECORDS]
             self._tasks = {record.task_id: record for record in newest_tasks}

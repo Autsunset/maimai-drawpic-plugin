@@ -3,7 +3,12 @@
   const U = window.DrawpicUI,
     { state, $, e, icon, call, buttonAction, toast } = U;
   let mode = "draw",
-    pollTimer;
+    pollTimer,
+    resultVersion = 0,
+    queryFailed = false,
+    submissionVersion = 0;
+  // Unconfirmed immutable snapshots belong to requests, never to a DOM button.
+  const submissions = new Map();
   const draft = {};
   function saveDraft() {
     for (const id of [
@@ -74,26 +79,80 @@
   }
   async function updateResult() {
     clearTimeout(pollTimer);
-    if (!state.lastTask || state.view !== "studio") return;
-    const result = await call("query", "task", { task_id: state.lastTask });
-    if (state.view !== "studio") return;
-    const node = $("#studio-result");
-    if (!node) return;
-    if (result.images.length) {
-      const preview = await call("query", "image", {
-        task_id: result.task_id,
-        index: 0,
-      });
-      node.innerHTML = `<img class="preview-image" src="${e(preview.data_url)}" alt="生成的图片"><div class="result-meta"><span class="pill ${e(result.status)}">${e(U.statusLabel(result.status))}</span><span class="pill">${e(preview.width)} × ${e(preview.height)}</span></div><p class="hint">${e(result.message)}</p><button id="studio-detail" class="button secondary wide" style="margin-top:16px">查看任务与全部图片 ${icon("arrow")}</button>`;
-      $("#studio-detail").onclick = () => U.openTask(result.task_id);
-    } else {
-      node.innerHTML = `<div class="placeholder-art">${icon(result.status === "running" ? "clock" : "images")}<span>${e(U.statusLabel(result.status))}</span><small>${e(result.message)}</small></div><div class="result-meta"><span class="pill">${e(result.model)}</span><span class="pill">${e(result.task_id)}</span></div>`;
+    const taskId = state.lastTask, version = ++resultVersion;
+    const pageVersion = state.renderVersion;
+    const current = () => state.view === "studio" &&
+      state.lastTask === taskId && version === resultVersion &&
+      pageVersion === state.renderVersion;
+    if (!taskId || !current()) return;
+    let retry = false;
+    try {
+      const result = await call("query", "task", { task_id: taskId });
+      if (!current()) return;
+      const node = $("#studio-result");
+      if (!node) return;
+      if (result.images.length) {
+        const preview = await call("query", "image", {
+          task_id: result.task_id,
+          index: 0,
+        });
+        if (!current()) return;
+        node.innerHTML = `<img class="preview-image" src="${e(preview.data_url)}" alt="生成的图片"><div class="result-meta"><span class="pill ${e(result.status)}">${e(U.statusLabel(result.status))}</span><span class="pill">${e(preview.width)} × ${e(preview.height)}</span></div><p class="hint">${e(result.message)}</p><button id="studio-detail" class="button secondary wide" style="margin-top:16px">查看任务与全部图片 ${icon("arrow")}</button>`;
+        $("#studio-detail").onclick = () => U.openTask(result.task_id);
+      } else {
+        node.innerHTML = `<div class="placeholder-art">${icon(result.status === "running" ? "clock" : "images")}<span>${e(U.statusLabel(result.status))}</span><small>${e(result.message)}</small></div><div class="result-meta"><span class="pill">${e(result.model)}</span><span class="pill">${e(result.task_id)}</span></div>`;
+      }
+      queryFailed = false;
+      retry = ["pending", "running"].includes(result.status);
+    } catch (error) {
+      if (!current()) return;
+      retry = true;
+      if (!queryFailed) U.error(error);
+      queryFailed = true;
+    } finally {
+      if (retry && current()) pollTimer = setTimeout(() => {
+        if (current()) updateResult().catch(U.error);
+      }, 5000);
     }
-    if (["pending", "running"].includes(result.status))
-      pollTimer = setTimeout(() => updateResult().catch(U.error), 5000);
+  }
+  function renderSubmissions() {
+    if (state.view !== "studio") return;
+    const node = $("#studio-submissions");
+    if (!node) return;
+    node.innerHTML = [...submissions.values()].map((entry) =>
+      `<div class="hint">${e(entry.prompt.slice(0, 80))} · ${entry.pending ? "正在等待提交回执" : "提交未确认，请沿用原请求重试"}<button type="button" class="button secondary compact" data-retry-request="${e(entry.id)}" ${entry.pending ? "disabled" : ""}>恢复原提交</button></div>`,
+    ).join("");
+    node.querySelectorAll("[data-retry-request]").forEach((button) => {
+      button.onclick = () => {
+        const entry = [...submissions.values()].find((item) => item.id === button.dataset.retryRequest);
+        if (entry) buttonAction(button, () => submitSnapshot(entry));
+      };
+    });
+  }
+  async function submitSnapshot(entry) {
+    if (entry.pending) return;
+    entry.pending = true;
+    const version = ++submissionVersion;
+    state.requestId = entry.id;
+    renderSubmissions();
+    try {
+      const result = await call("action", "submit", { request_json: entry.json });
+      if (submissions.get(entry.signature) === entry) submissions.delete(entry.signature);
+      if (state.requestId === entry.id) state.requestId = null;
+      // An older receipt cannot replace the task selected by a newer submission.
+      if (version === submissionVersion) {
+        state.lastTask = result.task_id;
+        await updateResult();
+      }
+      toast("绘图任务已提交");
+    } finally {
+      entry.pending = false;
+      renderSubmissions();
+    }
   }
   U.views.studio = async (previousMode = null) => {
     clearTimeout(pollTimer);
+    resultVersion++;
     if (!state.data.models.length) {
       $("#workspace-content").innerHTML = U.empty(
         "先添加一个绘图平台",
@@ -112,7 +171,7 @@
         )
         .join(
           "",
-        )}</select></div></div>${mode === "edit_image" ? `<div class="field"><label>源图片</label><div class="upload-zone" id="upload-zone">${icon("upload")}<p>拖放图片到这里，或选择文件</p><button type="button" id="source-button" class="button secondary compact">${icon("upload")}选择源图片</button><input type="file" id="source-file" accept="image/png,image/jpeg,image/webp" multiple hidden></div><div class="source-list" id="source-list"></div><p class="hint">上传真实源图；最终支持数量以模型为准。需要公网原图 URL 的模型不支持直接使用网页上传的本地图片。</p></div>` : ""}<details><summary class="muted" style="cursor:pointer;margin-bottom:15px">反向提示词与发送选项</summary><div class="field"><label for="draw-negative">反向提示词</label><textarea id="draw-negative" rows="2" maxlength="16000" placeholder="不希望出现在画面中的内容"></textarea></div><div class="field"><label for="draw-delivery">结果去向</label><select id="draw-delivery"><option value="web">仅在工作台查看</option><option value="chat">同时发送到聊天</option></select></div><div id="delivery-fields" hidden><div class="field-row"><div class="field"><label for="chat-platform">聊天平台标识</label><input id="chat-platform" value="qq" maxlength="80"></div><div class="field"><label>&nbsp;</label><button type="button" id="load-streams" class="button secondary wide">加载聊天会话</button></div></div><div class="field"><label for="draw-stream">目标会话</label><select id="draw-stream"><option value="">请先加载会话</option></select><p class="hint">使用实际聊天流；发送到聊天时沿用群聊或私聊额度。网页专用任务由当前实例管理，不计入聊天额度。</p></div></div></details><div class="sticky-save"><span class="hint">模型校验 · 提示词与图片审核</span><button type="submit" class="button" id="start-drawing">${icon("sparkles")}开始绘图</button></div></form></section><aside class="stack"><section class="panel"><div class="panel-header"><h3>创作结果</h3>${icon("images")}</div><div id="studio-result"><div class="placeholder-art">${icon("sparkles")}<span>想象，正在等待落笔</span><small>任务提交后，会在这里显示进度与生成图片。</small></div></div></section><div class="panel"><h3>让画面更接近你的想法</h3><p class="hint">描述具体的主体、环境和光线。试试风格预设，把常用的画面语言保存下来。</p><button class="button ghost compact" id="studio-presets" style="margin-top:8px">管理预设 ${icon("arrow")}</button></div></aside></div>`;
+        )}</select></div></div>${mode === "edit_image" ? `<div class="field"><label>源图片</label><div class="upload-zone" id="upload-zone">${icon("upload")}<p>拖放图片到这里，或选择文件</p><button type="button" id="source-button" class="button secondary compact">${icon("upload")}选择源图片</button><input type="file" id="source-file" accept="image/png,image/jpeg,image/webp" multiple hidden></div><div class="source-list" id="source-list"></div><p class="hint">上传真实源图；最终支持数量以模型为准。需要公网原图 URL 的模型不支持直接使用网页上传的本地图片。</p></div>` : ""}<details><summary class="muted" style="cursor:pointer;margin-bottom:15px">反向提示词与发送选项</summary><div class="field"><label for="draw-negative">反向提示词</label><textarea id="draw-negative" rows="2" maxlength="16000" placeholder="不希望出现在画面中的内容"></textarea></div><div class="field"><label for="draw-delivery">结果去向</label><select id="draw-delivery"><option value="web">仅在工作台查看</option><option value="chat">同时发送到聊天</option></select></div><div id="delivery-fields" hidden><div class="field-row"><div class="field"><label for="chat-platform">聊天平台标识</label><input id="chat-platform" value="qq" maxlength="80"></div><div class="field"><label>&nbsp;</label><button type="button" id="load-streams" class="button secondary wide">加载聊天会话</button></div></div><div class="field"><label for="draw-stream">目标会话</label><select id="draw-stream"><option value="">请先加载会话</option></select><p class="hint">使用实际聊天流；发送到聊天时沿用群聊或私聊额度。网页专用任务由当前实例管理，不计入聊天额度。</p></div></div></details><div class="sticky-save"><span class="hint">模型校验 · 提示词与图片审核</span><button type="submit" class="button" id="start-drawing">${icon("sparkles")}开始绘图</button></div></form></section><aside class="stack"><section class="panel"><div class="panel-header"><h3>创作结果</h3>${icon("images")}</div><div id="studio-submissions" aria-live="polite"></div><div id="studio-result"><div class="placeholder-art">${icon("sparkles")}<span>想象，正在等待落笔</span><small>任务提交后，会在这里显示进度与生成图片。</small></div></div></section><div class="panel"><h3>让画面更接近你的想法</h3><p class="hint">描述具体的主体、环境和光线。试试风格预设，把常用的画面语言保存下来。</p><button class="button ghost compact" id="studio-presets" style="margin-top:8px">管理预设 ${icon("arrow")}</button></div></aside></div>`;
     for (const [id, value] of Object.entries(draft)) {
       const input = $("#" + id);
       if (
@@ -206,7 +265,6 @@
           $("#draw-delivery").value === "chat" ? $("#draw-stream").value : "";
         if ($("#draw-delivery").value === "chat" && !stream)
           throw new Error("请选择真实聊天会话");
-        state.requestId ||= U.uid();
         const request = {
           prompt: $("#draw-prompt").value,
           model: $("#draw-model").value,
@@ -218,17 +276,19 @@
             mode === "edit_image"
               ? state.sources.map((item) => item.source_id)
               : [],
-          request_id: state.requestId,
         };
-        const result = await call("action", "submit", {
-          request_json: JSON.stringify(request),
-        });
-        state.lastTask = result.task_id;
-        state.requestId = null;
-        toast("绘图任务已提交");
-        await updateResult();
+        const signature = JSON.stringify(request);
+        let entry = submissions.get(signature);
+        if (!entry) {
+          const id = U.uid();
+          entry = { signature, id, prompt: request.prompt,
+            json: JSON.stringify({ ...request, request_id: id }), pending: false };
+          submissions.set(signature, entry);
+        }
+        await submitSnapshot(entry);
       });
     };
+    renderSubmissions();
     if (state.lastTask) await updateResult();
   };
 })();

@@ -1,5 +1,7 @@
 """tools/drawing.py 的插件组件。"""
 
+from ...infrastructure.observability.redaction import outward_error
+
 from maibot_sdk import Tool
 from typing import Any
 
@@ -48,15 +50,17 @@ class DrawingToolMixin:
                 platform_name=context["platform"],
             )
         except PermissionError as exc:
-            await self._send_invocation_failure_notice(reason=str(exc), kwargs=kwargs, user_id=user_id)
+            reason = outward_error(self, exc)
+            await self._send_invocation_failure_notice(reason=reason, kwargs=kwargs, user_id=user_id)
             return {
                 "success": False,
-                "message": str(exc),
+                "message": reason,
             }
         except Exception as exc:
+            reason = outward_error(self, exc)
             self.ctx.logger.error("启动后台创建图片失败: %s", exc, exc_info=True)
-            await self._send_invocation_failure_notice(reason=str(exc), kwargs=kwargs, user_id=user_id)
-            return {"success": False, "message": f"启动后台创建图片失败：{exc}"}
+            await self._send_invocation_failure_notice(reason=reason, kwargs=kwargs, user_id=user_id)
+            return {"success": False, "message": reason}
 
     @Tool(
         "edit_image",
@@ -205,21 +209,24 @@ class DrawingToolMixin:
                 notify_start=True,
             )
         except PermissionError as exc:
-            await self._send_invocation_failure_notice(reason=str(exc), kwargs=kwargs, user_id=user_id)
+            reason = outward_error(self, exc)
+            await self._send_invocation_failure_notice(reason=reason, kwargs=kwargs, user_id=user_id)
             return {
                 "success": False,
-                "message": str(exc),
+                "message": reason,
             }
         except ValueError as exc:
-            await self._send_invocation_failure_notice(reason=str(exc), kwargs=kwargs, user_id=user_id)
+            reason = outward_error(self, exc)
+            await self._send_invocation_failure_notice(reason=reason, kwargs=kwargs, user_id=user_id)
             return {
                 "success": False,
                 "message": (
-                    f"{exc}。无法调用 edit_image 图片编辑；请自然告知用户需要先发送一张真实图片，"
+                    f"{reason}。无法调用 edit_image 图片编辑；请自然告知用户需要先发送一张真实图片，"
                     "或回复/指定包含图片的消息后再编辑。"
                 ),
             }
         except Exception as exc:
+            reason = outward_error(self, exc)
             self.ctx.logger.error("启动后台编辑图片失败: %s", exc, exc_info=True)
-            await self._send_invocation_failure_notice(reason=str(exc), kwargs=kwargs, user_id=user_id)
-            return {"success": False, "message": f"启动后台编辑图片失败：{exc}"}
+            await self._send_invocation_failure_notice(reason=reason, kwargs=kwargs, user_id=user_id)
+            return {"success": False, "message": reason}

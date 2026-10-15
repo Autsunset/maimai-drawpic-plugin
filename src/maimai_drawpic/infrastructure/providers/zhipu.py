@@ -7,6 +7,7 @@ import base64
 import time
 
 from .requests import generation_submission
+from ..media.collection import bounded_results, decode_result_base64
 from ..http import provider_response_error, sanitized_log_args
 from ..media.downloads import download_image
 from ..http import (
@@ -120,6 +121,7 @@ class ZhipuImage:
                 )
                 return response_json
 
+    @bounded_results
     async def _extract_images(self, response: dict[str, Any]) -> list[bytes]:
         """从接口响应中提取图片。"""
 
@@ -136,7 +138,7 @@ class ZhipuImage:
 
             image_base64 = item.get("b64_json")
             if isinstance(image_base64, str) and image_base64:
-                image_bytes_list.append(await asyncio.to_thread(base64.b64decode, image_base64))
+                image_bytes_list.append(await asyncio.to_thread(decode_result_base64, image_base64))
                 continue
 
             image_url = item.get("url")

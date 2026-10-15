@@ -10,7 +10,8 @@ import base64
 import json
 import re
 
-from ..media.images import detect_image_format
+from ..media.images import detect_image_format, check_image_dimensions
+from ..media.collection import validate_result_images
 from .atomic import write_json_atomically
 from .retention import ArtifactRetention
 from ..concurrency import synchronized
@@ -44,6 +45,8 @@ class ImageResultStore:
     @staticmethod
     def _preview(raw: bytes, edge: int, max_bytes: int) -> bytes:
         with Image.open(BytesIO(raw)) as original:
+            check_image_dimensions(original)
+            original.draft("RGB", (edge, edge))
             image = ImageOps.exif_transpose(original).convert("RGBA" if "A" in original.getbands() else "RGB")
             image.thumbnail((edge, edge))
             quality = 85
@@ -60,6 +63,7 @@ class ImageResultStore:
     @synchronized
     def save(self, task_id: str, images: List[bytes]) -> int:
         # 先压缩并计算精确占用，再为整个任务预留容量，避免估算导致误清理或超限。
+        validate_result_images(images)
         prepared = []
         for raw in images:
             extension = detect_image_format(raw)

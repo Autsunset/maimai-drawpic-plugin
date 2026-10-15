@@ -14,7 +14,7 @@ from .prompts import PromptReviewMixin
 from .planning import RequestPlanningMixin
 from .execution import ImageExecutionMixin
 from .queries import TaskQueryMixin
-from .admission import persist_submission, tracked_submission, update_task_owned
+from .admission import persist_submission, tracked_submission, wait_for_admission
 from ...domain.task_errors import task_error
 
 
@@ -24,6 +24,9 @@ class DrawService(
     """协调平台路由与绘图任务所需的独立职责。"""
 
     STATUS_RECHECK_INTERVAL_SECONDS = 20
+    CANCEL_WAIT_SECONDS = 1.0
+    SHUTDOWN_WAIT_SECONDS = 5.0
+    TERMINAL_WRITE_ATTEMPTS = 3
 
     ENGLISH_PROMPT_REWRITE_PROMPT = (
         "你是图片生成提示词英文改写器，负责把用户提示词改写成可直接交给 NovelAI / Stable Diffusion / "
@@ -145,11 +148,18 @@ class DrawService(
         for task in tasks:
             task.cancel()
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            _, pending = await asyncio.wait(tasks, timeout=self.SHUTDOWN_WAIT_SECONDS)
+            if pending:
+                raise RuntimeError("卸载尚未完成：任务提交仍在收尾，稍后重试卸载")
 
-    async def wait_settlement(self) -> None:
+    async def wait_settlement(self, *, bounded: bool = False) -> None:
         while self._settlement_tasks:
-            await asyncio.gather(*tuple(self._settlement_tasks), return_exceptions=True)
+            if bounded:
+                _, pending = await asyncio.wait(tuple(self._settlement_tasks), timeout=self.SHUTDOWN_WAIT_SECONDS)
+                if pending:
+                    raise RuntimeError("卸载尚未完成：任务结算仍在收尾，稍后重试卸载")
+            else:
+                await asyncio.gather(*tuple(self._settlement_tasks), return_exceptions=True)
 
     def resolve_request_timeout_seconds(self) -> int:
         """解析请求超时时间。"""
@@ -193,8 +203,8 @@ class DrawService(
 
         async def settle_unstarted() -> None:
             try:
-                await update_task_owned(
-                    self.task_store, task_id, status="failed", message="任务已取消",
+                await self.persist_terminal(
+                    task_id, status="failed", message="任务已取消",
                     error=task_error("CANCELLED", "执行尚未启动，任务已取消"),
                 )
             except Exception:
@@ -219,15 +229,40 @@ class DrawService(
 
         task.add_done_callback(finished)
 
-    async def cancel_background_tasks(self) -> None:
-        """取消当前全部后台任务。"""
+    async def persist_terminal(self, task_id: str, **changes: Any) -> None:
+        """Retry only the exact final mutation, never generation or delivery."""
+        async def persist() -> None:
+            for attempt in range(self.TERMINAL_WRITE_ATTEMPTS):
+                try:
+                    await asyncio.to_thread(self.task_store.update_task, task_id, **changes)
+                    return
+                except OSError:
+                    if attempt + 1 < self.TERMINAL_WRITE_ATTEMPTS:
+                        await asyncio.sleep(0.05 * (attempt + 1))
+                except Exception:
+                    break
+            self.task_store.defer_terminal(task_id, **changes)
+            self.ctx.logger.error(
+                "绘图终态待落盘: task_id=%s status=%s；恢复存储后查询或卸载会重试保存，不会重新生成或发送",
+                task_id, changes["status"],
+            )
 
+        pending = asyncio.create_task(persist())
+        self._settlement_tasks.add(pending)
+        pending.add_done_callback(self._settlement_tasks.discard)
+        await wait_for_admission(pending)
+
+    async def cancel_background_tasks(self) -> None:
+        """Bound shutdown without discarding ownership of live SDK threads."""
         tasks = list(self.background_tasks)
         for task in tasks:
             task.cancel()
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        await self.wait_settlement()
+            _, pending = await asyncio.wait(tasks, timeout=self.SHUTDOWN_WAIT_SECONDS)
+            if pending:
+                self.ctx.logger.error("卸载尚未完成：%s 个绘图任务仍在等待本地工作线程退出", len(pending))
+                raise RuntimeError("卸载尚未完成：同步绘图工作线程仍在运行，资源名额保持占用；稍后重试卸载")
+        await self.wait_settlement(bounded=True)
 
     @tracked_submission
     async def start_background_image_request(

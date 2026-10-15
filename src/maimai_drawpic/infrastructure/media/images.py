@@ -4,6 +4,18 @@ from PIL import Image as PILImage
 from io import BytesIO
 
 MAX_IMAGE_BYTES = 25 * 1024 * 1024
+# Allow square 4K and panoramic model output without permitting arbitrary rasters.
+MAX_IMAGE_PIXELS = 4096 * 4096
+MAX_IMAGE_DIMENSION = 8192
+
+
+def check_image_dimensions(image) -> int:
+    width, height = image.size
+    if (width <= 0 or height <= 0 or max(width, height) > MAX_IMAGE_DIMENSION
+            or width * height > MAX_IMAGE_PIXELS):
+        raise ValueError("图片像素超过限制：最长边 8192，单张最多 16777216 像素")
+    return width * height
+
 
 
 _MIME_TYPE_MAP = {
@@ -25,6 +37,7 @@ def validate_image_bytes(image_bytes: bytes) -> bytes:
     if len(image_bytes) > MAX_IMAGE_BYTES:
         raise ValueError(f"图片大小超过限制：{MAX_IMAGE_BYTES} 字节")
     with PILImage.open(BytesIO(image_bytes)) as image:
+        check_image_dimensions(image)
         image.verify()
     return image_bytes
 

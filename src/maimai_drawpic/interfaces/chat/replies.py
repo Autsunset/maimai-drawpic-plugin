@@ -4,6 +4,7 @@ from typing import Any
 import re
 
 from .image_reply import ReplyTextSpan
+from ...infrastructure.http import sanitize_provider_text
 
 
 class ReplyMixin:
@@ -44,11 +45,12 @@ class ReplyMixin:
             platform=platform,
         )
 
-    @staticmethod
-    def _summarize_failure_reason(reason: str) -> str:
+    def _summarize_failure_reason(self, reason: str) -> str:
         """生成适合直接发送的简短、脱敏错误原因。"""
 
-        normalized_reason = re.sub(r"\s+", " ", str(reason or "未知错误")).strip()
+        redactor = getattr(self, "_redactor", None)
+        redact = redactor.redact if redactor is not None else sanitize_provider_text
+        normalized_reason = re.sub(r"\s+", " ", redact(reason or "未知错误")).strip()
         normalized_reason = re.sub(
             r"(?i)\b(bearer\s+|api[_ -]?key[=:]\s*|token[=:]\s*)[^\s,;]+",
             r"\1***",

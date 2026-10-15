@@ -28,10 +28,35 @@ def sanitize_provider_url(url: str) -> str:
         return "[INVALID_URL]"
 
 
+def normalize_provider_diagnostic(value: Any) -> str:
+    """Decode JSON diagnostic spelling before secret and URL redaction.
+
+    Only JSON unicode and slash escapes are normalized in free text, not
+    arbitrary Python escapes. Bounded JSON unwrapping handles nested payloads.
+    """
+    for _ in range(4):
+        if not isinstance(value, str):
+            break
+        try:
+            decoded = json.loads(value)
+        except (ValueError, TypeError):
+            break
+        if decoded == value:
+            break
+        value = decoded
+    text = str(value)
+    text = re.sub(
+        r"\\+u([0-9a-fA-F]{4})",
+        lambda match: chr(int(match[1], 16)) if not 0xD800 <= int(match[1], 16) <= 0xDFFF else match[0],
+        text,
+    )
+    return re.sub(r"\\+/", "/", text)
+
+
 def sanitize_provider_text(value: Any, api_key: str = "", *, max_chars: int = 500) -> str:
     """所有平台的错误与日志均移除凭证、图片数据和签名参数。"""
 
-    text = str(value)
+    text = normalize_provider_diagnostic(value)
     if api_key:
         text = text.replace(api_key, "[REDACTED]")
     text = re.sub(r"\b(Bearer|Basic)\s+(?:\[REDACTED\]|[^\s,;\"'<>\]}]+)", r"\1 [REDACTED]", text, flags=re.IGNORECASE)
@@ -44,7 +69,7 @@ def sanitize_provider_text(value: Any, api_key: str = "", *, max_chars: int = 50
     )
     text = re.sub(r"data:image/[^;\s]+;base64,[A-Za-z0-9+/=_-]+", "[BASE64_REDACTED]", text, flags=re.IGNORECASE)
     text = re.sub(r"[A-Za-z0-9+/=_-]{80,}", "[LONG_DATA_REDACTED]", text)
-    for url in re.findall(r"https?://[^\s\"'<>]+", text):
+    for url in re.findall(r"https?://[^\s\"'<>]+", text, flags=re.IGNORECASE):
         text = text.replace(url, sanitize_provider_url(url))
     return text[:max_chars]
 

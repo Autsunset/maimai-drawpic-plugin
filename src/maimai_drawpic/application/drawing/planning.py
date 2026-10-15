@@ -2,7 +2,8 @@ from typing import Any
 import asyncio
 import inspect
 
-from ...infrastructure.media.images import validate_image_bytes
+from ...infrastructure.media.collection import validate_result_images
+from .admission import wait_for_admission
 from .types import ImageRequestAttempt
 
 
@@ -17,9 +18,19 @@ class RequestPlanningMixin:
         if inspect.iscoroutinefunction(call):
             image_bytes_list = await asyncio.wait_for(call(*args), timeout=timeout_seconds)
         else:
-            image_bytes_list = await asyncio.wait_for(asyncio.to_thread(call, *args), timeout=timeout_seconds)
+            # Cancelling the asyncio wrapper cannot stop an SDK thread. Keep this
+            # drawing task (and its quota/capacity) alive until the worker exits.
+            pending = asyncio.create_task(asyncio.to_thread(call, *args))
+            try:
+                image_bytes_list = await asyncio.wait_for(asyncio.shield(pending), timeout=timeout_seconds)
+            except (asyncio.CancelledError, TimeoutError):
+                try:
+                    await wait_for_admission(pending)
+                except Exception:
+                    pass  # Retrieve worker failure, but preserve cancellation/timeout.
+                raise
         # 解码大图会占用 CPU，必须在线程中校验，避免阻塞其他会话的任务。
-        return await asyncio.to_thread(lambda: [validate_image_bytes(image_bytes) for image_bytes in image_bytes_list])
+        return await asyncio.to_thread(validate_result_images, image_bytes_list)
 
     def _build_image_request_attempt(
         self,

@@ -158,7 +158,13 @@
   async function bootstrap() {
     state.data = await call("query", "bootstrap");
     $("#connection").textContent = "已连接当前实例";
-    $("#load-error").hidden = true;
+    const notice = state.data.config_update_pending
+      ? "配置更新仍在处理中，提交与运行配置刷新尚未确认完成。请稍后刷新查看状态，无需重复提交。"
+      : state.data.runtime_refresh_pending
+        ? "运行配置刷新尚未完成。页面刷新只重新查询状态，不会重复保存或自动修复运行配置。"
+        : "";
+    $("#load-error").textContent = notice;
+    $("#load-error").hidden = !notice;
     return state.data;
   }
   function savedNotice(result, message, refreshError = null) {
@@ -180,6 +186,7 @@
     toast(notice || message);
   }
   async function render() {
+    state.renderVersion = (state.renderVersion || 0) + 1;
     $("#save-settings").hidden = state.view !== "settings";
     $("#settings-unsaved").hidden = state.view !== "settings" || !state.dirty;
     const [title, description] = titles[state.view];

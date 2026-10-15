@@ -174,16 +174,16 @@ def test_output_image_validation_runs_outside_event_loop(monkeypatch: pytest.Mon
 
     event_loop_thread = get_ident()
     validation_threads: List[int] = []
-    original_validate = module.validate_image_bytes
+    original_validate = module.validate_result_images
 
-    def validate(data: bytes) -> bytes:
+    def validate(data: List[bytes]) -> List[bytes]:
         validation_threads.append(get_ident())
         return original_validate(data)
 
     async def generate() -> List[bytes]:
         return [PNG]
 
-    monkeypatch.setattr(module, "validate_image_bytes", validate)
+    monkeypatch.setattr(module, "validate_result_images", validate)
     monkeypatch.setattr(DrawService, "resolve_request_timeout_seconds", lambda _self: 5)
     service = DrawService.__new__(DrawService)
     assert asyncio.run(service.run_provider_call(generate)) == [PNG]
