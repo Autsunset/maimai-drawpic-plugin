@@ -11,8 +11,8 @@
   --soft: #f4f2ef;
   --line: #e8e5e1;
   --text: #282629;
-  --muted: #858087;
-  --accent: #ca667d;
+  --muted: #716b74;
+  --accent: #aa4862;
   --accent-button: #b94764;
   --on-accent: #fff;
   --accent-dark: #a84e63;
@@ -438,7 +438,16 @@ footer {
   margin-bottom: 19px;
   min-width: 0;
 }
-.field > label {
+.field:is(fieldset) {
+  margin-inline: 0;
+  padding: 0;
+  border: 0;
+}
+.field > legend {
+  padding: 0;
+}
+.field > label,
+.field > legend {
   display: block;
   font-size: 12px;
   font-weight: 550;
@@ -819,6 +828,9 @@ textarea {
   max-width: 360px;
   margin: 0 auto 20px;
 }
+.save-label-short {
+  display: none;
+}
 .settings-layout {
   display: grid;
   grid-template-columns: 190px minmax(0, 1fr);
@@ -1119,8 +1131,12 @@ dialog::backdrop {
     font-size: 8px;
     letter-spacing: 1.6px;
   }
-  .page-header .button > span:last-child {
+  #refresh > span:last-child,
+  #save-settings .save-label-full {
     display: none;
+  }
+  #save-settings .save-label-short {
+    display: inline;
   }
   .studio-grid,
   .card-grid,
@@ -1332,7 +1348,7 @@ dialog::backdrop {
               title="保存全部设置"
               hidden
             >
-              <span data-icon="check"></span><span>保存全部设置</span>
+              <span data-icon="check"></span><span class="save-label-full">保存全部设置</span><span class="save-label-short" aria-hidden="true">保存</span>
             </button>
             <button
               id="refresh"
@@ -1526,6 +1542,24 @@ dialog::backdrop {
     $("#load-error").hidden = true;
     return state.data;
   }
+  function savedNotice(result, message, refreshError = null) {
+    const warning =
+      result?.warning ||
+      (result?.recovery_pending || result?.runtime_refresh_pending
+        ? "配置已保存，但恢复或运行配置刷新尚未完成。"
+        : "");
+    const notice = [
+      warning,
+      refreshError
+        ? `${message}，但工作台刷新失败：${refreshError.message || String(refreshError)}。请点击刷新，无需重复提交。`
+        : "",
+    ].filter(Boolean).join("\n");
+    if (notice) {
+      $("#load-error").textContent = notice;
+      $("#load-error").hidden = false;
+    }
+    toast(notice || message);
+  }
   async function render() {
     $("#save-settings").hidden = state.view !== "settings";
     $("#settings-unsaved").hidden = state.view !== "settings" || !state.dirty;
@@ -1657,6 +1691,7 @@ dialog::backdrop {
     modal,
     closeModal,
     bootstrap,
+    savedNotice,
     render,
     navigate,
     replaceViewHash,
@@ -1768,13 +1803,27 @@ dialog::backdrop {
         .map(([key, meta]) => {
           const value = values[key] ?? structuredClone(meta.default);
           const id = `field-${++sequence}`;
+          const hint = [
+            localized(meta, "hint"),
+            key === "default_model" && state.data.default_model_error
+              ? `${state.data.default_model_error}。请选择完整的“平台实例 / 模型”名称后保存。`
+              : "",
+          ].filter(Boolean).join(" "),
+            description = hint ? ` aria-describedby="${id}-hint"` : "";
           let control;
           if (meta.type === "array") {
             const keyvalue = /extra_parameters|overrides/.test(key);
             control = `<div data-array="${e(key)}" data-object="${meta.item_type === "object"}" data-keyvalue="${keyvalue}">${(value || []).map((item, index) => (meta.item_type === "object" ? objectRow(meta, item, index) : row(item, keyvalue, key === "fallback_models"))).join("")}<button type="button" class="button secondary compact" data-add-array>${icon("plus")}添加${meta.item_type === "object" ? "项目" : "一项"}</button></div>`;
-          } else control = scalar(key, meta, value, id, values);
+          } else
+            control = scalar(key, meta, value, id, values).replace(
+              `id="${id}"`,
+              `id="${id}"${description}`,
+            );
           const full = meta.type === "array" || /prompt|description/.test(key);
-          return `<div class="field ${meta.type === "boolean" ? "field-toggle" : ""} ${full ? "full" : ""}" data-field="${e(key)}"><label for="${id}">${e(localized(meta, "label") || key)}</label>${control}${meta.hint ? `<p class="hint">${e(localized(meta, "hint"))}</p>` : ""}</div>`;
+          const array = meta.type === "array",
+            tag = array ? "fieldset" : "div",
+            label = e(localized(meta, "label") || key);
+          return `<${tag} class="field ${meta.type === "boolean" ? "field-toggle" : ""} ${full ? "full" : ""}" data-field="${e(key)}"${array ? description : ""}>${array ? `<legend>${label}</legend>` : `<label for="${id}">${label}</label>`}${control}${hint ? `<p id="${id}-hint" class="hint">${e(hint)}</p>` : ""}</${tag}>`;
         })
         .join("") +
       "</div>"
@@ -1936,6 +1985,11 @@ dialog::backdrop {
     );
     const form = $("#provider-form", node),
       read = U.forms.bind(form, fields, values, { platform: true });
+    const modalVersion = state.modalVersion,
+      revision = state.data.revision;
+    const current = () =>
+      form.isConnected && modalVersion === state.modalVersion;
+    let saving = false;
     $("#provider-back", node).onclick = () => {
       closeModal();
     };
@@ -1951,24 +2005,46 @@ dialog::backdrop {
     U.bindSubmit(form);
     form.onsubmit = (event) => {
       event.preventDefault();
+      if (saving || !current()) return;
       buttonAction($("[type=submit]", form), async () => {
         const config = read();
         delete config.instances;
-        await call("action", "provider_save", {
-          provider_json: JSON.stringify({
-            id: record?.id || "",
-            kind,
-            name: $("#provider-name", form).value,
-            config,
-            clear_api_key: $("#clear-api-key", form)?.checked || false,
-          }),
-          revision: state.data.revision,
-        });
-        state.dirty = false;
-        closeModal();
-        await U.bootstrap();
-        await U.render();
-        toast("平台已保存");
+        saving = true;
+        form.inert = true;
+        form.setAttribute("aria-busy", "true");
+        try {
+          const result = await call("action", "provider_save", {
+            provider_json: JSON.stringify({
+              id: record?.id || "",
+              kind,
+              name: $("#provider-name", form).value,
+              config,
+              clear_api_key: $("#clear-api-key", form)?.checked || false,
+            }),
+            revision,
+          });
+          // RPC 已确认提交，即使后续读取失败也不能把它当作保存失败重试。
+          if (current()) state.dirty = false;
+          let refreshError = null;
+          try {
+            await U.bootstrap();
+            // 关闭或替换编辑器后，旧保存不能清除新草稿或关闭新弹窗。
+            if (current()) {
+              await closeModal(true);
+              await U.render();
+            }
+          } catch (error) {
+            refreshError = error;
+            if (current()) await closeModal(true);
+          }
+          U.savedNotice(result, "平台已保存", refreshError);
+        } finally {
+          saving = false;
+          if (current()) {
+            form.inert = false;
+            form.removeAttribute("aria-busy");
+          }
+        }
       });
     };
   }
@@ -2017,13 +2093,18 @@ dialog::backdrop {
       $("[data-edit]", card).onclick = () => editor(item.kind, item);
       $("[data-delete]", card).onclick = (event) =>
         buttonAction(event.currentTarget, async () => {
-          await call("action", "provider_delete", {
+          const result = await call("action", "provider_delete", {
             provider_id: item.id,
             revision: state.data.revision,
           });
-          await U.bootstrap();
-          await U.render();
-          toast("已移除平台");
+          let refreshError = null;
+          try {
+            await U.bootstrap();
+            if (card.isConnected && state.view === "platforms") await U.render();
+          } catch (error) {
+            refreshError = error;
+          }
+          U.savedNotice(result, "平台已移除", refreshError);
         });
     });
   };
@@ -2051,7 +2132,10 @@ dialog::backdrop {
     }
   }
   function modelOptions() {
-    return state.data.models
+    const placeholder = state.data.default_model_error
+      ? '<option value="" selected>请选择平台实例 / 模型</option>'
+      : "";
+    return placeholder + state.data.models
       .filter((item) => item[mode])
       .map(
         (item) =>
@@ -2126,14 +2210,15 @@ dialog::backdrop {
     if (!state.data.models.length) {
       $("#workspace-content").innerHTML = U.empty(
         "先添加一个绘图平台",
-        "平台和模型准备好之后，就可以在这里开始第一幅作品。",
+        state.data.default_model_error ||
+          "平台和模型准备好之后，就可以在这里开始第一幅作品。",
         `<button id="first-platform" class="button">${icon("plus")}添加绘图平台</button>`,
       );
       $("#first-platform").onclick = () => U.navigate("platforms");
       return;
     }
     $("#workspace-content").innerHTML =
-      `<div class="studio-grid"><section class="panel"><div class="panel-header"><div class="section-label">${icon("sparkles")}<h2>创作新的画面</h2></div><span class="pill">后台执行</span></div><div class="mode-switch" data-mode="${mode}" role="group" aria-label="绘图模式"><span class="mode-indicator" aria-hidden="true"></span><button id="mode-draw" class="${mode === "draw" ? "active" : ""}">文生图</button><button id="mode-edit" class="${mode === "edit_image" ? "active" : ""}">图生图</button></div><form id="draw-form"><div class="field"><label for="draw-prompt">你想画什么？</label><textarea id="draw-prompt" class="prompt-input" maxlength="16000" required placeholder="描述主体、构图、光线和风格。例如：一只橘猫坐在窗边，午后阳光照进房间，水彩质感。"></textarea></div><div class="field-row"><div class="field"><label for="draw-model">绘图模型</label><select id="draw-model" required>${modelOptions()}</select></div><div class="field"><label for="draw-style">风格预设</label><select id="draw-style"><option value="">不使用预设</option>${state.data.presets
+      `<div class="studio-grid"><section class="panel"><div class="panel-header"><div class="section-label">${icon("sparkles")}<h2>创作新的画面</h2></div><span class="pill">后台执行</span></div><div class="mode-switch" data-mode="${mode}" role="group" aria-label="绘图模式"><span class="mode-indicator" aria-hidden="true"></span><button id="mode-draw" aria-pressed="${mode === "draw"}" class="${mode === "draw" ? "active" : ""}">文生图</button><button id="mode-edit" aria-pressed="${mode === "edit_image"}" class="${mode === "edit_image" ? "active" : ""}">图生图</button></div><form id="draw-form"><div class="field"><label for="draw-prompt">你想画什么？</label><textarea id="draw-prompt" class="prompt-input" maxlength="16000" required placeholder="描述主体、构图、光线和风格。例如：一只橘猫坐在窗边，午后阳光照进房间，水彩质感。"></textarea></div><div class="field-row"><div class="field"><label for="draw-model">绘图模型</label><select id="draw-model" required${state.data.default_model_error ? ' aria-describedby="draw-model-error"' : ""}>${modelOptions()}</select>${state.data.default_model_error ? `<p id="draw-model-error" class="hint" role="status">${e(state.data.default_model_error)}。请选择完整的“平台实例 / 模型”名称；可在偏好与预设中更新默认模型。</p>` : ""}</div><div class="field"><label for="draw-style">风格预设</label><select id="draw-style"><option value="">不使用预设</option>${state.data.presets
         .filter((item) => item.enabled)
         .map(
           (item) => `<option value="${e(item.name)}">${e(item.name)}</option>`,
@@ -2180,16 +2265,6 @@ dialog::backdrop {
         ],
         { duration: 260, easing: "cubic-bezier(.2,.8,.2,1)" },
       );
-      if (mode === "edit_image")
-        $("#upload-zone")
-          .closest(".field")
-          .animate(
-            [
-              { opacity: 0, transform: "translateY(-5px)" },
-              { opacity: 1, transform: "translateY(0)" },
-            ],
-            { duration: 190, easing: "ease-out" },
-          );
     }
     $("#draw-delivery").onchange = () => {
       $("#delivery-fields").hidden = $("#draw-delivery").value !== "chat";
@@ -2465,6 +2540,7 @@ dialog::backdrop {
           "",
         )}</div><section class="panel"><div class="panel-header"><div><h2 id="settings-heading"></h2><p class="hint" id="settings-description"></p></div><button type="button" id="reset-settings" class="button secondary compact">恢复当前分类默认</button></div><form id="settings-form"></form></section></div>`;
     const form = $("#settings-form");
+    let requiresRefresh = false;
     function renderSection(name, values) {
       const panel = document.createElement("section");
       panel.id = `settings-panel-${name}`;
@@ -2546,6 +2622,7 @@ dialog::backdrop {
     });
     form.onsubmit = (event) => {
       event.preventDefault();
+      if (form.inert || requiresRefresh) return;
       buttonAction(save, async () => {
         const all = Object.fromEntries(
           Object.entries(readers).map(([name, read]) => [name, read()]),
@@ -2553,20 +2630,31 @@ dialog::backdrop {
         form.inert = true;
         $("#reset-settings").disabled = true;
         try {
-          await call("action", "settings_save", {
+          const result = await call("action", "settings_save", {
             config_json: JSON.stringify(all),
             revision,
           });
-          if (form.isConnected) state.dirty = false;
-          await U.bootstrap();
-          if (form.isConnected && state.view === "settings") await U.render();
-          toast("全部设置已保存");
+          if (form.isConnected) {
+            state.dirty = false;
+            updateNotice();
+          }
+          let refreshError = null;
+          try {
+            await U.bootstrap();
+            if (form.isConnected && state.view === "settings") await U.render();
+          } catch (error) {
+            refreshError = error;
+            requiresRefresh = true;
+          }
+          U.savedNotice(result, "全部设置已保存", refreshError);
         } finally {
           if (form.isConnected) {
-            form.inert = false;
-            $("#reset-settings").disabled = false;
+            form.inert = requiresRefresh;
+            $("#reset-settings").disabled = requiresRefresh;
           }
         }
+      }).finally(() => {
+        if (form.isConnected && requiresRefresh) save.disabled = true;
       });
     };
     activate(selected);
@@ -2586,7 +2674,10 @@ dialog::backdrop {
     clearTimeout(debounce);
     const token = ++generation;
     let cursor = "",
-      loading = false;
+      cursorFilter = "",
+      requestVersion = 0,
+      pending = null,
+      loading = null;
     $("#workspace-content").innerHTML =
       `<form id="log-filter" class="toolbar"><div class="actions"><input id="log-task" class="search-input" value="${e(state.logTask || "")}" maxlength="12" placeholder="任务 ID，留空查看全部" aria-label="筛选日志任务"><select id="log-level" class="search-input" aria-label="筛选日志级别"><option value="">全部级别</option>${["INFO", "WARNING", "ERROR", "DEBUG"].map((value) => `<option value="${value}" ${state.logLevel === value ? "selected" : ""}>${value}</option>`).join("")}</select><button type="submit" class="button secondary">${icon("refresh")}查询</button></div></form><div class="toolbar log-controls"><label class="actions"><input type="checkbox" id="log-auto" checked>自动刷新</label><span id="log-status" class="hint" role="status">正在读取…</span></div><section class="panel log-panel"><pre class="log-output" id="log-output" role="log" aria-label="插件日志">正在读取…</pre></section>`;
     function schedule() {
@@ -2603,52 +2694,78 @@ dialog::backdrop {
         schedule();
       }, 5000);
     }
-    async function load(reset = false) {
-      if (loading || state.view !== "logs" || token !== generation) return;
-      loading = true;
-      if (reset) cursor = "";
+    const current = () => state.view === "logs" && token === generation;
+    function load(reset = false) {
+      if (!current()) return Promise.resolve();
+      state.logTask = $("#log-task").value.trim();
+      state.logLevel = $("#log-level").value;
+      pending = {
+        task_id: state.logTask,
+        level: state.logLevel,
+        reset: reset || !!pending?.reset,
+        version: ++requestVersion,
+      };
       $("#log-status").textContent = "正在查询…";
-      try {
-        state.logTask = $("#log-task").value.trim();
-        state.logLevel = $("#log-level").value;
-        const result = await call("query", "logs", {
-          task_id: state.logTask,
-          level: state.logLevel,
-          limit: 120,
-          cursor,
-        });
-        if (state.view !== "logs" || token !== generation) return;
-        const output = $("#log-output");
-        if (!result.unchanged) {
-          const follow =
-            output.scrollTop + output.clientHeight >= output.scrollHeight - 40;
-          output.textContent =
-            result.lines.join("\n") ||
-            "暂无符合条件的日志。新日志会在这里显示。";
-          if (follow || reset) output.scrollTop = output.scrollHeight;
+      // 串行执行，保留等待期间的最新筛选；过期响应不写回正文或游标。
+      if (loading) return loading;
+      loading = (async () => {
+        while (pending && current()) {
+          const request = pending;
+          pending = null;
+          const filter = JSON.stringify([request.task_id, request.level]);
+          const resetCursor = request.reset || filter !== cursorFilter;
+          try {
+            const result = await call("query", "logs", {
+              task_id: request.task_id,
+              level: request.level,
+              limit: 120,
+              cursor: resetCursor ? "" : cursor,
+            });
+            if (!current() || request.version !== requestVersion) continue;
+            const output = $("#log-output");
+            if (!result.unchanged) {
+              const follow =
+                output.scrollTop + output.clientHeight >= output.scrollHeight - 40;
+              output.textContent =
+                result.lines.join("\n") ||
+                "暂无符合条件的日志。新日志会在这里显示。";
+              if (follow || resetCursor) output.scrollTop = output.scrollHeight;
+            }
+            cursor = result.cursor;
+            cursorFilter = filter;
+            $("#log-status").textContent =
+              `最近 120 条 · ${new Date().toLocaleTimeString("zh-CN")} · ${result.unchanged ? "暂无新增" : "已更新"}`;
+          } catch (error) {
+            if (current() && request.version === requestVersion) {
+              $("#log-status").textContent = "查询失败，可点击查询重试";
+              throw error;
+            }
+          }
         }
-        cursor = result.cursor;
-        $("#log-status").textContent =
-          `最近 120 条 · ${new Date().toLocaleTimeString("zh-CN")} · ${result.unchanged ? "暂无新增" : "已更新"}`;
-      } catch (error) {
-        if (state.view === "logs" && token === generation)
-          $("#log-status").textContent = "查询失败，可点击查询重试";
-        throw error;
-      } finally {
-        loading = false;
-      }
+      })().finally(() => {
+        loading = null;
+      });
+      return loading;
     }
     const form = $("#log-filter");
     U.bindSubmit(form);
     form.onsubmit = (event) => {
       event.preventDefault();
+      clearTimeout(debounce);
       buttonAction($("button", form), () => load(true));
     };
     $("#log-task").oninput = () => {
+      // 输入即失效旧结果，不等 debounce 结束才保护当前筛选。
+      requestVersion++;
+      pending = null;
+      $("#log-status").textContent = "等待筛选…";
       clearTimeout(debounce);
       debounce = setTimeout(() => load(true).catch(U.error), 300);
     };
-    $("#log-level").onchange = () => load(true).catch(U.error);
+    $("#log-level").onchange = () => {
+      clearTimeout(debounce);
+      load(true).catch(U.error);
+    };
     await load();
     schedule();
   };

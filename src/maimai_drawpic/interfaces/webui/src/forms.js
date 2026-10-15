@@ -75,13 +75,27 @@
         .map(([key, meta]) => {
           const value = values[key] ?? structuredClone(meta.default);
           const id = `field-${++sequence}`;
+          const hint = [
+            localized(meta, "hint"),
+            key === "default_model" && state.data.default_model_error
+              ? `${state.data.default_model_error}。请选择完整的“平台实例 / 模型”名称后保存。`
+              : "",
+          ].filter(Boolean).join(" "),
+            description = hint ? ` aria-describedby="${id}-hint"` : "";
           let control;
           if (meta.type === "array") {
             const keyvalue = /extra_parameters|overrides/.test(key);
             control = `<div data-array="${e(key)}" data-object="${meta.item_type === "object"}" data-keyvalue="${keyvalue}">${(value || []).map((item, index) => (meta.item_type === "object" ? objectRow(meta, item, index) : row(item, keyvalue, key === "fallback_models"))).join("")}<button type="button" class="button secondary compact" data-add-array>${icon("plus")}添加${meta.item_type === "object" ? "项目" : "一项"}</button></div>`;
-          } else control = scalar(key, meta, value, id, values);
+          } else
+            control = scalar(key, meta, value, id, values).replace(
+              `id="${id}"`,
+              `id="${id}"${description}`,
+            );
           const full = meta.type === "array" || /prompt|description/.test(key);
-          return `<div class="field ${meta.type === "boolean" ? "field-toggle" : ""} ${full ? "full" : ""}" data-field="${e(key)}"><label for="${id}">${e(localized(meta, "label") || key)}</label>${control}${meta.hint ? `<p class="hint">${e(localized(meta, "hint"))}</p>` : ""}</div>`;
+          const array = meta.type === "array",
+            tag = array ? "fieldset" : "div",
+            label = e(localized(meta, "label") || key);
+          return `<${tag} class="field ${meta.type === "boolean" ? "field-toggle" : ""} ${full ? "full" : ""}" data-field="${e(key)}"${array ? description : ""}>${array ? `<legend>${label}</legend>` : `<label for="${id}">${label}</label>`}${control}${hint ? `<p id="${id}-hint" class="hint">${e(hint)}</p>` : ""}</${tag}>`;
         })
         .join("") +
       "</div>"

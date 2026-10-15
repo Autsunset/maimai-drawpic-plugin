@@ -192,10 +192,10 @@ class OpenAIModelConfig(PluginConfigBase):
 
     enabled: bool = Field(
         default=True,
-        description="是否启用本节主 OpenAI 配置。关闭后不影响下方额外 OpenAI 兼容实例",
+        description="是否启用此平台实例。关闭后不影响其他平台实例",
         json_schema_extra={
-            "label": "启用主 OpenAI 配置",
-            "hint": "关闭后，本节 base_url/api_key/models 不参与模型路由；下方额外实例仍可单独启用",
+            "label": "启用此平台实例",
+            "hint": "关闭后，此实例的模型不参与路由；其他平台实例仍可单独启用",
             "order": -1,
         },
     )

@@ -2,10 +2,10 @@
 
 from typing import List, Optional, Tuple
 import aiohttp
-import asyncio
 
 from ...domain.errors import ProviderError, ProviderOutcomeUnknown, ProviderResultError, ProviderSubmittedError
 from .types import ImageRequestAttempt
+from .admission import update_task_owned
 from ...domain.task_errors import provider_task_error
 
 
@@ -26,6 +26,7 @@ class RequestAttemptRunnerMixin:
         matched_message_id: str,
         request_negative_prompt: str,
     ) -> Tuple[List[bytes], Optional[ImageRequestAttempt], List[str]]:
+        # 模式参数只携带调用方/会话的显式覆盖；空值由每个备选实例自行解析默认值。
         errors: List[str] = []
         failure = None
         seen = set()
@@ -55,8 +56,8 @@ class RequestAttemptRunnerMixin:
                 self.ctx.logger.warning("备选模型源图数量校验拒绝: task_id=%s model=%s reason=%s", task_id, model, exc)
                 continue
             for retry in range(retry_count + 1):
-                await asyncio.to_thread(
-                    self.task_store.update_task,
+                await update_task_owned(
+                    self.task_store,
                     task_id,
                     status="running",
                     model=attempt.model,
@@ -117,8 +118,8 @@ class RequestAttemptRunnerMixin:
                 if not failure.retryable:
                     break
             if not failure.allow_fallback:
-                await asyncio.to_thread(
-                    self.task_store.update_task,
+                await update_task_owned(
+                    self.task_store,
                     task_id,
                     status="failed",
                     message=reason,
@@ -126,8 +127,8 @@ class RequestAttemptRunnerMixin:
                 )
                 return [], None, errors
         if failure is not None:
-            await asyncio.to_thread(
-                self.task_store.update_task,
+            await update_task_owned(
+                self.task_store,
                 task_id,
                 status="failed",
                 message=reason,

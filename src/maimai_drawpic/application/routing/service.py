@@ -171,9 +171,11 @@ class ProviderRouter(ProviderConstructionMixin, ModelCatalogMixin, TaskCapabilit
         return self.resolve_novelai_artist_tags(tags)
 
     def describe_model(self, model: str) -> dict[str, str]:
+        provider = self.get_model_provider(model)
+        route = self.resolve_openai_model_route(model) if provider == "openai" else None
         return {
             "name": model,
-            "provider": self.get_model_provider(model),
-            "upstream_model": model,
-            "platform_name": self.get_model_provider(model),
+            "provider": provider,
+            "upstream_model": route.upstream_model if route is not None else model,
+            "platform_name": provider,
         }

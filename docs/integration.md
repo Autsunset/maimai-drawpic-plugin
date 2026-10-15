@@ -37,6 +37,8 @@ from .vendor.maimai_drawing_client import DrawingClient, DrawingError
 在调用插件的 Tool/Command/API 方法中委托此函数。`request_id` 由调用方在首次调用前保存，不从 LLM 自由文本中取得。
 
 ```python
+from .vendor.maimai_drawing_client import DrawingClient
+
 async def submit_drawing(ctx, prompt, request_id):
     client = DrawingClient(ctx.api)
     handle = await client.submit(prompt, request_id=request_id)
@@ -82,6 +84,7 @@ async def call_v2(ctx, operation, **args):
 
 ```python
 import asyncio
+from .vendor.maimai_drawing_client import DrawingClient, DrawingError
 
 async def background_draw(ctx, prompt, request_id, output):
     client = DrawingClient(ctx.api)
@@ -106,6 +109,8 @@ async def background_draw(ctx, prompt, request_id, output):
 函数是工具实现内部逻辑，注册装饰器和参数定义由调用插件提供。`remaining_seconds` 是调用方确认的剩余预算，预留至少 1 秒；`stream_id` 必须已验证归属，默认不发送。
 
 ```python
+from .vendor.maimai_drawing_client import DrawingClient
+
 async def llm_submit(
     ctx, prompt, request_id, remaining_seconds,
     stream_id="", auto_send=False,
@@ -134,7 +139,9 @@ async def llm_query(ctx, task_id):
 适合普通后台，`source` 为调用方已校验、获准使用的图片 bytes，`model` 为 models 接口返回的完整名称。源图片与原始参数需要保存到调用方获授目录，以便恢复相同请求。
 
 ```python
+import asyncio
 import base64
+from .vendor.maimai_drawing_client import DrawingClient
 
 async def edit_picture(ctx, source, model, request_id):
     encoded = await asyncio.to_thread(
@@ -154,6 +161,8 @@ async def edit_picture(ctx, source, model, request_id):
 `saved` 是调用方此前持久保存的对象，包含 `request_id`、可空 `task_id`、**完整且相同**的 `request` 参数（包括 prompt、模型、风格、源图和发送去向）。恢复前校验用户/会话归属。
 
 ```python
+from .vendor.maimai_drawing_client import DrawingClient
+
 async def resume_drawing(ctx, saved, wait_seconds=120):
     client = DrawingClient(ctx.api)
     if saved.get("task_id"):
@@ -214,13 +223,13 @@ async def resume_drawing(ctx, saved, wait_seconds=120):
 
 `images` 只含引用，不包含 data/data_url、内部路径或原始提示词。容量清理可能早于 expires_at，所以该时间是时间保留策略上限，不是可用承诺。没有缓存、旧任务无图片、已清理分别以结果错误表示；图片被清理不把已完成的生成改成失败。
 
-`delivery.status` 为 `not_requested`、`pending`、`sent`、`partial`、`failed` 或 `unconfirmed`；查看它和 sent_count，不能把生成完成当作聊天发送成功。明确未知时仍需查平台/发送记录。
+`delivery.status` 为 `not_requested`、`pending`、`sent`、`partial`、`failed` 或 `unconfirmed`；查看它和 sent_count，不能把生成完成当作聊天发送成功。`unconfirmed` 表示发送未取得可靠回执，或旧记录不足以确定是否全部送达；即使部分图片已确认送达，也不能直接补发。`expected_delivery_count` 是审核后应发送的图片数，审核拦截的图片不计入“部分投递”；`generated_count` 仍表示原始生成数量。旧记录缺少精确预期数量但已有 sent_count 时保守返回 `unconfirmed`，不据此自动补发。
 
 ### image 参数与返回
 
 `task_id` 必填；`index=0` 为零起点，必须是非负整数（不接受 bool）；`kind="original"`，还支持 `preview`、`thumbnail`；`offset=0` 为非负字节偏移。
 
-原图每次最多 192 KiB Base64，返回 `data/offset/next_offset/size/mime/filename/done/error`。从 0 开始，使用 next_offset；done=True 时总长度必须等于 size。预览返回 `data_url/index/width/height/size/mime/expires_at/error`，data_url 自带实际 MIME；元数据 size/mime 描述原文件，不能假定预览为 JPEG。
+原图每次最多读取 **192 KiB 原始字节**，编码后的 Base64 `data` 字段最多 **256 KiB**，另加 JSON 元数据。返回 `data/offset/next_offset/size/mime/filename/done/error`；offset、next_offset、size 均以原始字节为单位。从 0 开始，使用 next_offset；done=True 时解码后总长度必须等于 size。预览返回 `data_url/index/width/height/size/mime/expires_at/error`，data_url 自带实际 MIME；元数据 size/mime 描述原文件，不能假定预览为 JPEG。
 
 图片未生成返回 `RESULT_NOT_READY`；不存在/清理返回 `RESULT_EXPIRED`；错误索引/偏移返回 `INVALID_REQUEST`。客户端校验总容量、分块大小、来源标记、偏移与终止标记；只重试读取同一分块，不重新提交绘图。
 
@@ -241,6 +250,7 @@ error 为 null 或对象：`code/message/retry_query/retry_submit`。message 为
 | code | 含义与处理 |
 | --- | --- |
 | INVALID_REQUEST | 参数或模型能力不符，修正请求 |
+| STREAM_UNAVAILABLE | 受理前已确认聊天流不可用，校验发送去向；不是提交状态未知 |
 | REQUEST_ID_CONFLICT | 相同键配不同参数，停止并核对调用方状态 |
 | CONCURRENCY_LIMIT | 4 个后台任务已满，稍后用原参数/键提交 |
 | PERMISSION_DENIED | 聊天额度或权限拒绝 |
@@ -250,7 +260,9 @@ error 为 null 或对象：`code/message/retry_query/retry_submit`。message 为
 | UPSTREAM_UNCONFIRMED / RESTART_UNCONFIRMED | 待确认，核对原提供商任务，不换键重画 |
 | RESULT_NOT_READY | 尚无结果，可稍后查询 |
 | RESULT_UNAVAILABLE / RESULT_EXPIRED | 生成后结果不可读，不能因此重新生图 |
+| RESULT_TOO_LARGE | 客户端读取容量限制，任务仍保留；使用原 task_id 获取引用、逐张读取或调整本地上限，不重新提交 |
 | DELIVERY_FAILED | 图片已生成但聊天发送失败，检查 delivery |
+| DELIVERY_UNCONFIRMED | 发送未获得可靠回执，图片可能已送达；保留已确认 sent_count，先核对发送记录，不自动补发 |
 | CANCELLED / SUBMISSION_INTERRUPTED | 本地等待取消或持久受理后尚未执行即中断 |
 | EXECUTION_FAILED | 其他执行错误，保留任务诊断 |
 
@@ -309,11 +321,11 @@ v1 错误仍通过原异常/Host 包装返回，不具有 v2 的结构化错误�
 | 参数 | 默认值与约束 |
 | --- | --- |
 | `prompt` | 必填字符串，1～16000 字符 |
-| `model` | `""` 使用当前默认模型；必须归属已启用平台，优先使用 models 接口返回的完整“实例名 / 模型名” |
+| `model` | `""` 使用当前默认模型，最多 200 字符；必须归属已启用平台，优先使用 models 接口返回的完整“实例名 / 模型名” |
 | `negative_prompt` | `""`，最多 16000 字符 |
-| `style` | `""` 不套用风格；可填写已启用的预设名 |
+| `style` | `""` 不套用风格，最多 80 字符；可填写已启用的预设名 |
 | `task_type` | `"draw"` 或 `"edit_image"` |
-| `stream_id` | `""` 仅保存结果；填写真实聊天流 ID 时发送到聊天并沿用聊天额度规则 |
+| `stream_id` | `""` 仅保存结果，最多 200 字符；填写真实聊天流 ID 时发送到聊天并沿用聊天额度规则 |
 | `source_images` | `None` 或真实图片 Base64 字符串列表，不接受文件路径；最多 8 张，每张编码最多 8 MiB，总解码大小最多 40 MiB |
 | `request_id` | `""` 或 8～80 位字母、数字、下划线、横线，用于安全重试 |
 

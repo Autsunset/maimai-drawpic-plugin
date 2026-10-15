@@ -64,9 +64,15 @@ class IntegrationTaskService:
         ]
         requested = bool(record.stream_id)
         delivery = "not_requested" if not requested else "pending"
-        if requested and detail["sent_count"]:
+        if requested and detail.get("delivery_unconfirmed", False):
+            # 已确认的前几张不能掩盖后续图片结果未知；也不能据此自动补发。
+            delivery = "unconfirmed"
+        elif requested and detail["sent_count"]:
+            expected = detail.get("expected_delivery_count", 0)
+            # 旧记录没有审核后计数，且 completed 也可能代表部分发送。
+            # 不使用 generated_count，因其中包含审核未通过、不能投递的图片。
             delivery = (
-                "partial" if max(detail["generated_count"], detail["result_count"]) > detail["sent_count"] else "sent"
+                ("sent" if detail["sent_count"] >= expected else "partial") if expected else "unconfirmed"
             )
         elif requested and status not in {"pending", "running"}:
             delivery = "unconfirmed" if status in {"unconfirmed", "cancelled"} else "failed"
@@ -90,19 +96,24 @@ class IntegrationTaskService:
         task = await self.task(task_id)
         if task["task_id"] is None:
             return task
+
+        def error_result(error: Dict[str, Any]) -> Dict[str, Any]:
+            # 图片读取拒绝不改变已受理任务；保留调用方继续查询所需的句柄。
+            return {"task_id": task_id, "request_id": task["request_id"], "error": error}
+
         if (
             type(index) is not int
             or index < 0
             or not isinstance(kind, str)
             or kind not in {"original", "preview", "thumbnail"}
         ):
-            return self.error_response(ValueError("图片索引或类型无效"))
+            return error_result(task_error("INVALID_REQUEST", "图片索引或类型无效"))
         if not task["images"]:
             if task["status"] in {"pending", "running"}:
-                return {"error": task_error("RESULT_NOT_READY", "任务尚未产生可读取图片", retry_query=True)}
-            return {"error": task_error("RESULT_EXPIRED", "图片结果已过期、被清理或尚未产生")}
+                return error_result(task_error("RESULT_NOT_READY", "任务尚未产生可读取图片", retry_query=True))
+            return error_result(task_error("RESULT_EXPIRED", "图片结果已过期、被清理或尚未产生"))
         if index >= len(task["images"]):
-            return self.error_response(ValueError("图片索引无效"))
+            return error_result(task_error("INVALID_REQUEST", "图片索引无效"))
         try:
             if kind == "original":
                 result = await asyncio.to_thread(self.tasks.results.original_chunk, task_id, index, offset)
@@ -110,9 +121,9 @@ class IntegrationTaskService:
                 result = await asyncio.to_thread(self.tasks.results.preview, task_id, index, kind == "thumbnail")
             return {**result, "error": None}
         except FileNotFoundError:
-            return {"error": task_error("RESULT_EXPIRED", "读取过程中图片被缓存清理")}
+            return error_result(task_error("RESULT_EXPIRED", "读取过程中图片被缓存清理"))
         except ValueError as exc:
-            return self.error_response(exc)
+            return error_result(self.error_response(exc)["error"])
 
     async def cancel(self, task_id: str) -> Dict[str, Any]:
         task = await self.task(task_id)

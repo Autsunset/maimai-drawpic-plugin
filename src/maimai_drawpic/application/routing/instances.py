@@ -116,9 +116,10 @@ class InstanceProviderRouter(ProviderRouter):
         return matches[0].kind if len(matches) == 1 else ""
 
     def resolve_default_model(self) -> str:
-        matches = self._matches(self.config.general.default_model)
-        if matches:
-            return matches[0].selector
+        configured_default = self.config.general.default_model.strip()
+        if configured_default:
+            # 非空默认值与显式选择遵循相同的唯一匹配规则，不能由实例顺序决定账号。
+            return self._route(configured_default).selector
         if self.routes:
             return next(iter(self.routes))
         raise ValueError("当前未配置任何可用图片模型")
@@ -224,8 +225,8 @@ class InstanceProviderRouter(ProviderRouter):
     def describe_model(self, model: str) -> Dict[str, str]:
         route = self._route(model)
         return {
+            **route.router.describe_model(route.model),
             "name": route.selector,
             "provider": route.kind,
-            "upstream_model": route.model,
             "platform_name": route.name,
         }

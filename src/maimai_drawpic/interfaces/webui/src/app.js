@@ -161,6 +161,24 @@
     $("#load-error").hidden = true;
     return state.data;
   }
+  function savedNotice(result, message, refreshError = null) {
+    const warning =
+      result?.warning ||
+      (result?.recovery_pending || result?.runtime_refresh_pending
+        ? "配置已保存，但恢复或运行配置刷新尚未完成。"
+        : "");
+    const notice = [
+      warning,
+      refreshError
+        ? `${message}，但工作台刷新失败：${refreshError.message || String(refreshError)}。请点击刷新，无需重复提交。`
+        : "",
+    ].filter(Boolean).join("\n");
+    if (notice) {
+      $("#load-error").textContent = notice;
+      $("#load-error").hidden = false;
+    }
+    toast(notice || message);
+  }
   async function render() {
     $("#save-settings").hidden = state.view !== "settings";
     $("#settings-unsaved").hidden = state.view !== "settings" || !state.dirty;
@@ -292,6 +310,7 @@
     modal,
     closeModal,
     bootstrap,
+    savedNotice,
     render,
     navigate,
     replaceViewHash,

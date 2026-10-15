@@ -23,23 +23,56 @@ def workspace_config(config: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
+def read_json_file(path: Path) -> Dict[str, Any]:
+    def object_pairs(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("配置文件包含重复字段，已保留原文件")
+            result[key] = value
+        return result
+
+    def invalid_constant(_):
+        raise ValueError("配置文件包含非有限数值，已保留原文件")
+
+    return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=object_pairs, parse_constant=invalid_constant)
+
+
 class WorkspaceSettingsStore:
     def __init__(self, data_dir: Path, config_path: Path) -> None:
         self.path = data_dir / "workspace_settings.json"
         self.config_path = config_path
         self.values: Dict[str, Any] = {}
+        self.revision = 0
+
+    @staticmethod
+    def validate_payload(payload: Any) -> Dict[str, Any]:
+        if not isinstance(payload, dict) or type(payload.get("schema_version")) is not int:
+            raise ValueError("workspace_settings.json 格式或版本不正确")
+        version = payload["schema_version"]
+        fields = {"schema_version", "settings"} | ({"revision"} if version == 2 else set())
+        if version not in (1, 2) or set(payload) != fields:
+            raise ValueError("workspace_settings.json 格式或版本不正确")
+        if version == 2 and (type(payload["revision"]) is not int or payload["revision"] < 0):
+            raise ValueError("workspace_settings.json 修订号无效")
+        values = payload["settings"]
+        if not isinstance(values, dict) or set(values) != set(WORKSPACE_SECTIONS):
+            raise ValueError("workspace_settings.json 缺少配置分类或包含未知分类")
+        # 延迟导入以复用同一严格字段校验，防止升级时静默丢弃未知数据。
+        from .platforms import _validate_fields
+
+        for section, fields in values.items():
+            _validate_fields(DrawpicConfig.model_fields[section].annotation, fields)
+        return payload
+
+    def read_payload(self) -> Dict[str, Any]:
+        return self.validate_payload(read_json_file(self.path))
 
     def check_legacy_conflicts(self, document: Dict[str, Any]) -> None:
-        sections = set(document) & set(WORKSPACE_SECTIONS)
-        if not self.path.exists() or not sections:
+        if not self.path.exists():
             return
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
-        if (
-            not isinstance(payload, dict)
-            or payload.get("schema_version") != 1
-            or not isinstance(payload.get("settings"), dict)
-        ):
-            raise ValueError("workspace_settings.json 格式或版本不正确")
+        payload = self.read_payload()
+        sections = set(document) & set(WORKSPACE_SECTIONS)
         saved = workspace_config(DrawpicConfig.model_validate(payload["settings"]).model_dump(mode="json"))
         restored = workspace_config(DrawpicConfig.model_validate(document).model_dump(mode="json"))
         if any(saved[section] != restored[section] for section in sections):
@@ -50,19 +83,17 @@ class WorkspaceSettingsStore:
     def initialize(self, legacy: Dict[str, Any]) -> None:
         if self.config_path.exists():
             self.check_legacy_conflicts(tomlkit.parse(self.config_path.read_text(encoding="utf-8")))
-        if self.path.exists():
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-            if (
-                not isinstance(payload, dict)
-                or payload.get("schema_version") != 1
-                or not isinstance(payload.get("settings"), dict)
-            ):
-                raise ValueError("workspace_settings.json 格式或版本不正确")
-            source = payload["settings"]
-        else:
-            source = legacy
+        payload = self.read_payload() if self.path.exists() else None
+        source = payload["settings"] if payload is not None else legacy
         self.values = workspace_config(DrawpicConfig.model_validate(source).model_dump(mode="json"))
-        if not self.path.exists():
+        self.revision = payload.get("revision", 0) if payload is not None else 0
+        if payload is None or payload["schema_version"] == 1:
+            if payload is not None:
+                backup = self.path.parent / "migration_backups" / f"workspace-settings-{uuid4().hex}.json"
+                backup.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(self.path, backup)
+                if backup.read_bytes() != self.path.read_bytes():
+                    raise RuntimeError("通用配置备份校验失败，保留原文件")
             self._save()
         if self.config_path.exists():
             document = tomlkit.parse(self.config_path.read_text(encoding="utf-8"))
@@ -76,14 +107,17 @@ class WorkspaceSettingsStore:
                     document.pop(key, None)
                 write_text_atomically(self.config_path, tomlkit.dumps(document))
 
-    def _save(self) -> None:
-        write_json_atomically(self.path, {"schema_version": 1, "settings": self.values})
+    def payload(self, values: Dict[str, Any] | None = None, revision: int | None = None) -> Dict[str, Any]:
+        return {
+            "schema_version": 2,
+            "revision": self.revision if revision is None else revision,
+            "settings": self.values if values is None else values,
+        }
 
-    def save(self, values: Dict[str, Any]) -> None:
-        previous = self.values
-        self.values = deepcopy(values)
-        try:
-            self._save()
-        except OSError:
-            self.values = previous
-            raise
+    def _save(self, values: Dict[str, Any] | None = None, revision: int | None = None) -> None:
+        write_json_atomically(self.path, self.payload(values, revision))
+
+    def save(self, values: Dict[str, Any], revision: int) -> None:
+        candidate = deepcopy(values)
+        self._save(candidate, revision)
+        self.values, self.revision = candidate, revision

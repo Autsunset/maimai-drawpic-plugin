@@ -14,7 +14,7 @@ import time
 from ..media.images import detect_mime_type
 from ..http import provider_response_error, sanitized_log_args
 from ..media.downloads import download_image
-from ...domain.errors import ProviderResultError
+from ...domain.errors import ProviderRequestError, ProviderResultError
 from .requests import generation_submission, query_submitted_task, submitted_task
 from ..http import HttpProxySettings, read_response_text, sanitize_provider_url
 from ...domain.models.aliyun_profiles import (
@@ -341,13 +341,24 @@ class AliyunImage:
             if status == "SUCCEEDED":
                 return response
             if status in self._TERMINAL_FAILURE_STATES:
-                code = self._sanitize_text(response.get("code") or status)
-                message = self._sanitize_text(response.get("message") or "异步任务未成功完成")
-                raise RuntimeError(
+                code, message, request_id = self._extract_error_fields(response)
+                if code == "unknown":
+                    code = status
+                if message == "未知错误":
+                    message = "异步任务未成功完成"
+                error = ProviderRequestError(
+                    400,
+                    code,
                     f"阿里云模型 {model} 异步任务 {task_id} 终止："
                     f"status={status}, code={code}, message={message}, "
                     f"request_id={request_id or 'unknown'}"
                 )
+                if error.rejected:
+                    # 审核错误保留分类，其他已受理任务的终态失败仍不能触发重绘。
+                    error.remote_task_id = task_id
+                    error.request_id = request_id
+                    raise error
+                raise ProviderResultError(str(error))
             if not status:
                 self._raise_for_business_error(
                     response,
@@ -491,8 +502,10 @@ class AliyunImage:
         self,
         response: dict[str, Any],
     ) -> tuple[str, str, str]:
-        code = self._sanitize_text(response.get("code") or "unknown")
-        message = self._sanitize_text(response.get("message") or "未知错误")
+        output = response.get("output")
+        output = output if isinstance(output, dict) else {}
+        code = self._sanitize_text(output.get("code") or response.get("code") or "unknown")
+        message = self._sanitize_text(output.get("message") or response.get("message") or "未知错误")
         request_id = self._response_request_id(response) or "unknown"
         return code, message, request_id
 

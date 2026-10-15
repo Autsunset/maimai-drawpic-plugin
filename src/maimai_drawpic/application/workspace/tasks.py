@@ -16,6 +16,7 @@ from ...infrastructure.storage.atomic import write_json_atomically
 from ...domain.styles import StylePromptResolver
 from ...infrastructure.storage.tasks import DrawTaskStore
 from ...domain.task_errors import TaskRequestError, task_error
+from ..drawing.admission import update_task_owned
 
 
 def validate_task_id(task_id: str) -> None:
@@ -223,7 +224,7 @@ class WorkspaceTaskService:
                     prompt=resolved_style.positive_prompt,
                     stream_id="",
                     resolved_model=resolved_model,
-                    resolved_openai_mode=router.resolve_openai_compatibility_mode("", resolved_model),
+                    resolved_openai_mode="",
                     provider_name=router.get_model_provider(resolved_model),
                     request_negative_prompt=resolved_style.negative_prompt,
                     source_image_bytes_list=images,
@@ -296,8 +297,18 @@ class WorkspaceTaskService:
                 if not task.cancel():
                     raise ValueError("该任务已经结束")
                 await asyncio.gather(task, return_exceptions=True)
-                await asyncio.to_thread(
-                    self.task_store.update_task,
+                await service.wait_settlement()
+                settled = await self.detail(task_id)
+                if settled["status"] not in {"pending", "running"}:
+                    if (settled.get("error") or {}).get("code") == "CANCELLED":
+                        return {"task_id": task_id, "cancelled": True}
+                    raise ValueError("该任务已经结束")
+                # Cancellation may lose to a shielded completion/settlement. Never
+                # overwrite the actual result just because cancel() was requested.
+                if not task.cancelled():
+                    raise ValueError("该任务已经结束")
+                await update_task_owned(
+                    self.task_store,
                     task_id,
                     status="failed",
                     message="任务已取消",

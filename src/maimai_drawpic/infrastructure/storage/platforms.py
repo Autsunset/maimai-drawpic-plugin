@@ -2,6 +2,9 @@
 
 from copy import deepcopy
 from datetime import datetime
+from functools import wraps
+from hashlib import sha256
+from threading import RLock
 from maibot_sdk.config import generate_plugin_config_schema
 from pathlib import Path
 from pydantic import BaseModel, ValidationError
@@ -15,7 +18,7 @@ import tomlkit
 from ...domain.configuration.models import DrawpicConfig, OpenAICompatibleInstanceConfig, StylePresetConfig
 from ...application.routing import ProviderRouter
 from .atomic import write_json_atomically, write_text_atomically
-from .settings import WorkspaceSettingsStore, workspace_config
+from .settings import WorkspaceSettingsStore, read_json_file, workspace_config
 
 
 PLATFORM_NAMES = {
@@ -109,6 +112,20 @@ def _validate_fields(model: Any, values: Dict[str, Any]) -> Dict[str, Any]:
     return validated.model_dump(mode="json")
 
 
+def _locked(method):
+    @wraps(method)
+    def synchronized(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+
+    return synchronized
+
+
+def _payload_digest(payload: Dict[str, Any]) -> str:
+    # 与 write_json_atomically 的序列化完全相同；恢复不覆盖任何第三种内容。
+    return sha256((json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")).hexdigest()
+
+
 class WorkspaceConfigStore:
     """拥有平台配置；未添加的平台在运行时明确禁用。"""
 
@@ -117,7 +134,11 @@ class WorkspaceConfigStore:
         self.config_path = config_path
         self.providers: List[Dict[str, Any]] = []
         self.revision = 0
+        self.platform_revision = 0
         self.settings = WorkspaceSettingsStore(data_dir, config_path)
+        self.transaction_path = data_dir / "workspace_config_transaction.json"
+        self.recovery_pending = False
+        self._lock = RLock()
 
     @staticmethod
     def platform_model(kind: str) -> Any:
@@ -125,26 +146,18 @@ class WorkspaceConfigStore:
             raise ValueError("未知绘图平台")
         return DrawpicConfig.model_fields[kind].annotation
 
+    @_locked
     def initialize(self, legacy_config: Dict[str, Any]) -> None:
         """平台配置成功持久化并备份之后，才移除 TOML 平台节。"""
         # 在写 JSON、重命名平台或移除任何 TOML 节之前完成全部冲突检查。
         document = tomlkit.parse(self.config_path.read_text(encoding="utf-8")) if self.config_path.exists() else {}
+        self._recover_transaction(document)
         self.settings.check_legacy_conflicts(document)
+        settings_revision = self.settings.read_payload().get("revision", 0) if self.settings.path.exists() else 0
         if self.path.exists():
-            payload = json.loads(self.path.read_text(encoding="utf-8"))
-            if (
-                not isinstance(payload, dict)
-                or payload.get("schema_version") != 1
-                or not isinstance(payload.get("providers"), list)
-            ):
-                raise ValueError("platforms.json 格式或版本不受支持")
-            self.providers = [self._validate_record(record) for record in payload["providers"]]
-            ids = [item["id"] for item in self.providers]
-            if len(ids) != len(set(ids)):
-                raise ValueError("platforms.json 存在重复平台 ID")
-            if type(payload.get("revision")) is not int or payload["revision"] < 0:
-                raise ValueError("platforms.json 修订号无效")
-            self.revision = payload["revision"]
+            payload = read_json_file(self.path)
+            self.providers, self.platform_revision = self._validate_platform_payload(payload)
+            self.revision = max(self.platform_revision, settings_revision)
             legacy = WorkspaceConfigStore(self.path.parent, self.config_path)
             legacy._import_legacy_platforms(document)
 
@@ -172,10 +185,11 @@ class WorkspaceConfigStore:
                 backup.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(self.path, backup)
                 self.revision += 1
+                self.platform_revision = self.revision
                 self._save()
         else:
             self._import_legacy_platforms(legacy_config)
-            self.revision = 1
+            self.revision = self.platform_revision = max(1, settings_revision)
             self._save()
 
         if self.config_path.exists():
@@ -192,6 +206,7 @@ class WorkspaceConfigStore:
                 write_text_atomically(self.config_path, tomlkit.dumps(document))
 
         self.settings.initialize(legacy_config)
+        self.revision = max(self.platform_revision, self.settings.revision)
 
     def _import_legacy_platforms(self, legacy_config: Dict[str, Any]) -> None:
         """只导入有实际配置的平台，用于首次迁移与无副作用冲突检查。"""
@@ -248,12 +263,137 @@ class WorkspaceConfigStore:
             suffix += 1
         return self._validate_record({"id": uuid4().hex, "kind": kind, "name": name, "config": config})
 
-    def _save(self) -> None:
-        write_json_atomically(self.path, {"schema_version": 1, "revision": self.revision, "providers": self.providers})
+    def _validate_platform_payload(self, payload: Any) -> tuple[List[Dict[str, Any]], int]:
+        if (
+            not isinstance(payload, dict)
+            or set(payload) != {"schema_version", "revision", "providers"}
+            or type(payload["schema_version"]) is not int
+            or payload["schema_version"] != 1
+            or not isinstance(payload["providers"], list)
+        ):
+            raise ValueError("platforms.json 格式或版本不受支持")
+        providers = [self._validate_record(record) for record in payload["providers"]]
+        ids = [item["id"] for item in providers]
+        if len(ids) != len(set(ids)):
+            raise ValueError("platforms.json 存在重复平台 ID")
+        if type(payload["revision"]) is not int or payload["revision"] < 0:
+            raise ValueError("platforms.json 修订号无效")
+        return providers, payload["revision"]
 
+    def _platform_payload(self, providers=None, revision=None) -> Dict[str, Any]:
+        return {
+            "schema_version": 1,
+            "revision": self.platform_revision if revision is None else revision,
+            "providers": self.providers if providers is None else providers,
+        }
+
+    def _save(self, providers=None, revision=None) -> None:
+        write_json_atomically(self.path, self._platform_payload(providers, revision))
+
+    def _validate_transaction(self, transaction: Any) -> None:
+        if (
+            not isinstance(transaction, dict)
+            or set(transaction) != {"schema_version", "platforms", "settings"}
+            or type(transaction["schema_version"]) is not int
+            or transaction["schema_version"] != 1
+        ):
+            raise ValueError("工作台配置事务格式不正确，已保留原文件")
+        for key in ("platforms", "settings"):
+            entry = transaction[key]
+            if (
+                not isinstance(entry, dict)
+                or set(entry) != {"previous_sha256", "payload"}
+                or not isinstance(entry["previous_sha256"], str)
+                or not re.fullmatch(r"[a-f0-9]{64}", entry["previous_sha256"])
+            ):
+                raise ValueError("工作台配置事务格式不正确，已保留原文件")
+        providers, revision = self._validate_platform_payload(transaction["platforms"]["payload"])
+        settings = self.settings.validate_payload(transaction["settings"]["payload"])
+        if settings["schema_version"] != 2 or settings["revision"] != revision:
+            raise ValueError("工作台配置事务修订号不一致，已保留原文件")
+        names = [record["name"].casefold() for record in providers]
+        if len(names) != len(set(names)):
+            raise ValueError("工作台配置事务包含重复平台名称，已保留原文件")
+
+    def _materialize_transaction(self, transaction: Dict[str, Any]) -> None:
+        entries = [(self.path, transaction["platforms"]), (self.settings.path, transaction["settings"])]
+        pending = []
+        # 必须先校验两个文件，再写任意一个；损坏或未知内容不能被恢复操作抹掉。
+        for path, entry in entries:
+            digest = sha256(path.read_bytes()).hexdigest()
+            committed = _payload_digest(entry["payload"])
+            if digest not in (entry["previous_sha256"], committed):
+                raise ValueError("工作台配置事务与现有文件存在冲突，已保留原文件，请从备份核对后恢复")
+            if digest != committed:
+                pending.append((path, entry["payload"]))
+        for path, payload in pending:
+            write_json_atomically(path, payload)
+        self.transaction_path.unlink()
+        self.recovery_pending = False
+
+    def _recover_transaction(self, document: Dict[str, Any] | None = None) -> None:
+        if not self.transaction_path.exists():
+            self.recovery_pending = False
+            return
+        transaction = read_json_file(self.transaction_path)
+        self._validate_transaction(transaction)
+        if document:
+            legacy = WorkspaceConfigStore(self.path.parent, self.config_path)
+            legacy._import_legacy_platforms(document)
+            providers = transaction["platforms"]["payload"]["providers"]
+
+            def comparable(records):
+                return sorted((item["kind"], json.dumps(item["config"], sort_keys=True)) for item in records)
+
+            saved = transaction["settings"]["payload"]["settings"]
+            restored = workspace_config(DrawpicConfig.model_validate(document).model_dump(mode="json"))
+            if (legacy.providers and comparable(legacy.providers) != comparable(providers)) or any(
+                saved[section] != restored[section] for section in set(document) & {"general", "style"}
+            ):
+                raise ValueError("旧 config.toml 与已提交配置事务存在冲突，已保留原文件")
+        self._materialize_transaction(transaction)
+
+    def _check_disk_state(self) -> None:
+        providers, revision = self._validate_platform_payload(read_json_file(self.path))
+        payload = self.settings.read_payload()
+        values = workspace_config(DrawpicConfig.model_validate(payload["settings"]).model_dump(mode="json"))
+        if (
+            providers != self.providers
+            or revision != self.platform_revision
+            or values != self.settings.values
+            or payload.get("revision", 0) != self.settings.revision
+        ):
+            raise ValueError("配置文件已在外部修改，已保留原文件，请重新加载插件后再保存")
+
+    def _commit_rename(self, providers: List[Dict[str, Any]], values: Dict[str, Any], revision: int) -> None:
+        transaction = {
+            "schema_version": 1,
+            "platforms": {
+                "previous_sha256": sha256(self.path.read_bytes()).hexdigest(),
+                "payload": self._platform_payload(providers, revision),
+            },
+            "settings": {
+                "previous_sha256": sha256(self.settings.path.read_bytes()).hexdigest(),
+                "payload": self.settings.payload(values, revision),
+            },
+        }
+        self._validate_transaction(transaction)
+        # 日志原子发布是唯一提交点。之后的故障只表示物化待恢复，不能报告保存失败。
+        write_json_atomically(self.transaction_path, transaction)
+        self.providers, self.platform_revision, self.revision = providers, revision, revision
+        self.settings.values, self.settings.revision = values, revision
+        self.recovery_pending = True
+        try:
+            self._materialize_transaction(transaction)
+        except Exception:
+            # 完整快照已提交且包含 revision；启动或下次写入必须先恢复，绝不静默丢弃日志。
+            self.recovery_pending = True
+
+    @_locked
     def public_snapshot(self) -> Dict[str, Any]:
         return {
             "revision": self.revision,
+            "settings": _mask_secrets(self.settings.values),
             "providers": [
                 {
                     **record,
@@ -264,6 +404,7 @@ class WorkspaceConfigStore:
             ],
         }
 
+    @_locked
     def save_provider(self, payload: Dict[str, Any], revision: int) -> Dict[str, Any]:
         if revision != self.revision:
             raise ValueError("配置已被其他页面更新，请刷新后再保存")
@@ -301,9 +442,24 @@ class WorkspaceConfigStore:
         updated = [record if item["id"] == identifier else item for item in self.providers]
         if previous is None:
             updated.append(record)
-        self._commit(updated)
-        return {"id": record["id"], "revision": self.revision}
+        renamed_settings = None
+        if previous is not None and previous["name"] != record["name"]:
+            renamed_settings = deepcopy(self.settings.values)
+            # 名称和模型本身都允许包含分隔符，只重写旧实例真正拥有的精确 selector。
+            # 禁用实例也保留配置引用，提取模型目录时临时启用副本，不改变实际启用状态。
+            catalog_record = deepcopy(previous)
+            catalog_record["config"]["enabled"] = True
+            models = ProviderRouter(self.effective_config({}, [catalog_record])).get_all_models()
+            replacements = {f"{previous['name']} / {model}": f"{record['name']} / {model}" for model in models}
+            general = renamed_settings["general"]
+            general["default_model"] = replacements.get(general["default_model"], general["default_model"])
+            for key in ("fallback_models", "image_edit_unsupported_models", "text_to_image_unsupported_models"):
+                general[key] = [replacements.get(value, value) for value in general[key]]
+            renamed_settings = self._validate_common(renamed_settings, renamed_settings)
+        self._commit(updated, settings=renamed_settings)
+        return {"id": record["id"], "revision": self.revision, "saved": True, "recovery_pending": self.recovery_pending}
 
+    @_locked
     def delete_provider(self, identifier: str, revision: int) -> None:
         if revision != self.revision:
             raise ValueError("配置已更新，请刷新")
@@ -312,17 +468,21 @@ class WorkspaceConfigStore:
             raise ValueError("平台不存在")
         self._commit(updated)
 
-    def _commit(self, providers: List[Dict[str, Any]]) -> None:
+    @_locked
+    def _commit(self, providers: List[Dict[str, Any]], *, settings: Dict[str, Any] | None = None) -> None:
+        self._recover_transaction()
+        self._check_disk_state()
         if len(json.dumps(providers, ensure_ascii=False).encode("utf-8")) > 160 * 1024:
             raise ValueError("平台配置总大小超过 160 KiB，请精简配置")
-        previous, previous_revision = self.providers, self.revision
-        self.providers, self.revision = providers, self.revision + 1
-        try:
-            self._save()
-        except OSError:
-            self.providers, self.revision = previous, previous_revision
-            raise
+        providers = deepcopy(providers)
+        revision = self.revision + 1
+        if settings is not None:
+            self._commit_rename(providers, deepcopy(settings), revision)
+        else:
+            self._save(providers, revision)
+            self.providers, self.platform_revision, self.revision = providers, revision, revision
 
+    @_locked
     def effective_config(self, base: Dict[str, Any], providers: List[Dict[str, Any]] | None = None) -> DrawpicConfig:
         records = self.providers if providers is None else providers
         values = DrawpicConfig.model_validate({**base, **self.settings.values}).model_dump(mode="json")
@@ -344,7 +504,7 @@ class WorkspaceConfigStore:
                 values["openai"]["instances"].append(instance)
         return DrawpicConfig.model_validate(values)
 
-    def save_common(self, values: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
+    def _validate_common(self, values: Dict[str, Any], current: Dict[str, Any]) -> Dict[str, Any]:
         if values.keys() - {"general", "style"}:
             raise ValueError("工作台仅维护通用与审核、风格预设")
         for section, fields in values.items():
@@ -357,7 +517,18 @@ class WorkspaceConfigStore:
             raise ValueError("预设名称应为 1～80 字且不能重复，最多保存 100 个预设")
         if len(json.dumps(validated, ensure_ascii=False).encode("utf-8")) > 48 * 1024:
             raise ValueError("工作台配置总大小超过 48 KiB，请精简提示词模板")
-        self.settings.save(validated)
+        return validated
+
+    @_locked
+    def save_common(self, values: Dict[str, Any], current: Dict[str, Any], revision: int | None = None) -> Dict[str, Any]:
+        self._recover_transaction()
+        self._check_disk_state()
+        if revision is not None and (type(revision) is not int or revision != self.revision):
+            raise ValueError("配置已更新，请刷新后保存")
+        validated = self._validate_common(values, self.settings.values or current)
+        revision = self.revision + 1
+        self.settings.save(validated, revision)
+        self.revision = revision
         return validated
 
     @staticmethod
@@ -371,5 +542,6 @@ class WorkspaceConfigStore:
                 fields[name]["hint"] = extra["hint"]
         return schema
 
+    @_locked
     def secrets(self) -> List[str]:
         return [item["config"]["api_key"] for item in self.providers if item["config"].get("api_key")]

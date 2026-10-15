@@ -327,7 +327,7 @@ _FIELD_LABEL_OVERRIDES: Dict[str, Tuple[str, str, str]] = {
     "StylePresetConfig.enabled": ("Enable Preset", "プリセットを有効化", "프리셋 활성화"),
     "ProxyConfig.enabled": ("Enable Global Proxy", "共通プロキシを有効化", "전역 프록시 활성화"),
     "OpenAICompatibleInstanceConfig.enabled": ("Enable Instance", "インスタンスを有効化", "인스턴스 활성화"),
-    "OpenAIModelConfig.enabled": ("Enable OpenAI Platform", "OpenAI プラットフォームを有効化", "OpenAI 플랫폼 활성화"),
+    "OpenAIModelConfig.enabled": ("Enable This Platform Instance", "このプラットフォームインスタンスを有効化", "이 플랫폼 인스턴스 활성화"),
     "OpenAIModelConfig.api_key": ("OpenAI API Key", "OpenAI API キー", "OpenAI API 키"),
     "OpenAIModelConfig.models": ("OpenAI Models", "OpenAI モデル一覧", "OpenAI 모델 목록"),
     "GoogleModelConfig.enabled": ("Enable Google Platform", "Google プラットフォームを有効化", "Google 플랫폼 활성화"),
@@ -430,6 +430,11 @@ _OPENAI_MODE_HINTS = (
 
 
 _FIELD_HINT_OVERRIDES: Dict[str, Tuple[str, str, str]] = {
+    "OpenAIModelConfig.enabled": (
+        "When disabled, this instance's models are excluded from routing. Other platform instances can remain enabled independently.",
+        "無効にすると、このインスタンスのモデルはルーティング対象外になります。他のプラットフォームインスタンスは個別に有効化できます。",
+        "비활성화하면 이 인스턴스의 모델은 라우팅에서 제외됩니다. 다른 플랫폼 인스턴스는 개별적으로 활성화할 수 있습니다.",
+    ),
     "StylePresetConfig.positive_prompt_template": (
         "{prompt} inserts this request's drawing description. Keep it and add style words around it: watercolor, {prompt} + a cat becomes watercolor, a cat. Without it, the description is appended automatically. NovelAI {{tag}} weights are preserved.",
         "{prompt} は今回の描画内容に置換されます。残したまま前後にスタイルを追加してください。例：水彩、{prompt} に「猫」を入力すると「水彩、猫」になります。削除した場合も描画内容を末尾に追加します。NovelAI の {{tag}} は保持されます。",

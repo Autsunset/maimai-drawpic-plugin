@@ -1,6 +1,5 @@
 """绘图工作台的配置、模型、会话和预设业务边界。"""
 
-from copy import deepcopy
 from typing import Any, Callable, Dict
 import asyncio
 
@@ -34,6 +33,12 @@ class WorkspaceService:
 
     def models(self) -> Dict[str, Any]:
         router = self.tasks.get_service().router
+        default_model, default_model_error = "", ""
+        if router.get_all_models():
+            try:
+                default_model = router.resolve_default_model()
+            except ValueError as exc:
+                default_model_error = str(exc)
         return {
             "models": [
                 {
@@ -44,12 +49,13 @@ class WorkspaceService:
                 }
                 for model in router.get_all_models()
             ],
-            "default_model": router.resolve_default_model() if router.get_all_models() else "",
+            "default_model": default_model,
+            "default_model_error": default_model_error,
         }
 
     async def bootstrap(self) -> Dict[str, Any]:
         snapshot = await asyncio.to_thread(self.store.public_snapshot)
-        config = workspace_config(self.get_config().model_dump(mode="json"))
+        config = snapshot["settings"]
         config.pop("plugin", None)
         defaults = workspace_config(DrawpicConfig().model_dump(mode="json"))
         defaults.pop("plugin", None)
@@ -70,41 +76,43 @@ class WorkspaceService:
                 for key, name in PLATFORM_NAMES.items()
             ],
             **self.models(),
-            "presets": self.get_config().style.model_dump(mode="json")["presets"],
+            "presets": config["style"]["presets"],
             "proxy_password_set": bool(self.get_config().proxy.password),
         }
+
+    async def _refresh_committed(self, values: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        status = {"saved": True, "revision": self.store.revision, "recovery_pending": self.store.recovery_pending}
+        warnings = []
+        if self.store.recovery_pending:
+            warnings.append("配置已保存，文件同步尚未完成；下次保存或重新加载插件时将先恢复已提交事务")
+        try:
+            if values is None:
+                await self.refresh()
+            else:
+                await self.apply_settings(values)
+        except Exception as exc:
+            # 持久化已经成功。不得让运行时刷新故障把成功提交误报为保存失败。
+            status["runtime_refresh_pending"] = True
+            warnings.append("配置已保存，但运行时刷新未完成，请重新加载插件后检查")
+            self.ctx.logger.warning("配置已保存但运行时刷新失败: error_type=%s", type(exc).__name__)
+        if warnings:
+            status["warning"] = "；".join(warnings)
+        return status
 
     async def save_provider(self, provider_json: str, revision: int) -> Dict[str, Any]:
         payload = parse_json_object(provider_json)
         async with self.lock:
-            previous = next((item for item in self.store.providers if item["id"] == payload.get("id")), None)
             result = await asyncio.to_thread(self.store.save_provider, payload, revision)
-            if previous is not None and previous["name"] != payload["name"].strip():
-                current = workspace_config(self.get_config().model_dump(mode="json"))
-                prefix = previous["name"] + " / "
-                replacement = payload["name"].strip() + " / "
-                for key in ("default_model",):
-                    value = current["general"][key]
-                    if value.startswith(prefix):
-                        current["general"][key] = replacement + value[len(prefix) :]
-                for key in ("fallback_models", "image_edit_unsupported_models", "text_to_image_unsupported_models"):
-                    current["general"][key] = [
-                        replacement + value[len(prefix) :] if value.startswith(prefix) else value
-                        for value in current["general"][key]
-                    ]
-                updated = await asyncio.to_thread(self.store.save_common, current, current)
-                await self.apply_settings(updated)
-            else:
-                await self.refresh()
+            result.update(await self._refresh_committed())
             self.ctx.logger.info("平台配置已保存: platform_id=%s kind=%s", result["id"], payload["kind"])
             return result
 
     async def delete_provider(self, provider_id: str, revision: int) -> Dict[str, Any]:
         async with self.lock:
             await asyncio.to_thread(self.store.delete_provider, provider_id, revision)
-            await self.refresh()
+            status = await self._refresh_committed()
             self.ctx.logger.info("平台配置已移除: platform_id=%s", provider_id)
-            return {"deleted": True, "revision": self.store.revision}
+            return {"deleted": True, **status}
 
     async def save_settings(self, config_json: str, revision: int) -> Dict[str, Any]:
         values = parse_json_object(config_json)
@@ -116,16 +124,15 @@ class WorkspaceService:
             if revision != self.store.revision:
                 raise ValueError("配置已更新，请刷新后保存")
             current = self.get_config().model_dump(mode="json")
-            updated = await asyncio.to_thread(self.store.save_common, values, current)
-            await asyncio.to_thread(self.store._commit, deepcopy(self.store.providers))
-            await self.apply_settings(updated)
-            return {"saved": True, "revision": self.store.revision}
+            updated = await asyncio.to_thread(self.store.save_common, values, current, revision)
+            return await self._refresh_committed(updated)
 
     async def presets(self, operation: str = "list", name: str = "", preset_json: str = "") -> Dict[str, Any]:
         if operation not in {"list", "get", "save", "delete"} or len(name) > 80:
             raise ValueError("预设操作或名称无效")
         async with self.lock:
-            current = self.get_config().model_dump(mode="json")
+            snapshot = await asyncio.to_thread(self.store.public_snapshot)
+            current = snapshot["settings"]
             presets = current["style"]["presets"]
             target = next((item for item in presets if item["name"].casefold() == name.casefold()), None)
             if operation == "list":
@@ -154,10 +161,9 @@ class WorkspaceService:
                     if any(item["name"].casefold() == preset["name"].casefold() for item in presets):
                         raise ValueError("已有同名预设")
                     presets.append(preset)
-            updated = await asyncio.to_thread(self.store.save_common, workspace_config(current), current)
-            await asyncio.to_thread(self.store._commit, deepcopy(self.store.providers))
-            await self.apply_settings(updated)
-            return {"saved": True, "presets": presets}
+            updated = await asyncio.to_thread(self.store.save_common, workspace_config(current), current, snapshot["revision"])
+            status = await self._refresh_committed(updated)
+            return {"presets": presets, **status}
 
     async def streams(self, platform: str = "qq") -> Dict[str, Any]:
         if not platform or len(platform) > 80:

@@ -25,6 +25,11 @@
     );
     const form = $("#provider-form", node),
       read = U.forms.bind(form, fields, values, { platform: true });
+    const modalVersion = state.modalVersion,
+      revision = state.data.revision;
+    const current = () =>
+      form.isConnected && modalVersion === state.modalVersion;
+    let saving = false;
     $("#provider-back", node).onclick = () => {
       closeModal();
     };
@@ -40,24 +45,46 @@
     U.bindSubmit(form);
     form.onsubmit = (event) => {
       event.preventDefault();
+      if (saving || !current()) return;
       buttonAction($("[type=submit]", form), async () => {
         const config = read();
         delete config.instances;
-        await call("action", "provider_save", {
-          provider_json: JSON.stringify({
-            id: record?.id || "",
-            kind,
-            name: $("#provider-name", form).value,
-            config,
-            clear_api_key: $("#clear-api-key", form)?.checked || false,
-          }),
-          revision: state.data.revision,
-        });
-        state.dirty = false;
-        closeModal();
-        await U.bootstrap();
-        await U.render();
-        toast("平台已保存");
+        saving = true;
+        form.inert = true;
+        form.setAttribute("aria-busy", "true");
+        try {
+          const result = await call("action", "provider_save", {
+            provider_json: JSON.stringify({
+              id: record?.id || "",
+              kind,
+              name: $("#provider-name", form).value,
+              config,
+              clear_api_key: $("#clear-api-key", form)?.checked || false,
+            }),
+            revision,
+          });
+          // RPC 已确认提交，即使后续读取失败也不能把它当作保存失败重试。
+          if (current()) state.dirty = false;
+          let refreshError = null;
+          try {
+            await U.bootstrap();
+            // 关闭或替换编辑器后，旧保存不能清除新草稿或关闭新弹窗。
+            if (current()) {
+              await closeModal(true);
+              await U.render();
+            }
+          } catch (error) {
+            refreshError = error;
+            if (current()) await closeModal(true);
+          }
+          U.savedNotice(result, "平台已保存", refreshError);
+        } finally {
+          saving = false;
+          if (current()) {
+            form.inert = false;
+            form.removeAttribute("aria-busy");
+          }
+        }
       });
     };
   }
@@ -106,13 +133,18 @@
       $("[data-edit]", card).onclick = () => editor(item.kind, item);
       $("[data-delete]", card).onclick = (event) =>
         buttonAction(event.currentTarget, async () => {
-          await call("action", "provider_delete", {
+          const result = await call("action", "provider_delete", {
             provider_id: item.id,
             revision: state.data.revision,
           });
-          await U.bootstrap();
-          await U.render();
-          toast("已移除平台");
+          let refreshError = null;
+          try {
+            await U.bootstrap();
+            if (card.isConnected && state.view === "platforms") await U.render();
+          } catch (error) {
+            refreshError = error;
+          }
+          U.savedNotice(result, "平台已移除", refreshError);
         });
     });
   };

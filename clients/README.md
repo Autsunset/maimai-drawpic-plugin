@@ -16,6 +16,7 @@ my_plugin/
       transport.py
       images.py
       models.py
+      protocol.py
       LICENSE
 ```
 
@@ -44,7 +45,7 @@ result = await client.generate(
 - `read_image(task_id, index=0)`：校验并拼接原图分块。
 - `save_image(task_id, destination, index=0, overwrite=False)`：在工作线程中写入调用方指定路径；默认不覆盖。
 
-构造参数：单次 RPC 默认 8 秒（0～30），查询间隔默认 3 秒（0～60），单图上限 64 MiB、单次结果上限 128 MiB。`generate`/`wait` 的总预算需大于 0、最多 3600 秒，包括 RPC、sleep 与取图，不能突破外层组件超时。
+构造参数：单次 RPC 默认 8 秒（大于 0、最多 30 秒），查询间隔默认 3 秒（大于 0、最多 60 秒），单图上限 64 MiB、单次结果上限 128 MiB。`generate`/`wait` 的总预算需大于 0、最多 3600 秒，包括 RPC、sleep 与取图，不能突破外层组件超时。
 
 保存使用同目录临时文件；默认通过排他硬链接建立目标，需要目标文件系统支持硬链接（常见 NTFS/ext4 支持）。显式 `overwrite=True` 原子替换目标。路径必须由调用方限制在自己的获授目录；不采用上游文件名拼路径。
 
@@ -53,6 +54,8 @@ result = await client.generate(
 `DrawingResult` 分别提供 `status`、`wait_expired`、`generation_completed`、`results_readable`、`delivery`、`task_id`、`request_id`、`image_references`、`images` 与 `error`。成功取图后读取 `result.images[0].data`；图片字节不会进入默认 repr。
 
 业务终态（拒绝、失败、待确认、图片过期）通过 `result.status/error` 表达。无效提交等明确 API 错误抛 `DrawingError`，含 `code`、`retry_query`、`retry_submit` 和句柄。单独 `task/read_image/save_image` 的 RPC 失败抛 `DrawingTransportError`；提交响应未知返回 `submission_unknown`，不会自动重新提交。
+
+生成完成后若图片超过客户端单图或总容量限制，`generate`/`wait` 返回 `RESULT_TOO_LARGE` 并保留任务句柄、生成状态和图片引用。可以通过原 `task_id` 仅获取引用、逐张读取，或提高本地容量限制；这不是生成失败，不需要新请求。`DrawingTransportError` 在已有任务上下文时也保留句柄；不完整的任务或错误回执按协议错误处理，不泄漏原始 `KeyError`。
 
 等待结束不取消任务、不换新 request_id；外部取消协程时保留 asyncio 的取消语义。LLM 工具应使用 `submit` 并快速返回，通过后续工具取结果；不要在临近超时的工具中创建无人管理的后台任务。
 

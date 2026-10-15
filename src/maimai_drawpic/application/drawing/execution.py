@@ -2,10 +2,11 @@ from typing import Awaitable, Callable
 import asyncio
 import inspect
 
-from ..chat import ImageDeliveryError
+from ..chat import ImageDeliveryError, ImageDeliveryUnconfirmedError
 from ...infrastructure.storage.retention import CacheCapacityError
 from ...domain.errors import ProviderError
 from ...domain.task_errors import provider_task_error, task_error
+from .admission import update_task_owned, wait_for_admission
 
 
 class ImageExecutionMixin:
@@ -34,7 +35,23 @@ class ImageExecutionMixin:
     ) -> None:
         """后台执行绘图任务，源图为空时文生图，存在源图时图生图。"""
 
+        self._started_task_ids.add(task_id)
+        notified = False
+        delivery_started = False
+
+        async def _update_terminal(**changes) -> None:
+            try:
+                pending = asyncio.create_task(asyncio.to_thread(self.task_store.update_task, task_id, **changes))
+                await wait_for_admission(pending)
+            except Exception:
+                # Settlement must not depend on the task file remaining writable.
+                self.ctx.logger.exception("绘图任务终态保存失败: task_id=%s status=%s", task_id, changes["status"])
+
         async def _notify_task_unsuccessful(status: str, reason: str) -> None:
+            nonlocal notified
+            if notified:
+                return
+            notified = True
             reason = self.task_store.sanitize_message(reason)
             if on_task_unsuccessful is None:
                 return
@@ -53,6 +70,10 @@ class ImageExecutionMixin:
                 )
 
         async def _notify_task_successful(status: str, reason: str) -> None:
+            nonlocal notified
+            if notified:
+                return
+            notified = True
             reason = self.task_store.sanitize_message(reason)
             if on_task_successful is None:
                 return
@@ -79,8 +100,8 @@ class ImageExecutionMixin:
         try:
             if not prompt_reviewed:
                 await self.review_prompt_or_raise(prompt)
-            running_record = await asyncio.to_thread(
-                self.task_store.update_task,
+            running_record = await update_task_owned(
+                self.task_store,
                 task_id,
                 status="running",
                 message=running_message,
@@ -97,8 +118,8 @@ class ImageExecutionMixin:
                 novelai_mode=novelai_mode,
                 novelai_artist_tags=novelai_artist_tags,
             )
-            await asyncio.to_thread(
-                self.task_store.update_task,
+            await update_task_owned(
+                self.task_store,
                 task_id,
                 status="running",
                 message=running_message,
@@ -123,9 +144,7 @@ class ImageExecutionMixin:
 
             if successful_attempt is None:
                 failure_message = "；".join(attempt_errors) if attempt_errors else "图片平台没有返回任何图片结果"
-                await asyncio.to_thread(
-                    self.task_store.update_task,
-                    task_id,
+                await _update_terminal(
                     status="failed",
                     message=failure_message,
                 )
@@ -141,8 +160,8 @@ class ImageExecutionMixin:
                 )
                 return
 
-            await asyncio.to_thread(
-                self.task_store.update_task,
+            await update_task_owned(
+                self.task_store,
                 task_id,
                 status="running",
                 message="图片已生成，正在审核结果",
@@ -153,9 +172,7 @@ class ImageExecutionMixin:
                 review_reason_text = "；".join(rejected_reasons) if rejected_reasons else "审核未通过"
                 if successful_attempt.is_fallback and attempt_errors:
                     review_reason_text = f"首选模型失败后使用备选模型生成，但图片审核未通过：{review_reason_text}"
-                await asyncio.to_thread(
-                    self.task_store.update_task,
-                    task_id,
+                await _update_terminal(
                     status="rejected",
                     message=review_reason_text,
                     error=task_error("MODERATION_REJECTED", review_reason_text),
@@ -175,11 +192,12 @@ class ImageExecutionMixin:
                 return
 
             result_count = 0
-            await asyncio.to_thread(
-                self.task_store.update_task,
+            await update_task_owned(
+                self.task_store,
                 task_id,
                 status="running",
                 message="图片已生成，正在保存结果",
+                expected_delivery_count=len(reviewed_images) if stream_id else 0,
             )
             cache_message = ""
             if self.result_store is not None:
@@ -188,8 +206,8 @@ class ImageExecutionMixin:
                 except CacheCapacityError as exc:
                     cache_message = f"；图片未缓存：{exc}，可在 MaiBot 插件配置页调整缓存上限"
                     self.ctx.logger.warning("绘图结果未缓存: task_id=%s reason=%s", task_id, exc)
-                await asyncio.to_thread(
-                    self.task_store.update_task,
+                await update_task_owned(
+                    self.task_store,
                     task_id,
                     status="running",
                     message="图片已生成",
@@ -197,6 +215,7 @@ class ImageExecutionMixin:
                 )
             sent_count = 0
             if stream_id:
+                delivery_started = True
                 sent_count = await self.stream_service.send_generated_images_with_fallback(
                     stream_id=stream_id,
                     image_bytes_list=reviewed_images,
@@ -207,6 +226,7 @@ class ImageExecutionMixin:
                     provider=successful_attempt.provider_name,
                     model=successful_attempt.model,
                 )
+                delivery_started = False
             success_message = (
                 f"图片已发送，数量={sent_count}" if stream_id else f"图片已生成，数量={len(reviewed_images)}"
             )
@@ -214,9 +234,7 @@ class ImageExecutionMixin:
                 action = "发送" if stream_id else "生成"
                 success_message = f"首选模型失败，已使用生图备选模型{action}图片，数量={sent_count if stream_id else len(reviewed_images)}"
             success_message += cache_message
-            await asyncio.to_thread(
-                self.task_store.update_task,
-                task_id,
+            await _update_terminal(
                 status="completed",
                 message=success_message,
                 sent_count=sent_count,
@@ -235,35 +253,53 @@ class ImageExecutionMixin:
                 "；".join(attempt_errors),
             )
         except asyncio.CancelledError:
-            await asyncio.to_thread(
-                self.task_store.update_task,
-                task_id,
-                status="failed",
-                message="任务已取消",
-                error=task_error("CANCELLED", "本地等待已取消，不代表上游撤单或停止计费"),
-            )
-            await _notify_task_unsuccessful("failed", "任务已取消")
+            settled = self.task_store.get_task(task_id)
+            if settled is not None and settled.status in {"completed", "failed", "rejected"}:
+                # An owned terminal write can win the cancellation race. Preserve
+                # the recorded outcome and settle according to that outcome.
+                if settled.status == "completed":
+                    await _notify_task_successful(settled.status, settled.message)
+                else:
+                    await _notify_task_unsuccessful(settled.status, settled.message)
+            else:
+                await _update_terminal(
+                    status="failed",
+                    message="任务已取消",
+                    error=task_error("CANCELLED", "本地等待已取消，不代表上游撤单或停止计费"),
+                    delivery_unconfirmed=delivery_started,
+                )
+                await _notify_task_unsuccessful("failed", "任务已取消")
             self.ctx.logger.warning(
-                "绘图任务已取消: task_id=%s task_type=%s model=%s", task_id, task_type, resolved_model
+                "绘图任务收到取消请求: task_id=%s task_type=%s model=%s", task_id, task_type, resolved_model
             )
             raise
         except ProviderError as exc:
             status = "rejected" if exc.rejected else "failed"
             message = self.task_store.sanitize_message(str(exc))
-            await asyncio.to_thread(
-                self.task_store.update_task,
-                task_id,
+            await _update_terminal(
                 status=status,
                 message=message,
                 error=provider_task_error(exc, message),
             )
             await _notify_task_unsuccessful(status, message)
             self.ctx.logger.warning("绘图请求已终止: task_id=%s status=%s reason=%s", task_id, status, message)
+        except ImageDeliveryUnconfirmedError as exc:
+            # Keep v1 terminal semantics while retaining the independent unknown
+            # delivery outcome for v2, including partial confirmed sends.
+            status = "completed" if exc.sent_count > 0 else "failed"
+            await _update_terminal(
+                status=status, message=str(exc), sent_count=exc.sent_count,
+                delivery_unconfirmed=True,
+                error=task_error("DELIVERY_UNCONFIRMED", str(exc)),
+            )
+            if exc.sent_count > 0:
+                await _notify_task_successful(status, str(exc))
+            else:
+                await _notify_task_unsuccessful(status, str(exc))
+            self.ctx.logger.warning("绘图任务投递结果待确认: task_id=%s sent_count=%s", task_id, exc.sent_count)
         except ImageDeliveryError as exc:
             if exc.sent_count <= 0:
-                await asyncio.to_thread(
-                    self.task_store.update_task,
-                    task_id,
+                await _update_terminal(
                     status="failed",
                     message=str(exc),
                     error=task_error("DELIVERY_FAILED", str(exc)),
@@ -279,9 +315,7 @@ class ImageExecutionMixin:
                 return
 
             partial_message = f"部分图片已发送，数量={exc.sent_count}；其余图片投递失败：{exc}"
-            await asyncio.to_thread(
-                self.task_store.update_task,
-                task_id,
+            await _update_terminal(
                 status="completed",
                 message=partial_message,
                 sent_count=exc.sent_count,
@@ -297,12 +331,11 @@ class ImageExecutionMixin:
             )
         except TimeoutError:
             timeout_seconds = self.resolve_request_timeout_seconds()
-            await asyncio.to_thread(
-                self.task_store.update_task,
-                task_id,
+            await _update_terminal(
                 status="failed",
                 message=f"{timeout_message}，超过 {timeout_seconds} 秒",
                 error=task_error("UPSTREAM_UNCONFIRMED", "本地等待超时，远端执行状态未确认"),
+                delivery_unconfirmed=delivery_started,
             )
             await _notify_task_unsuccessful("failed", f"{timeout_message}，超过 {timeout_seconds} 秒")
             self.ctx.logger.error(
@@ -313,12 +346,11 @@ class ImageExecutionMixin:
                 f"{timeout_message}，超过 {timeout_seconds} 秒",
             )
         except Exception as exc:
-            await asyncio.to_thread(
-                self.task_store.update_task,
-                task_id,
+            await _update_terminal(
                 status="failed",
                 message=str(exc),
                 error=task_error("EXECUTION_FAILED", str(exc)),
+                delivery_unconfirmed=delivery_started,
             )
             await _notify_task_unsuccessful("failed", str(exc))
             self.ctx.logger.error(
@@ -329,3 +361,6 @@ class ImageExecutionMixin:
                 exc,
                 exc_info=True,
             )
+        finally:
+            if not notified:
+                await _notify_task_unsuccessful("failed", "任务执行中断，未完成结算")

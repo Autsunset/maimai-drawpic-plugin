@@ -23,28 +23,43 @@ async def read_image(rpc: DrawingRPC, task_id: str, index: int, max_bytes: int) 
                 if attempt == 2:
                     raise
                 await asyncio.sleep(0.5)
-        if response.get("error"):
-            raise DrawingError(response["error"], task_id=task_id)
+        if response.get("error") is not None:
+            request_id = response.get("request_id", "")
+            if not isinstance(request_id, str):
+                raise DrawingTransportError("图片响应请求键格式无效", task_id=task_id)
+            raise DrawingError(response["error"], task_id=task_id, request_id=request_id)
         try:
             size = response["size"]
-            if type(size) is not int or not 0 < size <= max_bytes:
-                raise ValueError("图片超过客户端容量限制或大小无效")
+            if type(size) is not int or size <= 0:
+                raise ValueError("图片大小无效")
+            if size > max_bytes:
+                raise DrawingError(
+                    {"code": "RESULT_TOO_LARGE", "message": "图片超过客户端单张容量限制；可调高限制后读取原任务"},
+                    task_id=task_id,
+                )
             identity = (size, response["mime"], response["filename"])
             if expected is not None and identity != expected:
                 raise ValueError("图片分块来源或大小改变")
             expected = identity
-            if identity[1] not in {"image/png", "image/jpeg", "image/webp"}:
+            if not isinstance(identity[1], str) or identity[1] not in {"image/png", "image/jpeg", "image/webp"}:
                 raise ValueError("图片格式无效")
+            if not isinstance(identity[2], str) or not identity[2]:
+                raise ValueError("图片来源标记无效")
             raw = base64.b64decode(response["data"], validate=True)
-            if response["offset"] != offset or not 0 < len(raw) <= 192 * 1024:
+            if type(response["offset"]) is not int or response["offset"] != offset or not 0 < len(raw) <= 192 * 1024:
                 raise ValueError("图片分块偏移或大小无效")
             offset += len(raw)
-            if response["next_offset"] != offset or offset > size or type(response["done"]) is not bool:
+            if (
+                type(response["next_offset"]) is not int
+                or response["next_offset"] != offset
+                or offset > size
+                or type(response["done"]) is not bool
+            ):
                 raise ValueError("图片分块进度无效")
             if response["done"] != (offset == size):
                 raise ValueError("图片分块终止标记无效")
         except (KeyError, TypeError, ValueError, binascii.Error) as exc:
-            raise DrawingTransportError(f"图片分块协议错误：{exc}") from exc
+            raise DrawingTransportError(f"图片分块协议错误：{exc}", task_id=task_id) from exc
         chunks.append(raw)
         if response["done"]:
             return await asyncio.to_thread(b"".join, chunks)

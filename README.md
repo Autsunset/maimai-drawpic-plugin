@@ -102,6 +102,10 @@ git clone --branch feat/webui https://github.com/WhiteCloudOL/maimai-drawpic-plu
 
 插件开关、网络代理和缓存容量继续在 **MaiBot 插件配置页** 管理。图片缓存默认最多 **300 MB**，日志默认最多 **10 MB**，超限会自动清理；重要图片应在缓存过期前另行保存。配置存储位置、备份、迁移和恢复方法见[配置与数据指南](docs/configuration.md)。
 
+### 权限、额度与审核
+
+请在“偏好与预设 → 通用与审核”设置管理员、聊天额度和审核规则。[权限与审核说明](docs/configuration.md#权限额度与审核)。
+
 ## 常见问题
 
 - **没有可选模型**：确认平台已启用、模型列表非空且名称与账号权限一致。
@@ -121,9 +125,5 @@ git clone --branch feat/webui https://github.com/WhiteCloudOL/maimai-drawpic-plu
 ## 插件联动
 
 其他插件可通过实例内任务 API 与独立 `DrawingClient` 接入；参数、超时、幂等和代码示例见[开发者接入指南](docs/integration.md)。
-
-## 权限、额度与审核
-
-请在“偏好与预设 → 通用与审核”设置管理员、聊天额度和审核规则。[权限与审核说明](docs/configuration.md#权限额度与审核)。
 
 问题反馈：[GitHub Issues](https://github.com/WhiteCloudOL/maimai-drawpic-plugin/issues)。许可证：[AGPL-3.0](LICENSE)。

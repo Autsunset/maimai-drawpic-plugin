@@ -1,6 +1,8 @@
 from typing import Any, Awaitable, Callable, Dict, Optional
 import asyncio
 import re
+import inspect
+from contextlib import contextmanager
 
 from ..moderation import DrawpicModerationService
 from ...infrastructure.storage.results import ImageResultStore
@@ -12,7 +14,8 @@ from .prompts import PromptReviewMixin
 from .planning import RequestPlanningMixin
 from .execution import ImageExecutionMixin
 from .queries import TaskQueryMixin
-from .admission import persist_submission
+from .admission import persist_submission, tracked_submission, update_task_owned
+from ...domain.task_errors import task_error
 
 
 class DrawService(
@@ -110,6 +113,43 @@ class DrawService(
         self.task_store = task_store
         self.result_store = result_store
         self.background_tasks: set[asyncio.Task[Any]] = set()
+        self._submissions: dict[asyncio.Task[Any], int] = {}
+        self._started_task_ids: set[str] = set()
+        self._settlement_tasks: set[asyncio.Task[Any]] = set()
+        self._admission_closed = False
+
+    @property
+    def has_active_work(self) -> bool:
+        return bool(self.background_tasks or self._submissions or self._settlement_tasks)
+
+    @contextmanager
+    def submission_scope(self):
+        if self._admission_closed:
+            raise RuntimeError("插件正在卸载，不能提交新的绘图任务")
+        current = asyncio.current_task()
+        self._submissions[current] = self._submissions.get(current, 0) + 1
+        try:
+            yield
+        finally:
+            depth = self._submissions[current] - 1
+            if depth:
+                self._submissions[current] = depth
+            else:
+                self._submissions.pop(current, None)
+
+    def close_admission(self) -> None:
+        self._admission_closed = True
+
+    async def cancel_submissions(self) -> None:
+        tasks = [task for task in self._submissions if task is not asyncio.current_task()]
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def wait_settlement(self) -> None:
+        while self._settlement_tasks:
+            await asyncio.gather(*tuple(self._settlement_tasks), return_exceptions=True)
 
     def resolve_request_timeout_seconds(self) -> int:
         """解析请求超时时间。"""
@@ -144,12 +184,40 @@ class DrawService(
 
         return self.router.resolve_fallback_model(primary_model)
 
-    def track_background_task(self, task: asyncio.Task[Any], task_id: str) -> None:
-        """跟踪后台任务，避免任务对象被提前释放。"""
-
+    def track_background_task(
+        self, task: asyncio.Task[Any], task_id: str,
+        on_task_unsuccessful: Callable[[str, str, str], Awaitable[None] | None] | None = None,
+    ) -> None:
+        """Own settlement even when cancellation precedes the coroutine's first step."""
         self.background_tasks.add(task)
-        task.add_done_callback(self.background_tasks.discard)
-        del task_id
+
+        async def settle_unstarted() -> None:
+            try:
+                await update_task_owned(
+                    self.task_store, task_id, status="failed", message="任务已取消",
+                    error=task_error("CANCELLED", "执行尚未启动，任务已取消"),
+                )
+            except Exception:
+                self.ctx.logger.exception("未启动任务取消状态保存失败: task_id=%s", task_id)
+            finally:
+                if on_task_unsuccessful is not None:
+                    try:
+                        result = on_task_unsuccessful(task_id, "failed", "任务已取消")
+                        if inspect.isawaitable(result):
+                            await result
+                    except Exception:
+                        self.ctx.logger.exception("未启动任务结算失败: task_id=%s", task_id)
+
+        def finished(done: asyncio.Task[Any]) -> None:
+            self.background_tasks.discard(done)
+            started = task_id in self._started_task_ids
+            self._started_task_ids.discard(task_id)
+            if not started:
+                cleanup = asyncio.create_task(settle_unstarted())
+                self._settlement_tasks.add(cleanup)
+                cleanup.add_done_callback(self._settlement_tasks.discard)
+
+        task.add_done_callback(finished)
 
     async def cancel_background_tasks(self) -> None:
         """取消当前全部后台任务。"""
@@ -159,7 +227,9 @@ class DrawService(
             task.cancel()
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
+        await self.wait_settlement()
 
+    @tracked_submission
     async def start_background_image_request(
         self,
         *,
@@ -251,9 +321,9 @@ class DrawService(
                 prompt=prompt,
                 stream_id=stream_id,
                 resolved_model=primary_attempt.model,
-                openai_compatibility_mode=primary_attempt.openai_compatibility_mode,
-                novelai_mode=primary_attempt.novelai_mode,
-                novelai_artist_tags=primary_attempt.novelai_artist_tags,
+                openai_compatibility_mode=resolved_openai_mode,
+                novelai_mode=novelai_mode,
+                novelai_artist_tags=novelai_artist_tags,
                 request_negative_prompt=request_negative_prompt,
                 source_image_bytes_list=normalized_source_images,
                 source_image_urls=normalized_source_urls,
@@ -267,7 +337,7 @@ class DrawService(
             ),
             name=f"maimai-drawpic:{task_record.task_id}",
         )
-        self.track_background_task(background_task, task_record.task_id)
+        self.track_background_task(background_task, task_record.task_id, on_task_unsuccessful)
         if notify_start:
             self.ctx.logger.info(
                 "绘图任务已提交: task_id=%s task_type=%s primary_provider=%s primary_model=%s fallback_model=%s stream_id=%s user_id=%s group_id=%s platform=%s source_image_count=%s",

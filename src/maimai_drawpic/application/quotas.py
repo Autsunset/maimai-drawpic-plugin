@@ -1,7 +1,7 @@
 """commands/quota.py 的插件组件。"""
 
 from ..interfaces.chat.texts import build_quota_adjust_text
-from ..infrastructure.storage.quotas import QuotaPeriod
+from ..infrastructure.storage.quotas import QuotaPeriod, QuotaReservation
 
 
 class QuotaMixin:
@@ -181,20 +181,31 @@ class QuotaMixin:
         user_id: str,
         group_id: str,
         stream_id: str,
-    ) -> tuple[bool, str, str]:
-        """原子检查并预留一次绘图额度。"""
+        *,
+        return_reservation: bool = False,
+    ) -> tuple[bool, str, str | QuotaReservation | None]:
+        """原子预留额度；任务提交使用凭据，保留旧额度键返回方式。"""
 
         allowed, message, quota_key = self._check_draw_quota(user_id, group_id, stream_id)
         if not allowed or not quota_key:
-            return allowed, message, quota_key
+            return allowed, message, None if return_reservation else quota_key
         quota_enabled, quota_period, default_quota = self._resolve_quota_config(group_id)
         if not quota_enabled:
-            return True, message, ""
-        success, remaining = self._usage_store.consume(
-            quota_key,
-            period=quota_period,
-            default_quota=default_quota,
-        )
+            return True, message, None if return_reservation else ""
+        reservation = None
+        if return_reservation:
+            reservation, remaining = self._usage_store.reserve(
+                quota_key,
+                period=quota_period,
+                default_quota=default_quota,
+            )
+            success = reservation is not None
+        else:
+            success, remaining = self._usage_store.consume(
+                quota_key,
+                period=quota_period,
+                default_quota=default_quota,
+            )
         if not success:
             self.ctx.logger.warning(
                 "绘图额度预留失败: quota_key=%s remaining=%s period=%s stream_id=%s group_id=%s",
@@ -204,7 +215,7 @@ class QuotaMixin:
                 stream_id,
                 group_id,
             )
-            return False, "绘图次数已用尽", ""
+            return False, "绘图次数已用尽", None if return_reservation else ""
         self.ctx.logger.info(
             "绘图额度已预留: quota_key=%s remaining=%s period=%s stream_id=%s group_id=%s",
             quota_key,
@@ -213,7 +224,13 @@ class QuotaMixin:
             stream_id,
             group_id,
         )
-        return True, message, quota_key
+        return True, message, reservation if return_reservation else quota_key
+
+    def _commit_draw_quota(self, reservation: QuotaReservation | None) -> None:
+        """结束成功任务的额度预留，保留消费并清除可退款凭据。"""
+
+        if reservation is not None:
+            self._usage_store.commit_reservation(reservation)
 
     def _refund_draw_quota(
         self,
@@ -224,21 +241,28 @@ class QuotaMixin:
         *,
         quota_period: QuotaPeriod | None = None,
         default_quota: int | None = None,
+        reservation: QuotaReservation | None = None,
     ) -> None:
         """退回失败任务预留的绘图额度。"""
 
         normalized_quota_key = quota_key.strip()
         if not normalized_quota_key:
             return
-        if quota_period is None or default_quota is None:
-            quota_enabled, quota_period, default_quota = self._resolve_quota_config(group_id)
-            if not quota_enabled:
-                return
-        remaining = self._usage_store.refund(
-            normalized_quota_key,
-            period=quota_period,
-            default_quota=default_quota,
-        )
+        if reservation is not None:
+            if reservation.quota_key != normalized_quota_key:
+                raise ValueError("额度凭据与退款归属不一致")
+            quota_period = reservation.period
+            remaining = self._usage_store.refund_reservation(reservation)
+        else:
+            if quota_period is None or default_quota is None:
+                quota_enabled, quota_period, default_quota = self._resolve_quota_config(group_id)
+                if not quota_enabled:
+                    return
+            remaining = self._usage_store.refund(
+                normalized_quota_key,
+                period=quota_period,
+                default_quota=default_quota,
+            )
         self.ctx.logger.info(
             "绘图额度已退回: quota_key=%s remaining=%s period=%s stream_id=%s group_id=%s task_id=%s",
             normalized_quota_key,

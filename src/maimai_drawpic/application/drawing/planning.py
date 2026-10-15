@@ -41,11 +41,12 @@ class RequestPlanningMixin:
         if provider_name == "volcengine":
             effective_model = self.router.resolve_volcengine_model_for_task(model, task_type)
         elif provider_name == "novelai":
+            novelai_mode = self.router.resolve_novelai_mode_for_model(model, novelai_mode)
             effective_model = self.router.resolve_novelai_model_for_mode(model, novelai_mode)
             provider_name = self.router.get_model_provider(effective_model)
             if provider_name != "novelai":
                 raise ValueError(
-                    f"NovelAI {self.router.resolve_novelai_mode(novelai_mode)} 模式需要模型 "
+                    f"NovelAI {novelai_mode} 模式需要模型 "
                     f"{effective_model}，请先在 novelai.models 中启用该模型"
                 )
             if effective_model != model:
@@ -53,7 +54,7 @@ class RequestPlanningMixin:
                     "NovelAI V3 模型按 mode 自动切换: original_model=%s effective_model=%s mode=%s is_fallback=%s",
                     model,
                     effective_model,
-                    self.router.resolve_novelai_mode(novelai_mode),
+                    novelai_mode,
                     is_fallback,
                 )
 

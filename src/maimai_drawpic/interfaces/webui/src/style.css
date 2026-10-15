@@ -4,8 +4,8 @@
   --soft: #f4f2ef;
   --line: #e8e5e1;
   --text: #282629;
-  --muted: #858087;
-  --accent: #ca667d;
+  --muted: #716b74;
+  --accent: #aa4862;
   --accent-button: #b94764;
   --on-accent: #fff;
   --accent-dark: #a84e63;
@@ -431,7 +431,16 @@ footer {
   margin-bottom: 19px;
   min-width: 0;
 }
-.field > label {
+.field:is(fieldset) {
+  margin-inline: 0;
+  padding: 0;
+  border: 0;
+}
+.field > legend {
+  padding: 0;
+}
+.field > label,
+.field > legend {
   display: block;
   font-size: 12px;
   font-weight: 550;
@@ -812,6 +821,9 @@ textarea {
   max-width: 360px;
   margin: 0 auto 20px;
 }
+.save-label-short {
+  display: none;
+}
 .settings-layout {
   display: grid;
   grid-template-columns: 190px minmax(0, 1fr);
@@ -1112,8 +1124,12 @@ dialog::backdrop {
     font-size: 8px;
     letter-spacing: 1.6px;
   }
-  .page-header .button > span:last-child {
+  #refresh > span:last-child,
+  #save-settings .save-label-full {
     display: none;
+  }
+  #save-settings .save-label-short {
+    display: inline;
   }
   .studio-grid,
   .card-grid,

@@ -9,6 +9,7 @@ import re
 
 from .images import read_image, save_bytes
 from .models import DrawingError, DrawingResult, DrawingTransportError, GeneratedImage, TaskHandle
+from .protocol import TASK_STATUSES, validate_task
 from .transport import APIProxy, DrawingRPC
 
 
@@ -50,38 +51,46 @@ class DrawingClient:
         request_id = uuid4().hex if request_id is None else request_id
         if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", request_id):
             raise ValueError("request_id 应为 8～80 位字母、数字、下划线或横线；省略时自动生成")
+        task_id = None
         try:
             result = await self.rpc.call("submit", prompt=prompt, request_id=request_id, **kwargs)
             # 回执不完整时无法证明未受理，保留原幂等键供调用方恢复。
             if result.get("accepted") is True:
+                if isinstance(result.get("task_id"), str) and result["task_id"]:
+                    task_id = result["task_id"]
                 if (
-                    not isinstance(result.get("task_id"), str)
-                    or not result["task_id"]
+                    task_id is None
                     or not isinstance(result.get("status"), str)
+                    or result["status"] not in TASK_STATUSES
                     or type(result.get("reused")) is not bool
+                    or "request_id" in result and result["request_id"] != request_id
                 ):
                     raise DrawingTransportError("提交回执缺少任务信息")
-            elif result.get("accepted") is not False or not isinstance(result.get("error"), dict):
+            elif result.get("accepted") is not False:
                 raise DrawingTransportError("提交回执缺少受理状态或错误信息")
+            else:
+                raise DrawingError(result.get("error"), request_id=request_id)
         except DrawingTransportError as exc:
             error = DrawingError(
-                {"code": "SUBMISSION_UNKNOWN", "message": str(exc), "retry_submit": False}, request_id=request_id
+                {"code": "SUBMISSION_UNKNOWN", "message": str(exc), "retry_submit": False},
+                task_id=task_id,
+                request_id=request_id,
             )
-            return TaskHandle(None, request_id, "submission_unknown", error=error)
-        if result.get("accepted") is not True:
-            raise DrawingError(result["error"], request_id=request_id)
-        return TaskHandle(result["task_id"], request_id, result["status"], result["reused"])
+            return TaskHandle(task_id, request_id, "submission_unknown", error=error)
+        return TaskHandle(task_id, request_id, result["status"], result["reused"])
 
     async def task(self, task_id: str) -> Dict[str, Any]:
         result = await self.rpc.call("task", task_id=task_id)
-        if result.get("task_id") is None:
-            raise DrawingError(result["error"], task_id=task_id)
+        validate_task(result, task_id)
         return result
 
     async def cancel(self, task_id: str) -> Dict[str, Any]:
         result = await self.rpc.call("cancel", task_id=task_id)
-        if result.get("task_id") is None:
-            raise DrawingError(result["error"], task_id=task_id)
+        validate_task(result, task_id)
+        if type(result.get("cancel_requested")) is not bool or result.get("upstream_cancelled") is not None:
+            raise DrawingTransportError(
+                "取消回执格式无效", task_id=task_id, request_id=result.get("request_id", "")
+            )
         return result
 
     async def read_image(self, task_id: str, index: int = 0) -> bytes:
@@ -102,6 +111,11 @@ class DrawingClient:
                 # 只重试只读查询，外层总预算负责结束等待。
                 await asyncio.sleep(self.poll_interval)
                 continue
+            except DrawingError as exc:
+                exc.request_id = result.request_id or exc.request_id
+                raise
+            if not result.request_id:
+                result.request_id = snapshot.get("request_id", "")
             result.status = snapshot["status"]
             result.image_references = snapshot["images"]
             result.generation_completed = snapshot["generation_completed"]
@@ -109,19 +123,32 @@ class DrawingClient:
             result.delivery = snapshot["delivery"]
             result.retry_after_ms = snapshot["retry_after_ms"]
             result.error = (
-                DrawingError(snapshot["error"], task_id=handle.task_id, request_id=handle.request_id)
-                if snapshot["error"]
+                DrawingError(snapshot["error"], task_id=handle.task_id, request_id=result.request_id)
+                if snapshot["error"] is not None
                 else None
             )
             if result.status not in {"pending", "running"}:
                 if read_images and result.image_references:
                     if sum(item["size"] for item in result.image_references) > self.max_result_bytes:
-                        raise ValueError("图片总大小超过客户端单次结果限制")
+                        result.error = DrawingError(
+                            {
+                                "code": "RESULT_TOO_LARGE",
+                                "message": "图片总大小超过客户端单次结果限制；可调高限制或仅获取原任务图片引用",
+                            },
+                            task_id=handle.task_id,
+                            request_id=result.request_id,
+                        )
+                        return result
                     for image in result.image_references:
                         try:
                             raw = await self.read_image(handle.task_id, image["index"])
+                            if len(raw) != image["size"]:
+                                raise DrawingTransportError("图片大小与任务引用不一致", task_id=handle.task_id)
                         except DrawingError as exc:
-                            result.error, result.results_readable = exc, False
+                            exc.request_id = result.request_id
+                            result.error = exc
+                            if exc.code != "RESULT_TOO_LARGE":
+                                result.results_readable = False
                             break
                         except DrawingTransportError:
                             result.error = DrawingError(
@@ -131,7 +158,7 @@ class DrawingClient:
                                     "retry_query": True,
                                 },
                                 task_id=handle.task_id,
-                                request_id=handle.request_id,
+                                request_id=result.request_id,
                             )
                             result.results_readable = False
                             break

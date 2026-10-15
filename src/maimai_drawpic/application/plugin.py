@@ -4,6 +4,8 @@ from collections.abc import Mapping
 from maibot_sdk import CONFIG_RELOAD_SCOPE_SELF, MaiBotPlugin, ON_BOT_CONFIG_RELOAD, ON_MODEL_CONFIG_RELOAD
 from pathlib import Path
 from typing import Any, ClassVar, List
+from threading import RLock
+from weakref import WeakSet
 import asyncio
 
 from ..paths import PLUGIN_DIR
@@ -50,6 +52,9 @@ class DrawpicRuntime(MaiBotPlugin):
         self._image_reply_renderer = PinkImageReplyRenderer()
         self._draw_service: DrawService | None = None
         self._retired_draw_services: List[DrawService] = []
+        self._draw_services: WeakSet[DrawService] = WeakSet()
+        self._service_lifecycle_lock = RLock()
+        self._closing = False
         self._platform_store: WorkspaceConfigStore | None = None
         self._effective_config: DrawpicConfig | None = None
         self._result_store: ImageResultStore | None = None
@@ -197,17 +202,26 @@ class DrawpicRuntime(MaiBotPlugin):
         self._stream_service = ChatStreamService(self.ctx)
         self._moderation_service = DrawpicModerationService(self.config, self.ctx)
         self._image_reply_renderer = PinkImageReplyRenderer()
-        self._retired_draw_services = [service for service in self._retired_draw_services if service.background_tasks]
-        if self._draw_service is not None and self._draw_service.background_tasks:
-            self._retired_draw_services.append(self._draw_service)
-        self._draw_service = DrawService(
-            ctx=self.ctx,
-            router=self._router,
-            stream_service=self._stream_service,
-            moderation_service=self._moderation_service,
-            task_store=self._task_store,
-            result_store=self._result_store,
-        )
+        # A submitting caller may still hold an otherwise idle service across an await.
+        # Keep weak registration of every live service instead of using running tasks
+        # as the only evidence that it must remain reachable by cancellation/unload.
+        with self._service_lifecycle_lock:
+            if self._closing:
+                return
+            self._retired_draw_services = [
+                service for service in self._retired_draw_services if service.has_active_work
+            ]
+            if self._draw_service is not None and self._draw_service.has_active_work:
+                self._retired_draw_services.append(self._draw_service)
+            self._draw_service = DrawService(
+                ctx=self.ctx,
+                router=self._router,
+                stream_service=self._stream_service,
+                moderation_service=self._moderation_service,
+                task_store=self._task_store,
+                result_store=self._result_store,
+            )
+            self._draw_services.add(self._draw_service)
 
     def _require_router(self) -> ProviderRouter:
         """返回当前 Provider 路由器。"""
@@ -247,6 +261,8 @@ class DrawpicRuntime(MaiBotPlugin):
     def _require_draw_service(self) -> DrawService:
         """返回绘图服务。"""
 
+        if self._closing:
+            raise RuntimeError("插件正在卸载，不能提交新的绘图任务")
         if self._draw_service is None:
             raise RuntimeError("插件服务尚未初始化，请等待插件完成加载")
         return self._draw_service
@@ -254,6 +270,7 @@ class DrawpicRuntime(MaiBotPlugin):
     async def on_load(self) -> None:
         """插件加载时初始化平台。"""
 
+        self._closing = False
         self._redactor.add_config(self.get_plugin_config_data())
         self.ctx.logger.addFilter(self._redactor)
         await asyncio.to_thread(self._prepare_data_dir)
@@ -265,7 +282,11 @@ class DrawpicRuntime(MaiBotPlugin):
         await attach_workspace(self)
         router = self._require_router()
         moderation_service = self._require_moderation_service()
-        resolved_default_model = router.resolve_default_model() if router.get_all_models() else ""
+        try:
+            resolved_default_model = router.resolve_default_model() if router.get_all_models() else ""
+        except ValueError as exc:
+            resolved_default_model = ""
+            self.ctx.logger.warning("默认模型配置无效，请在工作台选择完整实例模型名称: %s", exc)
         resolved_fallback_model = (
             router.resolve_fallback_model(resolved_default_model) if router.get_all_models() else ""
         )
@@ -316,7 +337,11 @@ class DrawpicRuntime(MaiBotPlugin):
             await asyncio.to_thread(self._require_session_store().save)
             router = self._require_router()
             moderation_service = self._require_moderation_service()
-            resolved_default_model = router.resolve_default_model() if router.get_all_models() else ""
+            try:
+                resolved_default_model = router.resolve_default_model() if router.get_all_models() else ""
+            except ValueError as exc:
+                resolved_default_model = ""
+                self.ctx.logger.warning("默认模型配置无效，请在工作台选择完整实例模型名称: %s", exc)
             resolved_fallback_model = (
                 router.resolve_fallback_model(resolved_default_model) if router.get_all_models() else ""
             )

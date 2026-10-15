@@ -14,10 +14,8 @@ from ...infrastructure.storage.results import ImageResultStore
 
 
 def active_services(plugin: Any) -> List[DrawService]:
-    services = list(plugin._retired_draw_services)
-    if plugin._draw_service is not None:
-        services.append(plugin._draw_service)
-    return services
+    with plugin._service_lifecycle_lock:
+        return list(plugin._draw_services)
 
 
 async def prepare_workspace(plugin: Any, config_path: Path) -> None:
@@ -128,12 +126,19 @@ async def maintain_workspace(plugin: Any) -> None:
 
 
 async def close_workspace(plugin: Any) -> None:
+    # Stop new admissions before awaiting any shutdown work.
+    with plugin._service_lifecycle_lock:
+        plugin._closing = True
+        services = list(plugin._draw_services)
+        for service in services:
+            service.close_admission()
     clear_source_image_cache()
     if plugin._workspace_cleanup_task is not None:
         plugin._workspace_cleanup_task.cancel()
         await asyncio.gather(plugin._workspace_cleanup_task, return_exceptions=True)
         plugin._workspace_cleanup_task = None
-    for service in active_services(plugin):
+    for service in services:
+        await service.cancel_submissions()
         await service.cancel_background_tasks()
     if plugin._workspace_service is not None:
         await asyncio.to_thread(plugin._workspace_service.logs.close)

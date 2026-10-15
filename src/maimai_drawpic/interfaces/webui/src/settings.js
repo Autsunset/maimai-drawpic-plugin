@@ -22,6 +22,7 @@
           "",
         )}</div><section class="panel"><div class="panel-header"><div><h2 id="settings-heading"></h2><p class="hint" id="settings-description"></p></div><button type="button" id="reset-settings" class="button secondary compact">恢复当前分类默认</button></div><form id="settings-form"></form></section></div>`;
     const form = $("#settings-form");
+    let requiresRefresh = false;
     function renderSection(name, values) {
       const panel = document.createElement("section");
       panel.id = `settings-panel-${name}`;
@@ -103,6 +104,7 @@
     });
     form.onsubmit = (event) => {
       event.preventDefault();
+      if (form.inert || requiresRefresh) return;
       buttonAction(save, async () => {
         const all = Object.fromEntries(
           Object.entries(readers).map(([name, read]) => [name, read()]),
@@ -110,20 +112,31 @@
         form.inert = true;
         $("#reset-settings").disabled = true;
         try {
-          await call("action", "settings_save", {
+          const result = await call("action", "settings_save", {
             config_json: JSON.stringify(all),
             revision,
           });
-          if (form.isConnected) state.dirty = false;
-          await U.bootstrap();
-          if (form.isConnected && state.view === "settings") await U.render();
-          toast("全部设置已保存");
+          if (form.isConnected) {
+            state.dirty = false;
+            updateNotice();
+          }
+          let refreshError = null;
+          try {
+            await U.bootstrap();
+            if (form.isConnected && state.view === "settings") await U.render();
+          } catch (error) {
+            refreshError = error;
+            requiresRefresh = true;
+          }
+          U.savedNotice(result, "全部设置已保存", refreshError);
         } finally {
           if (form.isConnected) {
-            form.inert = false;
-            $("#reset-settings").disabled = false;
+            form.inert = requiresRefresh;
+            $("#reset-settings").disabled = requiresRefresh;
           }
         }
+      }).finally(() => {
+        if (form.isConnected && requiresRefresh) save.disabled = true;
       });
     };
     activate(selected);

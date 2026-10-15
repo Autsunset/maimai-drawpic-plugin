@@ -19,7 +19,10 @@
     }
   }
   function modelOptions() {
-    return state.data.models
+    const placeholder = state.data.default_model_error
+      ? '<option value="" selected>请选择平台实例 / 模型</option>'
+      : "";
+    return placeholder + state.data.models
       .filter((item) => item[mode])
       .map(
         (item) =>
@@ -94,14 +97,15 @@
     if (!state.data.models.length) {
       $("#workspace-content").innerHTML = U.empty(
         "先添加一个绘图平台",
-        "平台和模型准备好之后，就可以在这里开始第一幅作品。",
+        state.data.default_model_error ||
+          "平台和模型准备好之后，就可以在这里开始第一幅作品。",
         `<button id="first-platform" class="button">${icon("plus")}添加绘图平台</button>`,
       );
       $("#first-platform").onclick = () => U.navigate("platforms");
       return;
     }
     $("#workspace-content").innerHTML =
-      `<div class="studio-grid"><section class="panel"><div class="panel-header"><div class="section-label">${icon("sparkles")}<h2>创作新的画面</h2></div><span class="pill">后台执行</span></div><div class="mode-switch" data-mode="${mode}" role="group" aria-label="绘图模式"><span class="mode-indicator" aria-hidden="true"></span><button id="mode-draw" class="${mode === "draw" ? "active" : ""}">文生图</button><button id="mode-edit" class="${mode === "edit_image" ? "active" : ""}">图生图</button></div><form id="draw-form"><div class="field"><label for="draw-prompt">你想画什么？</label><textarea id="draw-prompt" class="prompt-input" maxlength="16000" required placeholder="描述主体、构图、光线和风格。例如：一只橘猫坐在窗边，午后阳光照进房间，水彩质感。"></textarea></div><div class="field-row"><div class="field"><label for="draw-model">绘图模型</label><select id="draw-model" required>${modelOptions()}</select></div><div class="field"><label for="draw-style">风格预设</label><select id="draw-style"><option value="">不使用预设</option>${state.data.presets
+      `<div class="studio-grid"><section class="panel"><div class="panel-header"><div class="section-label">${icon("sparkles")}<h2>创作新的画面</h2></div><span class="pill">后台执行</span></div><div class="mode-switch" data-mode="${mode}" role="group" aria-label="绘图模式"><span class="mode-indicator" aria-hidden="true"></span><button id="mode-draw" aria-pressed="${mode === "draw"}" class="${mode === "draw" ? "active" : ""}">文生图</button><button id="mode-edit" aria-pressed="${mode === "edit_image"}" class="${mode === "edit_image" ? "active" : ""}">图生图</button></div><form id="draw-form"><div class="field"><label for="draw-prompt">你想画什么？</label><textarea id="draw-prompt" class="prompt-input" maxlength="16000" required placeholder="描述主体、构图、光线和风格。例如：一只橘猫坐在窗边，午后阳光照进房间，水彩质感。"></textarea></div><div class="field-row"><div class="field"><label for="draw-model">绘图模型</label><select id="draw-model" required${state.data.default_model_error ? ' aria-describedby="draw-model-error"' : ""}>${modelOptions()}</select>${state.data.default_model_error ? `<p id="draw-model-error" class="hint" role="status">${e(state.data.default_model_error)}。请选择完整的“平台实例 / 模型”名称；可在偏好与预设中更新默认模型。</p>` : ""}</div><div class="field"><label for="draw-style">风格预设</label><select id="draw-style"><option value="">不使用预设</option>${state.data.presets
         .filter((item) => item.enabled)
         .map(
           (item) => `<option value="${e(item.name)}">${e(item.name)}</option>`,
@@ -148,16 +152,6 @@
         ],
         { duration: 260, easing: "cubic-bezier(.2,.8,.2,1)" },
       );
-      if (mode === "edit_image")
-        $("#upload-zone")
-          .closest(".field")
-          .animate(
-            [
-              { opacity: 0, transform: "translateY(-5px)" },
-              { opacity: 1, transform: "translateY(0)" },
-            ],
-            { duration: 190, easing: "ease-out" },
-          );
     }
     $("#draw-delivery").onchange = () => {
       $("#delivery-fields").hidden = $("#draw-delivery").value !== "chat";
