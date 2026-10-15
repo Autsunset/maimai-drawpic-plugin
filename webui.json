@@ -1,5 +1,6 @@
 {
   "schema_version": 2,
+  "workspace_title": "麦麦绘图",
   "required_capabilities": [
     "custom_pages",
     "image_upload"
