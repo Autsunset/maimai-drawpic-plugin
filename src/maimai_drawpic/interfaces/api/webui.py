@@ -1,0 +1,81 @@
+"""只供宿主扩展页面绑定的私有 API。"""
+
+from maibot_sdk import API
+from typing import Any, Dict
+import asyncio
+
+from .base import WorkspaceAPIBase, workspace_endpoint
+from ...infrastructure.storage.platforms import parse_json_object
+
+
+class WebUIAPIMixin(WorkspaceAPIBase):
+    @API("workspace_bootstrap", version="1")
+    @workspace_endpoint
+    async def workspace_bootstrap(self) -> Dict[str, Any]:
+        return await self._workspace().bootstrap()
+
+    @API("workspace_provider_save", version="1")
+    @workspace_endpoint
+    async def workspace_provider_save(self, provider_json: str, revision: int) -> Dict[str, Any]:
+        return await self._workspace().save_provider(provider_json, revision)
+
+    @API("workspace_provider_delete", version="1")
+    @workspace_endpoint
+    async def workspace_provider_delete(self, provider_id: str, revision: int) -> Dict[str, Any]:
+        return await self._workspace().delete_provider(provider_id, revision)
+
+    @API("workspace_settings_save", version="1")
+    @workspace_endpoint
+    async def workspace_settings_save(self, config_json: str, revision: int) -> Dict[str, Any]:
+        return await self._workspace().save_settings(config_json, revision)
+
+    @API("workspace_tasks", version="1")
+    @workspace_endpoint
+    async def workspace_tasks(self, page: int = 1, status: str = "", search: str = "") -> Dict[str, Any]:
+        return await self._workspace().tasks.tasks(page=page, status=status, search=search)
+
+    @API("workspace_task", version="1")
+    @workspace_endpoint
+    async def workspace_task(self, task_id: str) -> Dict[str, Any]:
+        return await self._workspace().tasks.detail(task_id, include_prompt=True)
+
+    @API("workspace_image", version="1")
+    @workspace_endpoint
+    async def workspace_image(self, task_id: str, index: int = 0, thumbnail: bool = False) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._workspace().tasks.results.preview, task_id, index, thumbnail)
+
+    @API("workspace_original", version="1")
+    @workspace_endpoint
+    async def workspace_original(self, task_id: str, index: int = 0, offset: int = 0) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._workspace().tasks.results.original_chunk, task_id, index, offset)
+
+    @API("workspace_source", version="1")
+    @workspace_endpoint
+    async def workspace_source(self, upload_id: str) -> Dict[str, Any]:
+        return await self._workspace().tasks.claim_source(upload_id)
+
+    @API("workspace_submit", version="1")
+    @workspace_endpoint
+    async def workspace_submit(self, request_json: str) -> Dict[str, Any]:
+        values = parse_json_object(request_json)
+        allowed = {"prompt", "model", "negative_prompt", "style", "task_type", "stream_id", "source_ids", "request_id"}
+        if values.keys() - allowed:
+            raise ValueError("绘图请求包含未知参数")
+        return await self._workspace().tasks.submit(**values)
+
+    @API("workspace_cancel", version="1")
+    @workspace_endpoint
+    async def workspace_cancel(self, task_id: str) -> Dict[str, Any]:
+        return await self._workspace().tasks.cancel(task_id)
+
+    @API("workspace_logs", version="1")
+    @workspace_endpoint
+    async def workspace_logs(
+        self, task_id: str = "", level: str = "", limit: int = 120, cursor: str = ""
+    ) -> Dict[str, Any]:
+        return await asyncio.to_thread(self._workspace().logs.query, task_id, level, limit, cursor)
+
+    @API("workspace_streams", version="1")
+    @workspace_endpoint
+    async def workspace_streams(self, platform: str = "qq") -> Dict[str, Any]:
+        return await self._workspace().streams(platform)

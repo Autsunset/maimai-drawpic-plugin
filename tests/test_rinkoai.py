@@ -21,14 +21,14 @@ if _PKG_NAME not in sys.modules:
     package.__path__ = [str(Path(__file__).resolve().parent.parent)]
     sys.modules[_PKG_NAME] = package
 
-_models = import_module(f"{_PKG_NAME}.models.rinkoai_models")
-_config = import_module(f"{_PKG_NAME}.core.config")
-_router = import_module(f"{_PKG_NAME}.core.provider_router")
-_preferences = import_module(f"{_PKG_NAME}.core.session_preferences")
-_texts = import_module(f"{_PKG_NAME}.core.texts")
-_OpenaiImage = import_module(f"{_PKG_NAME}.providers.openai_platform").OpenaiImage
-_OpenAIRequestError = import_module(f"{_PKG_NAME}.providers.openai_platform").OpenAIRequestError
-_openai_models = import_module(f"{_PKG_NAME}.models.openai_models")
+_models = import_module(f"{_PKG_NAME}.src.maimai_drawpic.domain.models.rinkoai_profiles")
+_config = import_module(f"{_PKG_NAME}.src.maimai_drawpic.domain.configuration.models")
+_router = import_module(f"{_PKG_NAME}.src.maimai_drawpic.application.routing")
+_preferences = import_module(f"{_PKG_NAME}.src.maimai_drawpic.infrastructure.storage.preferences")
+_texts = import_module(f"{_PKG_NAME}.src.maimai_drawpic.interfaces.chat.texts")
+_OpenaiImage = import_module(f"{_PKG_NAME}.src.maimai_drawpic.infrastructure.providers.openai").OpenaiImage
+_OpenAIRequestError = import_module(f"{_PKG_NAME}.src.maimai_drawpic.infrastructure.providers.openai").OpenAIRequestError
+_openai_models = import_module(f"{_PKG_NAME}.src.maimai_drawpic.domain.models.openai_profiles")
 _MODEL = "nai-diffusion-5-full"
 
 

@@ -7,7 +7,6 @@ from typing import Any
 
 import asyncio
 import base64
-import importlib.util
 import sys
 import types
 
@@ -24,32 +23,11 @@ def _bootstrap_plugin_package() -> None:
         package.__path__ = [str(_PLUGIN_DIR)]
         sys.modules[_PKG_NAME] = package
 
-    for subpackage_name in ("core", "models", "providers"):
-        full_name = f"{_PKG_NAME}.{subpackage_name}"
-        if full_name in sys.modules:
-            continue
-        subpackage_path = _PLUGIN_DIR / subpackage_name
-        init_path = subpackage_path / "__init__.py"
-        if not init_path.exists():
-            module = types.ModuleType(full_name)
-            module.__path__ = [str(subpackage_path)]
-            sys.modules[full_name] = module
-            continue
-        spec = importlib.util.spec_from_file_location(
-            full_name,
-            init_path,
-            submodule_search_locations=[str(subpackage_path)],
-        )
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"无法加载测试包：{full_name}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[full_name] = module
-        spec.loader.exec_module(module)
 
 
 def _aliyun_models() -> Any:
     _bootstrap_plugin_package()
-    return import_module(f"{_PKG_NAME}.models.aliyun_models")
+    return import_module(f"{_PKG_NAME}.src.maimai_drawpic.domain.models.aliyun_profiles")
 
 
 def _request_options(**overrides: Any) -> Any:
@@ -81,17 +59,17 @@ def _request_options(**overrides: Any) -> Any:
 
 def _aliyun_provider_class() -> Any:
     _bootstrap_plugin_package()
-    return import_module(f"{_PKG_NAME}.providers.aliyun_platform").AliyunImage
+    return import_module(f"{_PKG_NAME}.src.maimai_drawpic.infrastructure.providers.aliyun").AliyunImage
 
 
 def _config_module() -> Any:
     _bootstrap_plugin_package()
-    return import_module(f"{_PKG_NAME}.core.config")
+    return import_module(f"{_PKG_NAME}.src.maimai_drawpic.domain.configuration.models")
 
 
 def _provider_router_class() -> Any:
     _bootstrap_plugin_package()
-    return import_module(f"{_PKG_NAME}.core.provider_router").ProviderRouter
+    return import_module(f"{_PKG_NAME}.src.maimai_drawpic.application.routing").ProviderRouter
 
 
 def _provider(**overrides: Any) -> Any:
@@ -693,7 +671,7 @@ def test_draw_service_passes_source_urls_only_to_aliyun_adapter() -> None:
     """后台链路应向阿里云传 URL，同时保持其他适配器原有签名。"""
 
     _bootstrap_plugin_package()
-    draw_module = import_module(f"{_PKG_NAME}.core.draw_service")
+    draw_module = import_module(f"{_PKG_NAME}.src.maimai_drawpic.application.drawing")
     provider_class = _aliyun_provider_class()
     png_bytes = base64.b64decode(
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+"
@@ -818,7 +796,7 @@ def test_draw_service_rejects_unsupported_draw_during_attempt_build() -> None:
     """中央后台层应在任务创建前拒绝模型不支持的文生图能力。"""
 
     _bootstrap_plugin_package()
-    draw_module = import_module(f"{_PKG_NAME}.core.draw_service")
+    draw_module = import_module(f"{_PKG_NAME}.src.maimai_drawpic.application.drawing")
     config = _config_module().DrawpicConfig()
     config.aliyun.models = ["qwen-image-edit"]
     service = draw_module.DrawService.__new__(draw_module.DrawService)

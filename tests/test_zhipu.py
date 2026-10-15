@@ -6,7 +6,6 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any
 
-import importlib.util
 import sys
 import types
 
@@ -23,42 +22,21 @@ def _bootstrap_plugin_package() -> None:
         package.__path__ = [str(_PLUGIN_DIR)]
         sys.modules[_PKG_NAME] = package
 
-    for subpackage_name in ("core", "models", "providers"):
-        full_name = f"{_PKG_NAME}.{subpackage_name}"
-        if full_name in sys.modules:
-            continue
-        subpackage_path = _PLUGIN_DIR / subpackage_name
-        init_path = subpackage_path / "__init__.py"
-        if not init_path.exists():
-            module = types.ModuleType(full_name)
-            module.__path__ = [str(subpackage_path)]
-            sys.modules[full_name] = module
-            continue
-        spec = importlib.util.spec_from_file_location(
-            full_name,
-            init_path,
-            submodule_search_locations=[str(subpackage_path)],
-        )
-        if spec is None or spec.loader is None:
-            raise RuntimeError(f"无法加载测试包：{full_name}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[full_name] = module
-        spec.loader.exec_module(module)
 
 
 def _zhipu_provider_class() -> Any:
     _bootstrap_plugin_package()
-    return import_module(f"{_PKG_NAME}.providers.zhipu_platform").ZhipuImage
+    return import_module(f"{_PKG_NAME}.src.maimai_drawpic.infrastructure.providers.zhipu").ZhipuImage
 
 
 def _config_module() -> Any:
     _bootstrap_plugin_package()
-    return import_module(f"{_PKG_NAME}.core.config")
+    return import_module(f"{_PKG_NAME}.src.maimai_drawpic.domain.configuration.models")
 
 
 def _provider_router_class() -> Any:
     _bootstrap_plugin_package()
-    return import_module(f"{_PKG_NAME}.core.provider_router").ProviderRouter
+    return import_module(f"{_PKG_NAME}.src.maimai_drawpic.application.routing").ProviderRouter
 
 
 def test_glm_image_payload_matches_current_zhipu_api() -> None:
@@ -93,8 +71,8 @@ def test_glm_image_defaults_are_selected() -> None:
 
     config = _config_module().DrawpicConfig()
 
-    assert config.plugin.config_version == "2.30.0"
-    assert config.general.default_model == "gpt-image-2"
+    assert config.plugin.config_version == "2.37.0"
+    assert config.general.default_model == ""
     assert config.zhipu.models == ["glm-image"]
     assert config.zhipu.quality == ""
     assert config.zhipu.size == "1280x1280"
