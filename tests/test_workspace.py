@@ -5,6 +5,7 @@ from pathlib import Path
 from types import ModuleType
 from maibot_sdk import PluginContext
 from maibot_sdk.components import collect_components
+from maibot_sdk.config import rebuild_plugin_config_data
 from maibot_sdk.context import PluginPaths
 from PIL import Image
 import asyncio
@@ -43,7 +44,7 @@ def make_plugin(tmp_path, monkeypatch):
                 "maimai-drawpic-plugin", paths=PluginPaths(data_dir=tmp_path / "data", runtime_dir=tmp_path / "runtime")
             )
         )
-        config = plugin.get_default_config()
+        config = DrawpicConfig().model_dump(mode="json")
         config["general"].update(prompt_review_enabled=False, image_review_enabled=False)
         if configured:
             config["openai"].update(api_key="secret-fixture-key", models=["sample-image"])
@@ -52,6 +53,89 @@ def make_plugin(tmp_path, monkeypatch):
         return plugin
 
     return create
+
+
+def test_fresh_host_defaults_do_not_create_workspace_sections(make_plugin):
+    plugin = make_plugin(configured=False)
+    defaults = plugin.get_default_config()
+    assert set(defaults) == {"plugin", "proxy"}
+    normalized, _ = plugin.normalize_plugin_config(defaults)
+    assert set(normalized) == {"plugin", "proxy"}
+    assert set(plugin.get_webui_config_schema()["sections"]) == {"plugin", "proxy"}
+
+
+def test_host_version_upgrade_preserves_json_settings(make_plugin):
+    plugin = make_plugin(configured=False)
+    config_path = plugin_module.DrawpicPlugin.on_load.__globals__["PLUGIN_DIR"] / "config.toml"
+    store = storage.WorkspaceConfigStore(plugin.ctx.paths.data_dir, config_path)
+    store.initialize({})
+    store.save_provider(
+        {"kind": "openai", "name": "Saved", "config": {"api_key": "fixture-saved-key", "models": ["image-a"]}},
+        store.revision,
+    )
+    values = store.settings.values.copy()
+    values["general"] = {**values["general"], "default_model": "Saved / image-a", "request_retry_count": 0}
+    store.save_common(values, values, store.revision)
+    originals = {p: p.read_bytes() for p in (store.path, store.settings.path)}
+    raw = storage.host_config(DrawpicConfig().model_dump(mode="json"))
+    raw["plugin"]["config_version"] = "2.37.0"
+    config_path.write_text(tomlkit.dumps(raw), encoding="utf-8")
+
+    # Runner 先按默认结构重建并写回，再调用 on_load；不能只验证直接加载模型。
+    defaults = plugin.get_default_config()
+    assert set(defaults) == {"plugin", "proxy"}
+    rebuilt = rebuild_plugin_config_data(defaults, raw)
+    normalized, _ = plugin.normalize_plugin_config(rebuilt)
+    config_path.write_text(tomlkit.dumps(normalized), encoding="utf-8")
+    plugin.set_plugin_config(normalized)
+
+    async def run():
+        await plugin.on_load()
+        try:
+            assert plugin.config.general.default_model == "Saved / image-a"
+            assert plugin.config.general.request_retry_count == 0
+            assert plugin._platform_store.providers == store.providers
+            assert set(tomlkit.parse(config_path.read_text(encoding="utf-8"))) == {"plugin", "proxy"}
+            assert {p: p.read_bytes() for p in originals} == originals
+        finally:
+            await plugin.on_unload()
+
+    asyncio.run(run())
+
+
+def test_legacy_defaults_preserve_original_until_backup_and_migration(make_plugin):
+    plugin = make_plugin(configured=False)
+    config_path = plugin_module.DrawpicPlugin.on_load.__globals__["PLUGIN_DIR"] / "config.toml"
+    original = (
+        b'[plugin]\r\nconfig_version="2.34.0"\r\n[openai]\r\napi_key="fixture-original-key"\r\n'
+        b'models=["original-image"]\r\n[general]\r\ndefault_model="original-image"\r\nrequest_retry_count=0\r\n'
+        b'[prompt_review]\r\nenabled=true\r\nreview_prompt="fixture-original-review"\r\n'
+    )
+    config_path.write_bytes(original)
+    raw = tomlkit.parse(original.decode())
+    defaults = plugin.get_default_config()
+    assert set(defaults) == {"plugin", "proxy", "general", "openai", "prompt_review"}
+    assert defaults["plugin"]["config_version"] == raw["plugin"]["config_version"]
+    assert "fixture-original-key" not in json.dumps(defaults)
+    # 版本不提前升级，Runner 不会在迁移备份之前写回原文件。
+    normalized, _ = plugin.normalize_plugin_config(raw)
+    plugin.set_plugin_config(normalized)
+
+    async def run():
+        await plugin.on_load()
+        try:
+            assert plugin._platform_store.providers[0]["config"]["api_key"] == "fixture-original-key"
+            assert plugin.config.general.request_retry_count == 0
+            assert plugin.config.general.prompt_review_enabled is True
+            assert plugin.config.general.prompt_review_prompt == "fixture-original-review"
+            backups = (plugin.ctx.paths.data_dir / "migration_backups").glob("*.toml")
+            assert any(p.read_bytes() == original for p in backups)
+            assert set(tomlkit.parse(config_path.read_text(encoding="utf-8"))) == {"plugin"}
+            assert set(plugin.get_default_config()) == {"plugin", "proxy"}
+        finally:
+            await plugin.on_unload()
+
+    asyncio.run(run())
 
 
 def test_migration_masking_revision_and_key_preservation(tmp_path):
@@ -300,7 +384,7 @@ def test_ordered_fallbacks_obey_retry_limit(make_plugin, monkeypatch):
 
 def test_legacy_fallback_is_migrated_and_reset_defaults_are_safe(make_plugin):
     plugin = make_plugin()
-    config = plugin.get_default_config()
+    config = DrawpicConfig().model_dump(mode="json")
     config["general"]["fallback_model"] = "legacy-model"
     config["general"]["fallback_models"] = []
     plugin.set_plugin_config(config)

@@ -8,10 +8,11 @@ import json
 import shutil
 import tomlkit
 
-from ...domain.configuration.models import DrawpicConfig
+from ...domain.configuration.models import DrawpicConfig, migrate_legacy_review_config
 from .atomic import write_json_atomically, write_text_atomically
 
 WORKSPACE_SECTIONS = ("general", "style")
+LEGACY_REVIEW_SECTIONS = ("prompt_review", "image_review")
 
 
 def workspace_config(config: Dict[str, Any]) -> Dict[str, Any]:
@@ -73,8 +74,12 @@ class WorkspaceSettingsStore:
             return
         payload = self.read_payload()
         sections = set(document) & set(WORKSPACE_SECTIONS)
+        if set(document) & set(LEGACY_REVIEW_SECTIONS):
+            sections.add("general")
         saved = workspace_config(DrawpicConfig.model_validate(payload["settings"]).model_dump(mode="json"))
-        restored = workspace_config(DrawpicConfig.model_validate(document).model_dump(mode="json"))
+        restored = workspace_config(
+            DrawpicConfig.model_validate(migrate_legacy_review_config(document)).model_dump(mode="json")
+        )
         if any(saved[section] != restored[section] for section in sections):
             raise ValueError(
                 "旧 config.toml 与 workspace_settings.json 存在冲突，已保留原文件。请先备份，确认保留哪份绘图设置，再移走另一份后重新加载插件。"
@@ -85,7 +90,9 @@ class WorkspaceSettingsStore:
             self.check_legacy_conflicts(tomlkit.parse(self.config_path.read_text(encoding="utf-8")))
         payload = self.read_payload() if self.path.exists() else None
         source = payload["settings"] if payload is not None else legacy
-        self.values = workspace_config(DrawpicConfig.model_validate(source).model_dump(mode="json"))
+        self.values = workspace_config(
+            DrawpicConfig.model_validate(migrate_legacy_review_config(source)).model_dump(mode="json")
+        )
         self.revision = payload.get("revision", 0) if payload is not None else 0
         if payload is None or payload["schema_version"] == 1:
             if payload is not None:
@@ -97,13 +104,13 @@ class WorkspaceSettingsStore:
             self._save()
         if self.config_path.exists():
             document = tomlkit.parse(self.config_path.read_text(encoding="utf-8"))
-            if any(key in document for key in WORKSPACE_SECTIONS):
+            if any(key in document for key in (*WORKSPACE_SECTIONS, *LEGACY_REVIEW_SECTIONS)):
                 backup = self.path.parent / "migration_backups" / f"workspace-config-{uuid4().hex}.toml"
                 backup.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(self.config_path, backup)
                 if backup.read_bytes() != self.config_path.read_bytes():
                     raise RuntimeError("通用配置备份校验失败，保留原文件")
-                for key in WORKSPACE_SECTIONS:
+                for key in (*WORKSPACE_SECTIONS, *LEGACY_REVIEW_SECTIONS):
                     document.pop(key, None)
                 write_text_atomically(self.config_path, tomlkit.dumps(document))
 

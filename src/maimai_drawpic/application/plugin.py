@@ -21,7 +21,7 @@ from ..domain.styles import StylePromptResolver
 from .chat import ChatStreamService
 from ..infrastructure.storage.tasks import DrawTaskStore
 from ..infrastructure.storage.quotas import UserQuotaStore
-from ..infrastructure.storage.platforms import PLATFORM_NAMES, WorkspaceConfigStore, host_config
+from ..infrastructure.storage.platforms import PLATFORM_NAMES, WorkspaceConfigStore, host_config, host_default_config
 from ..infrastructure.storage.results import ImageResultStore
 from ..infrastructure.observability.redaction import SecretRedactor
 from .workspace.lifecycle import attach_workspace, close_workspace, prepare_workspace, refresh_runtime
@@ -91,14 +91,12 @@ class DrawpicRuntime(MaiBotPlugin):
         return normalized_config, changed or normalized_config != dict(config_data or {})
 
     def get_default_config(self) -> dict[str, Any]:
-        """返回默认配置，不再展示旧版独立审核节。"""
+        """只生成宿主配置；完整模型默认值仅用于运行时和旧配置迁移。"""
 
         default_config = super().get_default_config()
-        default_config.pop("prompt_review", None)
-        default_config.pop("image_review", None)
         if self._platform_store is not None:
-            default_config = host_config(default_config)
-        return default_config
+            return host_config(default_config)
+        return host_default_config(default_config, PLUGIN_DIR / "config.toml")
 
     def get_webui_config_schema(
         self,

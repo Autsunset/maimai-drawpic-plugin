@@ -5,7 +5,7 @@ from datetime import datetime
 from functools import wraps
 from hashlib import sha256
 from threading import RLock
-from maibot_sdk.config import generate_plugin_config_schema
+from maibot_sdk.config import extract_plugin_config_version, generate_plugin_config_schema
 from pathlib import Path
 from pydantic import BaseModel, ValidationError
 from typing import Any, Dict, List, Mapping
@@ -15,10 +15,15 @@ import re
 import shutil
 import tomlkit
 
-from ...domain.configuration.models import DrawpicConfig, OpenAICompatibleInstanceConfig, StylePresetConfig
+from ...domain.configuration.models import (
+    DrawpicConfig,
+    OpenAICompatibleInstanceConfig,
+    StylePresetConfig,
+    migrate_legacy_review_config,
+)
 from ...application.routing import ProviderRouter
 from .atomic import write_json_atomically, write_text_atomically
-from .settings import WorkspaceSettingsStore, read_json_file, workspace_config
+from .settings import LEGACY_REVIEW_SECTIONS, WorkspaceSettingsStore, read_json_file, workspace_config
 
 
 PLATFORM_NAMES = {
@@ -49,6 +54,24 @@ def common_config(config: Mapping[str, Any]) -> Dict[str, Any]:
 
 def host_config(config: Mapping[str, Any]) -> Dict[str, Any]:
     return {key: deepcopy(config[key]) for key in HOST_SECTIONS if key in config}
+
+
+def host_default_config(defaults: Dict[str, Any], config_path: Path) -> Dict[str, Any]:
+    """只向 Runner 提供宿主默认节，并保留磁盘上尚待迁移的旧节。"""
+    result = host_config(defaults)
+    if not config_path.exists():
+        return result
+    # Runner 在 on_load 前按默认结构重建升级配置。这个同步配置回调必须
+    # 先识别原文件中的旧节，否则 Runner 会在异步迁移前丢弃旧平台和设置。
+    document = tomlkit.parse(config_path.read_text(encoding="utf-8"))
+    legacy_sections = set(document) & (set(defaults) - set(HOST_SECTIONS))
+    if legacy_sections:
+        for section in legacy_sections:
+            result[section] = deepcopy(defaults[section])
+        # 先让 on_load 在线程中按字节备份、检查冲突并迁移原文件；下一次
+        # 加载只有宿主节时再由 Runner 升级版本，避免备份前就改写旧 TOML。
+        result["plugin"]["config_version"] = extract_plugin_config_version(document)
+    return result
 
 
 def parse_json_object(value: str) -> Dict[str, Any]:
@@ -347,9 +370,14 @@ class WorkspaceConfigStore:
                 return sorted((item["kind"], json.dumps(item["config"], sort_keys=True)) for item in records)
 
             saved = transaction["settings"]["payload"]["settings"]
-            restored = workspace_config(DrawpicConfig.model_validate(document).model_dump(mode="json"))
+            restored = workspace_config(
+                DrawpicConfig.model_validate(migrate_legacy_review_config(document)).model_dump(mode="json")
+            )
+            sections = set(document) & {"general", "style"}
+            if set(document) & set(LEGACY_REVIEW_SECTIONS):
+                sections.add("general")
             if (legacy.providers and comparable(legacy.providers) != comparable(providers)) or any(
-                saved[section] != restored[section] for section in set(document) & {"general", "style"}
+                saved[section] != restored[section] for section in sections
             ):
                 raise ValueError("旧 config.toml 与已提交配置事务存在冲突，已保留原文件")
         self._materialize_transaction(transaction)

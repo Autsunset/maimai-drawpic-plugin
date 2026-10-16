@@ -151,6 +151,7 @@ def test_plugin_lifecycle_uses_granted_paths_and_keeps_state_on_reload(tmp_path:
     monkeypatch.setitem(runtime_globals, "prepare_workspace", prepare_in_temporary_directory)
 
     legacy_plugin = tmp_path / "plugin"
+    monkeypatch.setitem(runtime_globals, "PLUGIN_DIR", legacy_plugin)
     (legacy_plugin / "data").mkdir(parents=True)
     (legacy_plugin / "data" / "draw_tasks.json").write_text('{"tasks": {}, "latest_task_id_by_session": {}}')
     paths = PluginPaths(data_dir=tmp_path / "persistent", runtime_dir=tmp_path / "runtime")
