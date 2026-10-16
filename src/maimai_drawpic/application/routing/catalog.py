@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import List, Literal
 import re
 
 from ...domain.models.openai_profiles import OPENAI_COMPATIBILITY_MODES, normalize_openai_mode
@@ -197,12 +197,19 @@ class ModelCatalogMixin:
             + self.get_siliconflow_models()
             + self.get_novelai_models()
             + self.get_comfyui_models()
+            + self.get_agnes_models()
         )
+
+    def get_agnes_models(self) -> List[str]:
+        """获取已启用 Agnes 实例的图片模型。"""
+        return [model.strip() for model in self.config.agnes.models if model.strip()] if self.config.agnes.enabled else []
 
     def get_model_provider(self, model: str) -> ProviderName | Literal[""]:
         """根据模型名称判断其所属提供商。"""
 
         normalized_model = model.strip()
+        if normalized_model in self.get_agnes_models():
+            return "agnes"
         if normalized_model in self.get_aliyun_models():
             return "aliyun"
         if self.resolve_openai_model_route(normalized_model) is not None:

@@ -1,5 +1,6 @@
 from ...paths import PLUGIN_DIR
 from ...infrastructure.providers.aliyun import AliyunImage
+from ...infrastructure.providers.agnes import AgnesImage
 from ...infrastructure.providers.comfyui import ComfyUIImage
 from ...infrastructure.providers.gemini import GoogleImage
 from ...infrastructure.providers.novelai import NovelAIImage
@@ -15,6 +16,22 @@ from .types import ImageProvider, OpenAIModelRoute, ProviderName, RoutedOpenAIIm
 
 class ProviderConstructionMixin:
     """ProviderConstructionMixin 的独立绘图职责。"""
+
+    def create_agnes_provider(self) -> AgnesImage:
+        """使用实例自己的密钥、尺寸及响应格式构造 Agnes 适配器。"""
+        config = self.config.agnes
+        return AgnesImage(
+            api_key=config.api_key,
+            base_url=config.base_url,
+            logger=self.logger,
+            request_timeout_seconds=self.resolve_request_timeout_seconds(),
+            default_size=config.default_size,
+            ratio=config.ratio,
+            response_format=config.response_format,
+            model_size_overrides=parse_model_value_overrides(config.model_size_overrides),
+            extra_parameters=parse_key_value_options(config.extra_parameters),
+            proxy_settings=self._get_proxy_settings("agnes"),
+        )
 
     def _get_proxy_settings(self, provider_name: ProviderName) -> HttpProxySettings:
         """按提供商解析是否应用插件全局代理。"""
@@ -322,6 +339,8 @@ class ProviderConstructionMixin:
             )
         elif provider_type == "comfyui":
             provider = self.create_comfyui_provider(normalized_negative_prompt)
+        elif provider_type == "agnes":
+            provider = self.create_agnes_provider()
         elif provider_type == "openai":
             provider = self.create_openai_provider(
                 self.resolve_openai_compatibility_mode(openai_compatibility_mode, model),

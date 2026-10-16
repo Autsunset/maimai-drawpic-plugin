@@ -1326,6 +1326,90 @@ dialog::backdrop {
 .ordered-row select {
   min-width: 0;
 }
+.model-choice-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 8px;
+}
+.model-choice-row select {
+  min-width: 0;
+}
+.secret-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.secret-input-row input {
+  flex: 1;
+  min-width: 0;
+}
+.secret-input-row button {
+  flex-shrink: 0;
+}
+.collection-toolbar {
+  margin-bottom: 12px;
+}
+.model-picker-content {
+  padding: 24px;
+}
+.model-picker-filters,
+.model-picker-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0;
+}
+.model-picker-filters > input {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.inline-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.inline-choice input,
+.model-picker-item input {
+  width: auto;
+  accent-color: var(--accent);
+}
+.model-picker-list {
+  max-height: 40vh;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+}
+.model-picker-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.model-picker-item:has(input:checked) {
+  background: var(--accent-soft);
+}
+.model-picker-item strong,
+.model-picker-item small {
+  display: block;
+}
+.model-picker-item strong {
+  font-size: 13px;
+}
+.model-picker-item small {
+  color: var(--muted);
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .model-picker-content {
+    padding: 18px;
+  }
+}
 @media (max-width: 640px) {
   .panel-header {
     flex-wrap: wrap;

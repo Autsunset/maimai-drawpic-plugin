@@ -22,6 +22,7 @@ from .settings import WorkspaceSettingsStore, read_json_file, workspace_config
 
 
 PLATFORM_NAMES = {
+    "agnes": "Agnes AI",
     "openai": "OpenAI / 兼容服务",
     "google": "Google Gemini",
     "zhipu": "智谱",
@@ -403,6 +404,31 @@ class WorkspaceConfigStore:
                 for record in self.providers
             ],
         }
+
+    @_locked
+    def model_discovery_config(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """合并连接草稿与已保存密钥，仅供内部只读请求使用，不修改配置。"""
+        if payload.keys() - {"id", "kind", "config", "clear_api_key"}:
+            raise ValueError("获取模型参数包含未知字段")
+        kind, identifier, draft = payload.get("kind"), payload.get("id", ""), payload.get("config", {})
+        if not isinstance(kind, str) or kind not in PLATFORM_NAMES or not isinstance(identifier, str):
+            raise ValueError("获取模型的平台类型或 ID 无效")
+        if not isinstance(draft, dict) or draft.keys() - {"api_key", "base_url"}:
+            raise ValueError("获取模型仅接受服务地址和密钥")
+        if any(not isinstance(value, str) or len(value) > 4096 for value in draft.values()):
+            raise ValueError("服务地址和密钥应为不超过 4096 个字符的文本")
+        clear = payload.get("clear_api_key", False)
+        if type(clear) is not bool:
+            raise ValueError("清除密钥标记无效")
+        previous = next((item for item in self.providers if item["id"] == identifier), None)
+        if identifier and (previous is None or previous["kind"] != kind):
+            raise ValueError("平台不存在或类型不匹配，请刷新后重试")
+        values = deepcopy(previous["config"]) if previous else self.platform_model(kind)().model_dump(mode="json")
+        saved_key = values.get("api_key", "") if previous else ""
+        values.update(draft)
+        if not values.get("api_key", "").strip():
+            values["api_key"] = "" if clear else saved_key
+        return values
 
     @_locked
     def save_provider(self, payload: Dict[str, Any], revision: int) -> Dict[str, Any]:

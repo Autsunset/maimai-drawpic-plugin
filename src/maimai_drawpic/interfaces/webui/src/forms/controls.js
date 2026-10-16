@@ -53,15 +53,10 @@
   function scalar(key, meta, value, id, options = {}) {
     const kind = options.kind;
     if (meta.multiple) return multi(key, meta.choices || [], value || [], id);
-    if (key.endsWith("unsupported_models"))
-      return multi(
-        key,
-        U.state.data.models.map((item) => item.name),
-        value || [],
-        id,
-      );
+    if (key === "request_retry_count")
+      return `<select id="${id}" data-input="${key}">${[0, 1, 2, 3, 4, 5].map((count) => `<option value="${count}" ${Number(value) === count ? "selected" : ""}>${count === 0 ? "不重试" : `${count} 次${count === 1 ? "（默认）" : ""}`}</option>`).join("")}</select>`;
     if (U.formOptions.dimensionField(key, kind))
-      return choice(value, ["", ...U.formOptions.dimensions(kind)], {
+      return choice(value, [...(kind === "agnes" ? [] : [""]), ...U.formOptions.dimensions(kind)], {
         id,
         label: meta.label,
         size: true,

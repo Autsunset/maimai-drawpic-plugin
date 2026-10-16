@@ -21,7 +21,7 @@ class PluginSectionConfig(PluginConfigBase):
         },
     )
     config_version: str = Field(
-        default="2.37.0",
+        default="2.38.0",
         description="配置版本",
         json_schema_extra={
             "hint": "配置版本",
@@ -96,13 +96,13 @@ class GeneralConfig(PluginConfigBase):
         },
     )
     request_retry_count: int = Field(
-        default=0,
+        default=1,
         ge=0,
         le=5,
         description="同一模型发生明确可安全重试的失败时额外重试的次数；审核拒绝、结果处理失败和受理状态不确定均不重绘",
         json_schema_extra={
             "label": "最多重试次数",
-            "hint": "每个模型最多额外重试 0～5 次，仅限连接未建立、明确限流等可安全重试的失败；审核拒绝、结果下载失败或远端状态不确定时停止，不自动重绘。",
+            "hint": "默认额外重试 1 次，可选 0～5 次。仅限连接未建立、明确限流等可安全重试的失败；审核拒绝、结果下载失败或远端状态不确定时停止，不自动重绘。",
             "order": 1.5,
         },
     )

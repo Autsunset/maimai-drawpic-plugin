@@ -41,7 +41,7 @@
     const secret = key === "api_key" || key === "password";
     const multiline = /prompt|description|artist|extra_parameters/.test(key);
     if (multiline && !secret)
-      return `<textarea id="${id}" rows="3" data-input="${e(key)}" maxlength="16000">${e(value)}</textarea>`;
+      return `<textarea id="${id}" rows="${meta.rows || 3}" data-input="${e(key)}" maxlength="16000">${e(value)}</textarea>`;
     const models = /^(default_model|fallback_model)$/.test(key);
     return `<input id="${id}" type="${secret ? "password" : "text"}" data-input="${e(key)}" value="${e(value)}" autocomplete="${secret ? "new-password" : "off"}" ${models ? 'list="workspace-models"' : ""} placeholder="${secret ? "留空保留已配置的密钥" : e(localized(meta, "placeholder"))}">`;
   }
@@ -251,5 +251,12 @@
     U.bindDirty(root);
     return () => read(fields, values, root, options);
   }
-  U.forms = { html: fieldsHTML, bind, read };
+  function appendArray(root, key, values, options = {}) {
+    const array = $(`[data-array="${key}"]`, root), add = $("[data-add-array]", array);
+    for (const value of values)
+      add.insertAdjacentHTML("beforebegin", U.formCollections.row(key, value, options) || row(value, false));
+    U.formCollections.refresh(root);
+    array.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  U.forms = { html: fieldsHTML, bind, read, appendArray };
 })();

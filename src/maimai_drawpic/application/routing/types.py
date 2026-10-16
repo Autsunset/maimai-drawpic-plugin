@@ -3,7 +3,7 @@ from typing import Any, Literal, Protocol
 
 from ...infrastructure.providers.openai import OpenaiImage
 
-ProviderName = Literal["aliyun", "openai", "google", "zhipu", "volcengine", "siliconflow", "novelai", "comfyui"]
+ProviderName = Literal["agnes", "aliyun", "openai", "google", "zhipu", "volcengine", "siliconflow", "novelai", "comfyui"]
 
 
 _DOMESTIC_PROXY_BYPASS_PROVIDERS = {"aliyun", "volcengine", "siliconflow"}

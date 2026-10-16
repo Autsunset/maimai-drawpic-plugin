@@ -1333,6 +1333,90 @@ dialog::backdrop {
 .ordered-row select {
   min-width: 0;
 }
+.model-choice-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 8px;
+}
+.model-choice-row select {
+  min-width: 0;
+}
+.secret-input-row {
+  display: flex;
+  gap: 8px;
+  align-items: stretch;
+}
+.secret-input-row input {
+  flex: 1;
+  min-width: 0;
+}
+.secret-input-row button {
+  flex-shrink: 0;
+}
+.collection-toolbar {
+  margin-bottom: 12px;
+}
+.model-picker-content {
+  padding: 24px;
+}
+.model-picker-filters,
+.model-picker-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0;
+}
+.model-picker-filters > input {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.inline-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+.inline-choice input,
+.model-picker-item input {
+  width: auto;
+  accent-color: var(--accent);
+}
+.model-picker-list {
+  max-height: 40vh;
+  overflow: auto;
+  display: grid;
+  gap: 8px;
+}
+.model-picker-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.model-picker-item:has(input:checked) {
+  background: var(--accent-soft);
+}
+.model-picker-item strong,
+.model-picker-item small {
+  display: block;
+}
+.model-picker-item strong {
+  font-size: 13px;
+}
+.model-picker-item small {
+  color: var(--muted);
+  font-size: 12px;
+}
+@media (max-width: 640px) {
+  .model-picker-content {
+    padding: 18px;
+  }
+}
 @media (max-width: 640px) {
   .panel-header {
     flex-wrap: wrap;
@@ -1916,6 +2000,7 @@ dialog::backdrop {
     },
   };
   const dimensions = {
+    agnes: ["1K", "2K", "3K", "4K", "1024x1024", "1024x768", "768x1024"],
     openai: ["1024x1024", "1024x1536", "1536x1024", "auto"],
     zhipu: ["1280x1280", "1024x1024", "768x1344", "1344x768"],
     aliyun: ["2048*2048", "1328*1328", "1024*1024", "1024*1536", "1536*1024"],
@@ -1949,7 +2034,7 @@ dialog::backdrop {
       if (key === "models" || key === "custom_models")
         return "按账号实际权限填写模型 ID；可直接粘贴。下方的按模型覆盖选项会随本列表更新。";
       if (key.endsWith("unsupported_models"))
-        return "从已启用平台的模型中选择，可选择多个。人工限制优先于自动识别。";
+        return "按需添加模型，可选择多个；通过右侧 × 移除。人工限制优先于自动识别，已有未匹配的模型仍会保留。";
       return "";
     },
   };
@@ -2010,15 +2095,10 @@ dialog::backdrop {
   function scalar(key, meta, value, id, options = {}) {
     const kind = options.kind;
     if (meta.multiple) return multi(key, meta.choices || [], value || [], id);
-    if (key.endsWith("unsupported_models"))
-      return multi(
-        key,
-        U.state.data.models.map((item) => item.name),
-        value || [],
-        id,
-      );
+    if (key === "request_retry_count")
+      return `<select id="${id}" data-input="${key}">${[0, 1, 2, 3, 4, 5].map((count) => `<option value="${count}" ${Number(value) === count ? "selected" : ""}>${count === 0 ? "不重试" : `${count} 次${count === 1 ? "（默认）" : ""}`}</option>`).join("")}</select>`;
     if (U.formOptions.dimensionField(key, kind))
-      return choice(value, ["", ...U.formOptions.dimensions(kind)], {
+      return choice(value, [...(kind === "agnes" ? [] : [""]), ...U.formOptions.dimensions(kind)], {
         id,
         label: meta.label,
         size: true,
@@ -2099,6 +2179,13 @@ dialog::backdrop {
     return `<input data-param-value type="${type === "number" ? "number" : "text"}" ${type === "number" ? 'step="any"' : ""} aria-label="参数值" autocomplete="off" value="${e(value)}" placeholder="填写参数值…">`;
   }
   function row(key, value, options = {}) {
+    if (key === "fallback_models" || key.endsWith("unsupported_models")) {
+      const ordered = key === "fallback_models";
+      const title = ordered ? "备选模型" : key === "image_edit_unsupported_models" ? "仅支持文生图的模型" : "仅支持图生图的模型";
+      const choices = U.state.data.models.map((item) => item.name);
+      if (value && !choices.includes(value)) choices.unshift(value);
+      return `<div class="array-row ${ordered ? "ordered-row" : "model-choice-row"}" data-array-row><select data-value aria-label="${title}"><option value="">请选择模型</option>${choices.map((name) => `<option value="${e(name)}" ${name === value ? "selected" : ""}>${e(name)}</option>`).join("")}</select>${ordered ? '<button type="button" class="icon-button" data-move="up" aria-label="上移备选模型">↑</button><button type="button" class="icon-button" data-move="down" aria-label="下移备选模型">↓</button>' : ""}${remove}</div>`;
+    }
     if (key === "models" && options.kind === "openai") {
       const [alias, model] = split(value);
       return `<div class="model-editor-row" data-array-row data-model-row><label>模型 ID<input data-model-id aria-label="模型 ID" value="${e(model || alias)}" placeholder="例如 gpt-image-2.5…" autocomplete="off" spellcheck="false"></label><label>显示名称（可选）<input data-model-alias value="${e(model ? alias : "")}" placeholder="例如 日常绘图…" autocomplete="off"></label>${remove}</div>`;
@@ -2256,11 +2343,12 @@ dialog::backdrop {
     }
   }
   function validateRows(array, values) {
-    if (!/overrides|extra_parameters/.test(array.dataset.array)) return;
-    const names = values.map((item) => split(item)[0]);
+    const models = array.dataset.array === "fallback_models" || array.dataset.array.endsWith("unsupported_models");
+    if (!models && !/overrides|extra_parameters/.test(array.dataset.array)) return;
+    const names = models ? values : values.map((item) => split(item)[0]);
     if (new Set(names).size !== names.length)
       invalid(
-        array.querySelector("[data-model-key],[data-key]"),
+        array.querySelector("[data-model-key],[data-key],[data-value]"),
         "同一配置列表不能重复设置相同的模型或参数名称",
       );
   }
@@ -2279,7 +2367,7 @@ dialog::backdrop {
     });
     refresh(root);
   }
-  U.formCollections = { row, readRow, refresh, validateRows, bind };
+  U.formCollections = { row, readRow, refresh, validateRows, bind, models };
 })();
 
 (() => {
@@ -2325,7 +2413,7 @@ dialog::backdrop {
     const secret = key === "api_key" || key === "password";
     const multiline = /prompt|description|artist|extra_parameters/.test(key);
     if (multiline && !secret)
-      return `<textarea id="${id}" rows="3" data-input="${e(key)}" maxlength="16000">${e(value)}</textarea>`;
+      return `<textarea id="${id}" rows="${meta.rows || 3}" data-input="${e(key)}" maxlength="16000">${e(value)}</textarea>`;
     const models = /^(default_model|fallback_model)$/.test(key);
     return `<input id="${id}" type="${secret ? "password" : "text"}" data-input="${e(key)}" value="${e(value)}" autocomplete="${secret ? "new-password" : "off"}" ${models ? 'list="workspace-models"' : ""} placeholder="${secret ? "留空保留已配置的密钥" : e(localized(meta, "placeholder"))}">`;
   }
@@ -2535,7 +2623,178 @@ dialog::backdrop {
     U.bindDirty(root);
     return () => read(fields, values, root, options);
   }
-  U.forms = { html: fieldsHTML, bind, read };
+  function appendArray(root, key, values, options = {}) {
+    const array = $(`[data-array="${key}"]`, root), add = $("[data-add-array]", array);
+    for (const value of values)
+      add.insertAdjacentHTML("beforebegin", U.formCollections.row(key, value, options) || row(value, false));
+    U.formCollections.refresh(root);
+    array.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+  U.forms = { html: fieldsHTML, bind, read, appendArray };
+})();
+
+(() => {
+  "use strict";
+  const U = window.DrawpicUI, { $, e, icon, call, state } = U;
+  let sequence = 0;
+
+  function picker(form, { kind, record, catalog, clearApiKey }) {
+    const version = state.modalVersion;
+    const dialog = document.createElement("dialog");
+    const titleId = `model-picker-${++sequence}`;
+    dialog.className = "model-picker";
+    dialog.setAttribute("aria-labelledby", titleId);
+    dialog.innerHTML = `<div class="modal-header"><h2 id="${titleId}">选择 ${e(catalog.name)} 模型</h2><button type="button" class="icon-button" data-close aria-label="关闭模型选择">${icon("close")}</button></div><div class="model-picker-content"><p class="hint">从接口读取模型目录，不发起绘图请求。仅追加你选择的新模型，当前模型和显示名称会保留；保存平台后生效。</p><div class="model-picker-filters"><input type="search" data-search aria-label="搜索模型" placeholder="搜索模型 ID 或名称…"><label class="inline-choice"><input type="checkbox" data-images-only>仅显示可能的绘图模型</label></div><div class="model-picker-toolbar"><button type="button" class="button secondary compact" data-select-visible disabled>选择当前结果</button><button type="button" class="button ghost compact" data-clear-selection disabled>清空选择</button><span class="hint" data-count aria-live="polite"></span></div><p data-status role="status" aria-live="polite">正在获取模型…</p><div class="model-picker-list" data-model-list aria-label="接口返回的模型"></div><div class="modal-footer"><button type="button" class="button secondary" data-retry hidden>重新获取</button><button type="button" class="button secondary" data-cancel>取消</button><button type="button" class="button" data-apply disabled>添加所选模型</button></div></div>`;
+    const existing = new Set(U.formCollections.models(form).map((model) => model.id));
+    const selected = new Set();
+    const list = $("[data-model-list]", dialog), status = $("[data-status]", dialog);
+    $("[data-search]", dialog).classList.add("search-input");
+    let models = [];
+    const current = () => dialog.isConnected && dialog.open && form.isConnected && version === state.modalVersion;
+    function visibleModels() {
+      const query = $("[data-search]", dialog).value.trim().toLocaleLowerCase();
+      return models.filter((model) =>
+        (!$("[data-images-only]", dialog).checked || model.image_candidate) &&
+        (!query || `${model.id} ${model.label}`.toLocaleLowerCase().includes(query)),
+      );
+    }
+    function updateCount() {
+      $("[data-count]", dialog).textContent = `显示 ${visibleModels().length} / ${models.length} 个 · 已选 ${selected.size} 个新模型`;
+      $("[data-apply]", dialog).disabled = selected.size === 0;
+      $("[data-select-visible]", dialog).disabled = !visibleModels().some((model) => !existing.has(model.id));
+      $("[data-clear-selection]", dialog).disabled = selected.size === 0;
+    }
+    function renderList() {
+      list.innerHTML = visibleModels().map((model) => {
+        const added = existing.has(model.id);
+        return `<label class="model-picker-item"><input type="checkbox" data-model-id="${e(model.id)}" ${added || selected.has(model.id) ? "checked" : ""} ${added ? "disabled" : ""}><span><strong>${e(model.label)}</strong>${model.label !== model.id ? `<small>${e(model.id)}</small>` : ""}${added ? '<small>已在当前模型列表中</small>' : ""}</span></label>`;
+      }).join("") || '<p class="hint">没有匹配的模型，可修改搜索条件或关闭绘图模型筛选。</p>';
+      updateCount();
+    }
+    async function load() {
+      $("[data-retry]", dialog).hidden = true;
+      list.setAttribute("aria-busy", "true");
+      status.textContent = "正在获取模型…";
+      try {
+        const config = { api_key: $('[data-input="api_key"]', form)?.value || "" };
+        const base = $('[data-input="base_url"]', form);
+        if (base) config.base_url = base.value;
+        const result = await call("query", "provider_models", {
+          provider_json: JSON.stringify({ id: record?.id || "", kind, config, clear_api_key: clearApiKey() }),
+        });
+        if (!current()) return;
+        models = result.models;
+        $("[data-images-only]", dialog).checked = models.some((model) => model.image_candidate);
+        status.textContent = models.length
+          ? "目录返回不代表账号已开通全部模型；名称筛选也不代表已验证绘图能力，可关闭筛选查看全部。"
+          : "接口没有返回可导入的图片模型，请检查账号权限，或返回手动添加。";
+        renderList();
+      } catch (error) {
+        if (current()) {
+          status.textContent = error.message || String(error);
+          $("[data-retry]", dialog).hidden = false;
+        }
+      } finally {
+        if (current()) list.removeAttribute("aria-busy");
+      }
+    }
+    $("[data-search]", dialog).oninput = renderList;
+    $("[data-images-only]", dialog).onchange = renderList;
+    list.onchange = (event) => {
+      const input = event.target.closest("[data-model-id]");
+      if (!input || input.disabled) return;
+      if (input.checked) selected.add(input.dataset.modelId);
+      else selected.delete(input.dataset.modelId);
+      updateCount();
+    };
+    $("[data-select-visible]", dialog).onclick = () => {
+      for (const model of visibleModels()) if (!existing.has(model.id)) selected.add(model.id);
+      renderList();
+    };
+    $("[data-clear-selection]", dialog).onclick = () => { selected.clear(); renderList(); };
+    $("[data-retry]", dialog).onclick = () => U.buttonAction($("[data-retry]", dialog), load);
+    $("[data-apply]", dialog).onclick = () => {
+      if (!current()) return;
+      U.forms.appendArray(form, "models", [...selected], { platform: true, kind });
+      U.toast(`已添加 ${selected.size} 个模型，保存平台后生效`);
+      dialog.close();
+    };
+    const parent = $("#modal"), close = () => dialog.close();
+    $("[data-close]", dialog).onclick = close;
+    $("[data-cancel]", dialog).onclick = close;
+    parent.addEventListener("close", close);
+    dialog.addEventListener("close", () => {
+      parent.removeEventListener("close", close);
+      dialog.remove();
+    }, { once: true });
+    document.body.append(dialog);
+    dialog.showModal();
+    void load();
+  }
+
+  function bind(form, { kind, record, catalog }) {
+    let pending = false, previousInput = "";
+    const input = $('[data-input="api_key"]', form);
+    const clearApiKey = () => pending;
+    if (input) {
+      const wrapper = document.createElement("div"), button = document.createElement("button");
+      const hint = document.createElement("p");
+      wrapper.className = "secret-input-row";
+      input.replaceWith(wrapper);
+      wrapper.append(input, button);
+      button.type = "button";
+      button.className = "button secondary compact";
+      hint.className = "hint";
+      hint.setAttribute("role", "status");
+      wrapper.after(hint);
+      function update() {
+        button.textContent = pending ? "撤销清空" : "清空密钥";
+        button.setAttribute("aria-pressed", String(pending));
+        button.disabled = !pending && !record?.has_api_key && !input.value;
+        input.placeholder = pending ? "保存后清空已保存的密钥" : record?.has_api_key ? "留空保留已保存的密钥" : "填写 API 密钥";
+        hint.textContent = pending ? "已标记清空，保存平台后生效；也可以撤销或填写新密钥。" : "";
+        hint.hidden = !pending;
+      }
+      button.onclick = () => {
+        if (pending) {
+          pending = false;
+          input.value = previousInput;
+        } else {
+          previousInput = input.value;
+          input.value = "";
+          pending = Boolean(record?.has_api_key);
+        }
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        update();
+      };
+      input.addEventListener("input", () => {
+        if (input.value) pending = false;
+        update();
+      });
+      update();
+    }
+    const field = $('[data-field="models"]', form);
+    if (field) {
+      const toolbar = document.createElement("div");
+      toolbar.className = "collection-toolbar";
+      if (catalog.model_discovery) {
+        const button = document.createElement("button");
+        button.type = "button";
+        button.className = "button secondary compact";
+        button.innerHTML = `${icon("refresh")}从接口获取模型`;
+        button.onclick = () => picker(form, { kind, record, catalog, clearApiKey });
+        toolbar.append(button);
+      } else {
+        const hint = document.createElement("p");
+        hint.className = "hint";
+        hint.textContent = catalog.model_discovery_hint || "此平台请手动添加模型。";
+        toolbar.append(hint);
+      }
+      $('[data-array="models"]', field).before(toolbar);
+    }
+    return { clearApiKey };
+  }
+  U.platformModels = { bind };
 })();
 
 (() => {
@@ -2561,10 +2820,11 @@ dialog::backdrop {
     delete values.instances;
     const node = modal(
       record ? "编辑绘图平台" : "添加绘图平台",
-      `<p class="hint" style="margin:0 0 20px">${e(catalog.name)} · 先填写连接信息和模型，其他选项可按需调整。保存后应用到新任务。</p><form id="provider-form"><div class="field"><label for="provider-name">平台名称</label><input id="provider-name" maxlength="80" required value="${e(record?.name || defaultName)}" placeholder="给这个平台起一个容易辨认的名字"></div>${U.forms.html(fields, values, { platform: true, kind })}${record?.has_api_key ? '<div class="field-toggle"><label for="clear-api-key">清除已保存的 API Key</label><input id="clear-api-key" class="toggle" type="checkbox"></div>' : ""}<div class="modal-footer"><button type="button" id="reset-provider" class="button ghost compact">恢复参数默认</button><span data-unsaved class="unsaved" hidden>有未保存的修改</span><button type="button" id="provider-back" class="button secondary">取消</button><button type="submit" class="button">${icon("check")}保存平台</button></div></form>`,
+      `<p class="hint" style="margin:0 0 20px">${e(catalog.name)} · 先填写连接信息和模型，其他选项可按需调整。保存后应用到新任务。</p><form id="provider-form"><div class="field"><label for="provider-name">平台名称</label><input id="provider-name" maxlength="80" required value="${e(record?.name || defaultName)}" placeholder="给这个平台起一个容易辨认的名字"></div>${U.forms.html(fields, values, { platform: true, kind })}<div class="modal-footer"><button type="button" id="reset-provider" class="button ghost compact">恢复参数默认</button><span data-unsaved class="unsaved" hidden>有未保存的修改</span><button type="button" id="provider-back" class="button secondary">取消</button><button type="submit" class="button">${icon("check")}保存平台</button></div></form>`,
     );
     const form = $("#provider-form", node),
       read = U.forms.bind(form, fields, values, { platform: true, kind });
+    const keyControls = U.platformModels.bind(form, { kind, record, catalog });
     const modalVersion = state.modalVersion,
       revision = state.data.revision;
     const current = () =>
@@ -2599,7 +2859,7 @@ dialog::backdrop {
               kind,
               name: $("#provider-name", form).value,
               config,
-              clear_api_key: $("#clear-api-key", form)?.checked || false,
+              clear_api_key: keyControls.clearApiKey(),
             }),
             revision,
           });
@@ -3171,7 +3431,9 @@ dialog::backdrop {
   "use strict";
   const U = window.DrawpicUI,
     { state, $, call, buttonAction, toast } = U;
-  const sections = { general: "通用与审核", style: "风格预设" };
+  const sections = { general: "通用配置", review: "审核配置", style: "风格预设" };
+  const sourceSection = (name) => name === "review" ? "general" : name;
+  const reviewField = (key) => /^(prompt|image)_review_/.test(key);
   U.views.settings = async () => {
     let selected = Object.hasOwn(sections, state.settingsSection)
       ? state.settingsSection
@@ -3199,21 +3461,31 @@ dialog::backdrop {
       panel.setAttribute("role", "tabpanel");
       panel.setAttribute("aria-labelledby", `settings-tab-${name}`);
       panel.hidden = name !== selected;
-      const fields = state.data.schema.sections[name].fields;
+      const fields = Object.fromEntries(
+        Object.entries(state.data.schema.sections[sourceSection(name)].fields)
+          .filter(([key]) => name === "style" || reviewField(key) === (name === "review")),
+      );
       panel.innerHTML = U.forms.html(fields, values);
       const old = $(`#${panel.id}`, form);
       if (old) old.replaceWith(panel);
       else form.append(panel);
-      readers[name] = U.forms.bind(panel, fields, values);
+      const read = U.forms.bind(panel, fields, values);
+      // 通用与审核共享持久化配置，只读取当前分类的字段，避免互相覆盖草稿。
+      readers[name] = () => {
+        const result = read();
+        return Object.fromEntries(Object.keys(fields).map((key) => [key, result[key]]));
+      };
     }
     for (const name of Object.keys(sections))
-      renderSection(name, structuredClone(state.data.settings[name]));
+      renderSection(name, structuredClone(state.data.settings[sourceSection(name)]));
     function activate(name) {
       selected = state.settingsSection = name;
       $("#settings-heading").textContent = sections[name];
       $("#settings-description").textContent =
         name === "style"
-          ? "把常用风格保存为提示词模板。两个分类的修改可一起保存。"
+          ? "把常用风格保存为提示词模板，三个分类的修改可一起保存。"
+          : name === "review"
+            ? "分别设置提示词审核和生成图片审核，使用 MaiBot 配置的审核模型。切换分类保留草稿。"
           : "切换分类会保留草稿，点击右上角“保存全部设置”统一保存。";
       for (const tab of document.querySelectorAll("[data-section]")) {
         const active = tab.dataset.section === name;
@@ -3247,7 +3519,7 @@ dialog::backdrop {
     form.addEventListener("input", updateNotice);
     form.addEventListener("click", updateNotice);
     $("#reset-settings").onclick = () => {
-      renderSection(selected, structuredClone(state.data.defaults[selected]));
+      renderSection(selected, structuredClone(state.data.defaults[sourceSection(selected)]));
       state.dirty = true;
       updateNotice();
       toast("已恢复当前分类默认值，其他分类草稿保留，保存后生效");
@@ -3275,9 +3547,10 @@ dialog::backdrop {
       event.preventDefault();
       if (form.inert || requiresRefresh) return;
       buttonAction(save, async () => {
-        const all = Object.fromEntries(
-          Object.entries(readers).map(([name, read]) => [name, read()]),
-        );
+        const all = {
+          general: { ...state.data.settings.general, ...readers.general(), ...readers.review() },
+          style: readers.style(),
+        };
         form.inert = true;
         $("#reset-settings").disabled = true;
         try {

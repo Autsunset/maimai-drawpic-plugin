@@ -79,6 +79,10 @@ class _StubGeneralConfig:
 
 
 class _StubConfig:
+    class agnes:
+        enabled = False
+        models = []
+
     volcengine = _StubVolcConfig()
     general = _StubGeneralConfig()
 

@@ -13,6 +13,7 @@ from ...infrastructure.storage.platforms import (
 )
 from .tasks import WorkspaceTaskService
 from ...infrastructure.storage.settings import workspace_config
+from ...infrastructure.providers.model_discovery import DISCOVERY_HINTS, DISCOVERY_KINDS, fetch_models
 
 
 class WorkspaceService:
@@ -111,6 +112,8 @@ class WorkspaceService:
                 {
                     "kind": key,
                     "name": name,
+                    "model_discovery": key in DISCOVERY_KINDS,
+                    "model_discovery_hint": DISCOVERY_HINTS.get(key, ""),
                     "defaults": _mask_secrets(self.store.platform_model(key)().model_dump(mode="json")),
                 }
                 for key, name in PLATFORM_NAMES.items()
@@ -141,6 +144,13 @@ class WorkspaceService:
         if warnings:
             status["warning"] = "；".join(warnings)
         return status
+
+    async def discover_models(self, provider_json: str) -> Dict[str, Any]:
+        payload = parse_json_object(provider_json)
+        values = await asyncio.to_thread(self.store.model_discovery_config, payload)
+        kind = payload["kind"]
+        proxy = self.tasks.get_service().router._get_proxy_settings(kind)
+        return await fetch_models(kind, values, proxy)
 
     async def save_provider(self, provider_json: str, revision: int) -> Dict[str, Any]:
         return await self._run_transaction(lambda: self._save_provider(provider_json, revision))

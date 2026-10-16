@@ -21,10 +21,11 @@
     delete values.instances;
     const node = modal(
       record ? "编辑绘图平台" : "添加绘图平台",
-      `<p class="hint" style="margin:0 0 20px">${e(catalog.name)} · 先填写连接信息和模型，其他选项可按需调整。保存后应用到新任务。</p><form id="provider-form"><div class="field"><label for="provider-name">平台名称</label><input id="provider-name" maxlength="80" required value="${e(record?.name || defaultName)}" placeholder="给这个平台起一个容易辨认的名字"></div>${U.forms.html(fields, values, { platform: true, kind })}${record?.has_api_key ? '<div class="field-toggle"><label for="clear-api-key">清除已保存的 API Key</label><input id="clear-api-key" class="toggle" type="checkbox"></div>' : ""}<div class="modal-footer"><button type="button" id="reset-provider" class="button ghost compact">恢复参数默认</button><span data-unsaved class="unsaved" hidden>有未保存的修改</span><button type="button" id="provider-back" class="button secondary">取消</button><button type="submit" class="button">${icon("check")}保存平台</button></div></form>`,
+      `<p class="hint" style="margin:0 0 20px">${e(catalog.name)} · 先填写连接信息和模型，其他选项可按需调整。保存后应用到新任务。</p><form id="provider-form"><div class="field"><label for="provider-name">平台名称</label><input id="provider-name" maxlength="80" required value="${e(record?.name || defaultName)}" placeholder="给这个平台起一个容易辨认的名字"></div>${U.forms.html(fields, values, { platform: true, kind })}<div class="modal-footer"><button type="button" id="reset-provider" class="button ghost compact">恢复参数默认</button><span data-unsaved class="unsaved" hidden>有未保存的修改</span><button type="button" id="provider-back" class="button secondary">取消</button><button type="submit" class="button">${icon("check")}保存平台</button></div></form>`,
     );
     const form = $("#provider-form", node),
       read = U.forms.bind(form, fields, values, { platform: true, kind });
+    const keyControls = U.platformModels.bind(form, { kind, record, catalog });
     const modalVersion = state.modalVersion,
       revision = state.data.revision;
     const current = () =>
@@ -59,7 +60,7 @@
               kind,
               name: $("#provider-name", form).value,
               config,
-              clear_api_key: $("#clear-api-key", form)?.checked || false,
+              clear_api_key: keyControls.clearApiKey(),
             }),
             revision,
           });

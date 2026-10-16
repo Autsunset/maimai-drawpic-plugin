@@ -117,7 +117,7 @@
     "general": {
       "default_model": "",
       "fallback_models": [],
-      "request_retry_count": 0,
+      "request_retry_count": 1,
       "request_timeout_seconds": 150,
       "admin_user_ids": [],
       "prompt_review_enabled": false,
@@ -143,7 +143,7 @@
 
 - `default_model`：空字符串表示自动选择；指定时填写完整“平台名 / 模型名”。
 - `fallback_models`：有顺序的模型名称列表，空列表表示不启用备选。
-- `request_retry_count`：每模型额外重试次数，0～5；不是遇到任何失败都重新绘图。
+- `request_retry_count`：每模型额外重试次数，默认 1，可选 0～5；不是遇到任何失败都重新绘图。审核配置在界面中独立成标签页，文件中的字段仍在 `general` 下。
 - `request_timeout_seconds`：单次平台尝试的超时预算，不是任务整体的永久等待时间。
 - `admin_user_ids`：字符串列表，例如 `["12345678"]`；不同适配器的用户 ID 形式可能不同。
 - `image_edit_unsupported_models`、`text_to_image_unsupported_models`：人工限制的模型列表；优先使用工作台中的完整模型名称。

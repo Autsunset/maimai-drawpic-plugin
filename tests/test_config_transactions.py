@@ -78,7 +78,7 @@ def test_settings_failure_keeps_content_and_revision_after_refresh_restart(make_
             assert store.revision == initial["revision"]
             assert store.settings.values == initial["settings"]
             await plugin._workspace_service.refresh()
-            assert plugin.config.general.request_retry_count == 0
+            assert plugin.config.general.request_retry_count == 1
             restarted = storage.WorkspaceConfigStore(store.path.parent, store.config_path)
             restarted.initialize({})
             assert restarted.revision == initial["revision"]
@@ -397,7 +397,7 @@ def test_refresh_failure_reports_saved_and_bootstrap_uses_committed_settings(mak
             assert bootstrap["settings"] == store.settings.values
             assert bootstrap["revision"] == result["revision"]
             if operation == "settings":
-                assert plugin.config.general.request_retry_count == 0
+                assert plugin.config.general.request_retry_count == 1
                 assert bootstrap["settings"]["general"]["request_retry_count"] == 2
             if operation == "preset":
                 assert (await workspace.presets("get", "New preset"))["preset"]["name"] == "New preset"
@@ -499,7 +499,7 @@ def test_atomic_replace_failure_has_no_committed_side_effect(tmp_path, monkeypat
             store.save_provider(payload, revision)
     assert snapshot_bytes(store) == before
     assert store.revision == revision and store.providers[0]["name"] == "Original"
-    assert store.settings.values["general"]["request_retry_count"] == 0
+    assert store.settings.values["general"]["request_retry_count"] == 1
 
 
 def test_pending_recovery_checks_legacy_conflicts_before_writes(tmp_path, monkeypatch):

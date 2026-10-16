@@ -16,6 +16,17 @@
       "layout": "viewport",
       "entry": "src/maimai_drawpic/interfaces/webui/index.html",
       "queries": {
+        "provider_models": {
+          "api": "workspace_provider_models",
+          "version": "1",
+          "parameters": {
+            "provider_json": {
+              "type": "string",
+              "required": true,
+              "max_length": 16384
+            }
+          }
+        },
         "bootstrap": {
           "api": "workspace_bootstrap",
           "version": "1",

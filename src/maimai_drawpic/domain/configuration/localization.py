@@ -8,6 +8,10 @@ from typing import Dict, Tuple, Type
 _LOCALES = ("en_US", "ja_JP", "ko_KR")
 
 _SECTION_TEXTS: Dict[str, Tuple[Tuple[str, str, str], Tuple[str, str, str]]] = {
+    "AgnesModelConfig": (
+        ("Agnes Settings", "Agnes 設定", "Agnes 설정"),
+        ("Agnes image generation and editing.", "Agnes の画像生成・編集設定です。", "Agnes 이미지 생성 및 편집 설정입니다."),
+    ),
     "PluginSectionConfig": (
         ("Plugin Settings", "プラグイン設定", "플러그인 설정"),
         ("Basic plugin settings.", "プラグインの基本設定です。", "플러그인의 기본 설정입니다."),
@@ -119,6 +123,7 @@ _SECTION_TEXTS: Dict[str, Tuple[Tuple[str, str, str], Tuple[str, str, str]]] = {
 }
 
 _FIELD_LABELS: Dict[str, Tuple[str, str, str]] = {
+    "ratio": ("Aspect Ratio", "アスペクト比", "화면 비율"),
     "image_cache_max_mb": ("Image Cache Limit (MB)", "画像キャッシュ上限（MB）", "이미지 캐시 한도(MB)"),
     "log_max_mb": ("Total Log Limit (MB)", "ログ合計上限（MB）", "전체 로그 한도(MB)"),
     "upload_cache_max_mb": ("Upload Cache Limit (MB)", "アップロードキャッシュ上限（MB）", "업로드 캐시 한도(MB)"),
@@ -430,6 +435,36 @@ _OPENAI_MODE_HINTS = (
 
 
 _FIELD_HINT_OVERRIDES: Dict[str, Tuple[str, str, str]] = {
+    "AgnesModelConfig.base_url": (
+        "Use the API base URL, not the console or documentation URL.",
+        "コンソールやドキュメントではなく API のベース URL を入力します。",
+        "콘솔이나 문서 주소가 아닌 API 기본 URL을 입력하세요.",
+    ),
+    "AgnesModelConfig.models": (
+        "Image models available to your account, supporting generation and editing with multiple reference images.",
+        "アカウントで利用可能な画像モデルを指定します。画像生成と複数の参照画像による編集に対応します。",
+        "계정에서 사용 가능한 이미지 모델을 입력하세요. 이미지 생성과 여러 참조 이미지 편집을 지원합니다.",
+    ),
+    "AgnesModelConfig.default_size": (
+        "2.1 / 2.5 support 1K–4K tiers; use pixel dimensions for 2.0, with per-model overrides below.",
+        "2.1 / 2.5 は 1K～4K に対応します。2.0 はピクセル寸法を使用し、下でモデル別に上書きできます。",
+        "2.1 / 2.5는 1K~4K를 지원합니다. 2.0은 픽셀 크기를 사용하고 아래에서 모델별로 설정할 수 있습니다.",
+    ),
+    "AgnesModelConfig.ratio": (
+        "Aspect ratio for tier-based sizes in 2.1 / 2.5; omitted for 2.0, which uses pixel dimensions.",
+        "2.1 / 2.5 の段階サイズ用の縦横比です。ピクセル寸法を使う 2.0 には送信しません。",
+        "2.1 / 2.5의 단계별 크기에 사용하는 비율입니다. 픽셀 크기를 사용하는 2.0에는 전송하지 않습니다.",
+    ),
+    "AgnesModelConfig.response_format": (
+        "Automatically uses the nested parameters required by Agnes.",
+        "Agnes が要求するネストされたパラメーターを自動的に使用します。",
+        "Agnes에서 요구하는 중첩 매개변수 형식을 자동으로 사용합니다.",
+    ),
+    "AgnesModelConfig.extra_parameters": (
+        "Add provider extensions only when needed; extra_body must be a JSON object.",
+        "必要な拡張パラメーターのみ追加します。extra_body は JSON オブジェクトで指定します。",
+        "필요할 때만 확장 매개변수를 추가하세요. extra_body는 JSON 객체여야 합니다.",
+    ),
     "OpenAIModelConfig.enabled": (
         "When disabled, this instance's models are excluded from routing. Other platform instances can remain enabled independently.",
         "無効にすると、このインスタンスのモデルはルーティング対象外になります。他のプラットフォームインスタンスは個別に有効化できます。",
@@ -471,9 +506,9 @@ _FIELD_HINT_OVERRIDES: Dict[str, Tuple[str, str, str]] = {
         "필요한 모델을 추가하고 순서를 변경하세요. 재시도 소진 후 다음 모델을 시도하며 비어 있으면 사용하지 않습니다.",
     ),
     "GeneralConfig.request_retry_count": (
-        "Up to 0–5 extra attempts only for safe failures such as an unestablished connection or explicit rate limiting. Never regenerate after review rejection, result download failure, or an uncertain remote outcome.",
-        "接続未確立や明示的なレート制限など、安全な失敗のみ0～5回追加試行します。審査拒否、結果取得失敗、リモート状態不明時は再生成しません。",
-        "연결 전 실패나 명시적 속도 제한 등 안전한 실패만 0~5회 추가 시도합니다. 심사 거부, 결과 다운로드 실패, 원격 처리 상태 불명 시 재생성하지 않습니다.",
+        "Default: 1 extra attempt; configurable from 0 to 5, only for safe failures such as an unestablished connection or explicit rate limiting. Never regenerate after review rejection, result download failure, or an uncertain remote outcome.",
+        "既定は追加1回、0～5回で設定できます。接続未確立や明示的なレート制限など安全な失敗のみ再試行します。審査拒否、結果取得失敗、リモート状態不明時は再生成しません。",
+        "기본 추가 재시도 1회, 0~5회로 설정합니다. 연결 전 실패나 명시적 속도 제한 등 안전한 실패만 재시도합니다. 심사 거부, 결과 다운로드 실패, 원격 처리 상태 불명 시 재생성하지 않습니다.",
     ),
     "ComfyUIModelConfig.t2i_workflow_path": (
         "The data/ prefix maps to the plugin data directory; default: data/workflows/t2i.json. Other relative paths remain relative to the plugin source directory. Absolute paths are supported. Export an API-format workflow from ComfyUI.",

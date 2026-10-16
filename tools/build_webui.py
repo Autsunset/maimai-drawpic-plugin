@@ -17,6 +17,7 @@ def build() -> Path:
         "forms/controls",
         "forms/collections",
         "forms",
+        "platform-models",
         "platforms",
         "studio",
         "tasks",

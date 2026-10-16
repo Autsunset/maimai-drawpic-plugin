@@ -457,7 +457,7 @@ def test_style_descriptions_are_structured_and_backward_compatible() -> None:
 
     legacy_preset = StylePresetConfig(name="旧风格")
     assert legacy_preset.description == ""
-    assert DrawpicConfig().plugin.config_version == "2.37.0"
+    assert DrawpicConfig().plugin.config_version == "2.38.0"
 
     resolver = StylePromptResolver(
         StyleConfig(
@@ -1215,6 +1215,10 @@ def test_provider_router_fallback_model_resolution() -> None:
     from maimai_drawpic_pkg.src.maimai_drawpic.application.routing import ProviderRouter
 
     class _StubConfig:
+        class agnes:
+            enabled = False
+            models = []
+
         class openai:
             enabled = True
             models = ["gpt-image-2", "gpt-image-fallback"]

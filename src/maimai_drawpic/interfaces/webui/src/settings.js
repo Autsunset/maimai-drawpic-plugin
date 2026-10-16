@@ -2,7 +2,9 @@
   "use strict";
   const U = window.DrawpicUI,
     { state, $, call, buttonAction, toast } = U;
-  const sections = { general: "通用与审核", style: "风格预设" };
+  const sections = { general: "通用配置", review: "审核配置", style: "风格预设" };
+  const sourceSection = (name) => name === "review" ? "general" : name;
+  const reviewField = (key) => /^(prompt|image)_review_/.test(key);
   U.views.settings = async () => {
     let selected = Object.hasOwn(sections, state.settingsSection)
       ? state.settingsSection
@@ -30,21 +32,31 @@
       panel.setAttribute("role", "tabpanel");
       panel.setAttribute("aria-labelledby", `settings-tab-${name}`);
       panel.hidden = name !== selected;
-      const fields = state.data.schema.sections[name].fields;
+      const fields = Object.fromEntries(
+        Object.entries(state.data.schema.sections[sourceSection(name)].fields)
+          .filter(([key]) => name === "style" || reviewField(key) === (name === "review")),
+      );
       panel.innerHTML = U.forms.html(fields, values);
       const old = $(`#${panel.id}`, form);
       if (old) old.replaceWith(panel);
       else form.append(panel);
-      readers[name] = U.forms.bind(panel, fields, values);
+      const read = U.forms.bind(panel, fields, values);
+      // 通用与审核共享持久化配置，只读取当前分类的字段，避免互相覆盖草稿。
+      readers[name] = () => {
+        const result = read();
+        return Object.fromEntries(Object.keys(fields).map((key) => [key, result[key]]));
+      };
     }
     for (const name of Object.keys(sections))
-      renderSection(name, structuredClone(state.data.settings[name]));
+      renderSection(name, structuredClone(state.data.settings[sourceSection(name)]));
     function activate(name) {
       selected = state.settingsSection = name;
       $("#settings-heading").textContent = sections[name];
       $("#settings-description").textContent =
         name === "style"
-          ? "把常用风格保存为提示词模板。两个分类的修改可一起保存。"
+          ? "把常用风格保存为提示词模板，三个分类的修改可一起保存。"
+          : name === "review"
+            ? "分别设置提示词审核和生成图片审核，使用 MaiBot 配置的审核模型。切换分类保留草稿。"
           : "切换分类会保留草稿，点击右上角“保存全部设置”统一保存。";
       for (const tab of document.querySelectorAll("[data-section]")) {
         const active = tab.dataset.section === name;
@@ -78,7 +90,7 @@
     form.addEventListener("input", updateNotice);
     form.addEventListener("click", updateNotice);
     $("#reset-settings").onclick = () => {
-      renderSection(selected, structuredClone(state.data.defaults[selected]));
+      renderSection(selected, structuredClone(state.data.defaults[sourceSection(selected)]));
       state.dirty = true;
       updateNotice();
       toast("已恢复当前分类默认值，其他分类草稿保留，保存后生效");
@@ -106,9 +118,10 @@
       event.preventDefault();
       if (form.inert || requiresRefresh) return;
       buttonAction(save, async () => {
-        const all = Object.fromEntries(
-          Object.entries(readers).map(([name, read]) => [name, read()]),
-        );
+        const all = {
+          general: { ...state.data.settings.general, ...readers.general(), ...readers.review() },
+          style: readers.style(),
+        };
         form.inert = true;
         $("#reset-settings").disabled = true;
         try {

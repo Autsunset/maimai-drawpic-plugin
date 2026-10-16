@@ -41,6 +41,13 @@
     return `<input data-param-value type="${type === "number" ? "number" : "text"}" ${type === "number" ? 'step="any"' : ""} aria-label="参数值" autocomplete="off" value="${e(value)}" placeholder="填写参数值…">`;
   }
   function row(key, value, options = {}) {
+    if (key === "fallback_models" || key.endsWith("unsupported_models")) {
+      const ordered = key === "fallback_models";
+      const title = ordered ? "备选模型" : key === "image_edit_unsupported_models" ? "仅支持文生图的模型" : "仅支持图生图的模型";
+      const choices = U.state.data.models.map((item) => item.name);
+      if (value && !choices.includes(value)) choices.unshift(value);
+      return `<div class="array-row ${ordered ? "ordered-row" : "model-choice-row"}" data-array-row><select data-value aria-label="${title}"><option value="">请选择模型</option>${choices.map((name) => `<option value="${e(name)}" ${name === value ? "selected" : ""}>${e(name)}</option>`).join("")}</select>${ordered ? '<button type="button" class="icon-button" data-move="up" aria-label="上移备选模型">↑</button><button type="button" class="icon-button" data-move="down" aria-label="下移备选模型">↓</button>' : ""}${remove}</div>`;
+    }
     if (key === "models" && options.kind === "openai") {
       const [alias, model] = split(value);
       return `<div class="model-editor-row" data-array-row data-model-row><label>模型 ID<input data-model-id aria-label="模型 ID" value="${e(model || alias)}" placeholder="例如 gpt-image-2.5…" autocomplete="off" spellcheck="false"></label><label>显示名称（可选）<input data-model-alias value="${e(model ? alias : "")}" placeholder="例如 日常绘图…" autocomplete="off"></label>${remove}</div>`;
@@ -198,11 +205,12 @@
     }
   }
   function validateRows(array, values) {
-    if (!/overrides|extra_parameters/.test(array.dataset.array)) return;
-    const names = values.map((item) => split(item)[0]);
+    const models = array.dataset.array === "fallback_models" || array.dataset.array.endsWith("unsupported_models");
+    if (!models && !/overrides|extra_parameters/.test(array.dataset.array)) return;
+    const names = models ? values : values.map((item) => split(item)[0]);
     if (new Set(names).size !== names.length)
       invalid(
-        array.querySelector("[data-model-key],[data-key]"),
+        array.querySelector("[data-model-key],[data-key],[data-value]"),
         "同一配置列表不能重复设置相同的模型或参数名称",
       );
   }
@@ -221,5 +229,5 @@
     });
     refresh(root);
   }
-  U.formCollections = { row, readRow, refresh, validateRows, bind };
+  U.formCollections = { row, readRow, refresh, validateRows, bind, models };
 })();

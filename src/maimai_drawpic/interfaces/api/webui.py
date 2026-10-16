@@ -9,6 +9,11 @@ from ...infrastructure.storage.platforms import parse_json_object
 
 
 class WebUIAPIMixin(WorkspaceAPIBase):
+    @API("workspace_provider_models", version="1")
+    @workspace_endpoint
+    async def workspace_provider_models(self, provider_json: str) -> Dict[str, Any]:
+        return await self._workspace().discover_models(provider_json)
+
     @API("workspace_bootstrap", version="1")
     @workspace_endpoint
     async def workspace_bootstrap(self) -> Dict[str, Any]:
