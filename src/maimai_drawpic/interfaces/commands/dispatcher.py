@@ -172,11 +172,15 @@ class CommandMixin:
                 )
                 return False, "权限不足", 1
 
-            provider_name = self._require_router().get_model_provider(model_name)
-            if not provider_name:
+            models = self._require_router().get_all_models()
+            if model_name.isascii() and model_name.isdecimal():
+                index = int(model_name) if len(model_name) <= 10 else 0
+                model_name = models[index - 1] if 1 <= index <= len(models) else ""
+            if model_name not in models:
                 await self._send_command_reply(
                     title="模型不存在",
-                    body=f"未找到模型：{model_name}\n\n{build_model_text(self._require_router(), session_preference)}",
+                    body="请输入列表中的完整 平台名称/模型名称，或从 1 开始的有效索引；不支持单独填写模型名。\n\n"
+                    + build_model_text(self._require_router(), session_preference),
                     stream_id=normalized_stream_id,
                     user_id=normalized_user_id,
                     group_id=normalized_group_id,
@@ -184,7 +188,8 @@ class CommandMixin:
                 )
                 return False, "模型不存在", 1
 
-            next_preference = self._set_session_preference(
+            next_preference = await asyncio.to_thread(
+                self._set_session_preference,
                 normalized_stream_id,
                 normalized_user_id,
                 normalized_group_id,
@@ -193,7 +198,7 @@ class CommandMixin:
             )
             await self._send_command_reply(
                 title="首选模型已设置",
-                body=f"当前会话首选绘图模型：{provider_name}：{next_preference['model']}",
+                body=f"当前会话首选绘图模型：{next_preference['model']}",
                 stream_id=normalized_stream_id,
                 user_id=normalized_user_id,
                 group_id=normalized_group_id,

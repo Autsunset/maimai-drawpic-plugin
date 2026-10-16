@@ -142,6 +142,27 @@
         }
       },
       "actions": {
+        "provider_enabled": {
+          "api": "workspace_provider_enabled",
+          "version": "1",
+          "parameters": {
+            "provider_id": {
+              "type": "string",
+              "required": true,
+              "max_length": 32
+            },
+            "enabled": {
+              "type": "boolean",
+              "required": true
+            },
+            "revision": {
+              "type": "integer",
+              "required": true,
+              "minimum": 0,
+              "maximum": 2147483647
+            }
+          }
+        },
         "provider_save": {
           "api": "workspace_provider_save",
           "version": "1",

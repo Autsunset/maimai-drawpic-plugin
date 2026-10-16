@@ -176,7 +176,7 @@ def test_non_retryable_failures_never_resubmit_or_switch_models(
                 plugin._platform_store.revision,
             )
             current = storage.common_config(plugin.config.model_dump(mode="json"))
-            current["general"].update(request_retry_count=2, fallback_models=[f"{provider['name']} / backup-image"])
+            current["general"].update(request_retry_count=2, fallback_models=[f"{provider['name']}/backup-image"])
             await plugin.workspace_settings_save(json.dumps(current), plugin._platform_store.revision)
             service, calls = plugin._require_draw_service(), []
             errors = module("domain.errors")
@@ -273,7 +273,7 @@ def test_all_instance_keys_and_rotated_keys_are_redacted_before_persistence(make
             for index in (1, 2):
                 record = {
                     "kind": "volcengine",
-                    "name": f"Volc {index}",
+                    "name": f"Volc_{index}",
                     "config": {"api_key": f"FAKE_INSTANCE_KEY_{index}"},
                 }
                 await plugin.workspace_provider_save(json.dumps(record), plugin._platform_store.revision)

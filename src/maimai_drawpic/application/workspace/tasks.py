@@ -290,8 +290,12 @@ class WorkspaceTaskService:
 
     async def cancel(self, task_id: str) -> Dict[str, Any]:
         validate_task_id(task_id)
-        record = await self.detail(task_id)
-        if record["status"] not in {"pending", "running"}:
+        # 先从内存确认状态并发出取消信号；详情读取包含文件 IO，不能让其
+        # 排在取消之前，否则进度写盘结束后仍可能启动一次新的生成请求。
+        record = self.task_store.get_task(task_id)
+        if record is None:
+            raise ValueError("当前实例不存在该任务")
+        if record.status not in {"pending", "running"}:
             raise ValueError("该任务已经结束")
         for service in self.active_services():
             task = next(

@@ -48,9 +48,8 @@
       if (value && !choices.includes(value)) choices.unshift(value);
       return `<div class="array-row ${ordered ? "ordered-row" : "model-choice-row"}" data-array-row><select data-value aria-label="${title}"><option value="">请选择模型</option>${choices.map((name) => `<option value="${e(name)}" ${name === value ? "selected" : ""}>${e(name)}</option>`).join("")}</select>${ordered ? '<button type="button" class="icon-button" data-move="up" aria-label="上移备选模型">↑</button><button type="button" class="icon-button" data-move="down" aria-label="下移备选模型">↓</button>' : ""}${remove}</div>`;
     }
-    if (key === "models" && options.kind === "openai") {
-      const [alias, model] = split(value);
-      return `<div class="model-editor-row" data-array-row data-model-row><label>模型 ID<input data-model-id aria-label="模型 ID" value="${e(model || alias)}" placeholder="例如 gpt-image-2.5…" autocomplete="off" spellcheck="false"></label><label>显示名称（可选）<input data-model-alias value="${e(model ? alias : "")}" placeholder="例如 日常绘图…" autocomplete="off"></label>${remove}</div>`;
+    if (key === "models" || key === "custom_models") {
+      return `<div class="model-editor-row" data-array-row data-model-row><input data-model-id aria-label="模型 ID" value="${e(value)}" placeholder="填写平台提供的真实模型 ID…" autocomplete="off" spellcheck="false">${remove}</div>`;
     }
     if (key === "model_size_overrides" || key === "model_endpoint_overrides") {
       const [model, raw] = split(value);
@@ -85,12 +84,10 @@
   }
   function readRow(key, node) {
     if (node.hasAttribute("data-model-row")) {
-      const model = $("[data-model-id]", node).value.trim(),
-        alias = $("[data-model-alias]", node).value.trim();
-      if (!model && !alias) return "";
-      if (!model)
-        invalid($("[data-model-id]", node), "请为显示名称填写对应的模型 ID");
-      return alias ? `${alias}=${model}` : model;
+      const model = $("[data-model-id]", node).value.trim();
+      if (model.includes("="))
+        invalid($("[data-model-id]", node), "仅填写真实模型 ID，不支持别名=模型的写法");
+      return model;
     }
     if (node.hasAttribute("data-model-override")) {
       const model = $("[data-model-key]", node).value;
@@ -167,12 +164,10 @@
         const model = row.hasAttribute("data-model-row")
           ? $("[data-model-id]", row).value.trim()
           : $("[data-value]", row).value.trim();
-        const alias = $("[data-model-alias]", row)?.value.trim();
         if (model)
           result.push({
             id: model,
-            alias,
-            label: alias ? `${alias} · ${model}` : model,
+            label: model,
           });
       }
     }
@@ -189,12 +184,11 @@
     const choices = models(root);
     for (const select of root.querySelectorAll("[data-model-key]")) {
       const value = select.value;
-      const aliasMatch = choices.find((item) => item.alias === value);
       const present = choices.some((item) => item.id === value);
       select.innerHTML =
         '<option value="">请选择本平台模型</option>' +
         (value && !present
-          ? `<option value="${e(value)}">${e(value)}${aliasMatch ? "（显示名称）" : "（未在当前平台配置，保留原值）"}</option>`
+          ? `<option value="${e(value)}">${e(value)}（未在当前平台配置，保留原值）</option>`
           : "") +
         choices
           .map(

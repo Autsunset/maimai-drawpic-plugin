@@ -9,7 +9,36 @@
     const titleId = `model-picker-${++sequence}`;
     dialog.className = "model-picker";
     dialog.setAttribute("aria-labelledby", titleId);
-    dialog.innerHTML = `<div class="modal-header"><h2 id="${titleId}">选择 ${e(catalog.name)} 模型</h2><button type="button" class="icon-button" data-close aria-label="关闭模型选择">${icon("close")}</button></div><div class="model-picker-content"><p class="hint">从接口读取模型目录，不发起绘图请求。仅追加你选择的新模型，当前模型和显示名称会保留；保存平台后生效。</p><div class="model-picker-filters"><input type="search" data-search aria-label="搜索模型" placeholder="搜索模型 ID 或名称…"><label class="inline-choice"><input type="checkbox" data-images-only>仅显示可能的绘图模型</label></div><div class="model-picker-toolbar"><button type="button" class="button secondary compact" data-select-visible disabled>选择当前结果</button><button type="button" class="button ghost compact" data-clear-selection disabled>清空选择</button><span class="hint" data-count aria-live="polite"></span></div><p data-status role="status" aria-live="polite">正在获取模型…</p><div class="model-picker-list" data-model-list aria-label="接口返回的模型"></div><div class="modal-footer"><button type="button" class="button secondary" data-retry hidden>重新获取</button><button type="button" class="button secondary" data-cancel>取消</button><button type="button" class="button" data-apply disabled>添加所选模型</button></div></div>`;
+    dialog.innerHTML = `<div class="modal-header">
+      <h2 id="${titleId}">选择 ${e(catalog.name)} 模型</h2>
+      <button type="button" class="icon-button" data-close aria-label="关闭模型选择">${icon("close")}</button>
+    </div>
+    <div class="model-picker-content">
+      <p class="hint">从接口读取模型，勾选后加入草稿；保存平台后生效。</p>
+      <div class="model-picker-filters">
+        <input type="search" data-search aria-label="搜索模型" placeholder="搜索模型 ID 或名称…">
+        <label class="inline-choice"><input type="checkbox" data-images-only>仅显示可能的绘图模型</label>
+      </div>
+      <div class="model-picker-results">
+        <div class="model-picker-summary">
+          <p class="hint" data-count aria-live="polite"></p>
+          <p class="hint" data-status role="status" aria-live="polite">正在获取模型…</p>
+        </div>
+        <div class="model-picker-list" data-model-list role="group" aria-label="接口返回的模型" tabindex="0"></div>
+      </div>
+      <p class="hint model-picker-selection-hint">全选当前筛选结果；清空取消全部新勾选，已有模型保留。</p>
+    </div>
+    <div class="modal-footer model-picker-footer">
+      <div class="model-picker-toolbar">
+        <button type="button" class="button secondary compact" data-select-visible disabled>选择全部</button>
+        <button type="button" class="button ghost compact" data-clear-selection disabled>清空选择</button>
+      </div>
+      <div class="model-picker-submit">
+        <button type="button" class="button secondary" data-retry hidden>重新获取</button>
+        <button type="button" class="button secondary" data-cancel>取消</button>
+        <button type="button" class="button" data-apply disabled>添加所选模型</button>
+      </div>
+    </div>`;
     const existing = new Set(U.formCollections.models(form).map((model) => model.id));
     const selected = new Set();
     const list = $("[data-model-list]", dialog), status = $("[data-status]", dialog);
@@ -51,7 +80,9 @@
         models = result.models;
         $("[data-images-only]", dialog).checked = models.some((model) => model.image_candidate);
         status.textContent = models.length
-          ? "目录返回不代表账号已开通全部模型；名称筛选也不代表已验证绘图能力，可关闭筛选查看全部。"
+          ? kind === "aliyun"
+            ? "百炼在线目录，仅含插件已接入的图像模型，不代表账号已开通权限。"
+            : "目录已在线获取；名称筛选不代表绘图能力或账号权限。"
           : "接口没有返回可导入的图片模型，请检查账号权限，或返回手动添加。";
         renderList();
       } catch (error) {

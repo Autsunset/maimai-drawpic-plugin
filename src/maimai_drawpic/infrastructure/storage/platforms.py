@@ -8,7 +8,7 @@ from threading import RLock
 from maibot_sdk.config import extract_plugin_config_version, generate_plugin_config_schema
 from pathlib import Path
 from pydantic import BaseModel, ValidationError
-from typing import Any, Dict, List, Mapping
+from typing import Any, Dict, List, Mapping, Tuple
 from uuid import uuid4
 import json
 import re
@@ -24,20 +24,24 @@ from ...domain.configuration.models import (
 from ...application.routing import ProviderRouter
 from .atomic import write_json_atomically, write_text_atomically
 from .config_recovery import is_reseeded_defaults, remove_reseeded_defaults
+from .identifiers import migrate_model_identifiers, remap_preferences
+from .preferences import SessionPreferenceStore
 from .settings import LEGACY_REVIEW_SECTIONS, WorkspaceSettingsStore, read_json_file, workspace_config
 
 
 PLATFORM_NAMES = {
-    "agnes": "Agnes AI",
     "openai": "OpenAI / 兼容服务",
     "google": "Google Gemini",
-    "zhipu": "智谱",
     "aliyun": "阿里百炼",
     "volcengine": "火山引擎",
     "siliconflow": "硅基流动",
+    "zhipu": "智谱",
     "novelai": "NovelAI / NovelAPI",
+    "agnes": "Agnes AI",
     "comfyui": "ComfyUI",
 }
+PLATFORM_DEFAULT_NAMES = {kind: kind for kind in PLATFORM_NAMES}
+PLATFORM_DEFAULT_NAMES["openai"] = "OpenAI_Compatible"
 COMMON_SECTIONS = ("plugin", "general", "style", "proxy")
 HOST_SECTIONS = ("plugin", "proxy")
 SECRET_FIELDS = {"api_key", "password"}
@@ -163,6 +167,7 @@ class WorkspaceConfigStore:
         self.settings = WorkspaceSettingsStore(data_dir, config_path)
         self.transaction_path = data_dir / "workspace_config_transaction.json"
         self.recovery_pending = False
+        self.pending_model_renames: Dict[str, str] = {}
         self._lock = RLock()
 
     @staticmethod
@@ -201,25 +206,6 @@ class WorkspaceConfigStore:
                 raise ValueError(
                     "旧 config.toml 与 platforms.json 存在冲突，已保留原文件。请先备份，确认保留哪份平台配置，再移走另一份后重新加载插件。"
                 )
-            names = set()
-            renamed = False
-            for record in self.providers:
-                base = record["name"].strip()
-                name, suffix = base, 2
-                while name.casefold() in names:
-                    name = f"{base[:70]} {suffix}"
-                    suffix += 1
-                names.add(name.casefold())
-                if name != record["name"]:
-                    record["name"] = name
-                    renamed = True
-            if renamed:
-                backup = self.path.parent / "migration_backups" / f"platforms-{uuid4().hex}.json"
-                backup.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(self.path, backup)
-                self.revision += 1
-                self.platform_revision = self.revision
-                self._save()
         else:
             self._import_legacy_platforms(legacy_config)
             self.revision = self.platform_revision = max(1, settings_revision)
@@ -228,6 +214,10 @@ class WorkspaceConfigStore:
         recovery_backup = None
         if reseeded:
             recovery_backup = remove_reseeded_defaults(self.config_path, self.path.parent, original)
+        else:
+            current = self.config_path.read_bytes() if self.config_path.exists() else b""
+            if current != original:
+                raise ValueError("config.toml 已在外部修改，已保留原文件，请重新加载插件")
         if self.config_path.exists():
             document = tomlkit.parse(self.config_path.read_text(encoding="utf-8"))
             if any(key in document for key in PLATFORM_NAMES):
@@ -237,17 +227,20 @@ class WorkspaceConfigStore:
                 shutil.copy2(self.config_path, backup)
                 if backup.read_bytes() != self.config_path.read_bytes():
                     raise RuntimeError("配置备份校验失败，保留原配置")
+                if self.config_path.read_bytes() != original:
+                    raise ValueError("config.toml 已在外部修改，已保留原文件，请重新加载插件")
                 for kind in PLATFORM_NAMES:
                     document.pop(kind, None)
                 write_text_atomically(self.config_path, tomlkit.dumps(document))
 
         self.settings.initialize(legacy_config)
         self.revision = max(self.platform_revision, self.settings.revision)
+        migrate_model_identifiers(self, PLATFORM_NAMES, PLATFORM_DEFAULT_NAMES)
         return recovery_backup
 
     def _import_legacy_platforms(self, legacy_config: Dict[str, Any]) -> None:
         """只导入有实际配置的平台，用于首次迁移与无副作用冲突检查。"""
-        normalized = DrawpicConfig.model_validate(legacy_config).model_dump(mode="json")
+        normalized = DrawpicConfig.model_validate(migrate_legacy_review_config(legacy_config)).model_dump(mode="json")
         defaults = DrawpicConfig().model_dump(mode="json")
         for kind in PLATFORM_NAMES:
             values = deepcopy(normalized[kind])
@@ -287,7 +280,8 @@ class WorkspaceConfigStore:
         if not isinstance(record["kind"], str) or record["kind"] not in PLATFORM_NAMES:
             raise ValueError("未知绘图平台")
         result = deepcopy(record)
-        result["name"] = record["name"].strip()
+        # 加载旧记录时保留首尾空格，交给统一迁移逐个转换为下划线。
+        result["name"] = record["name"]
         result["config"] = _validate_fields(self.platform_model(record["kind"]), record["config"])
         if record["kind"] == "openai":
             result["config"]["instances"] = []
@@ -330,12 +324,14 @@ class WorkspaceConfigStore:
     def _validate_transaction(self, transaction: Any) -> None:
         if (
             not isinstance(transaction, dict)
-            or set(transaction) != {"schema_version", "platforms", "settings"}
-            or type(transaction["schema_version"]) is not int
-            or transaction["schema_version"] != 1
+            or type(transaction.get("schema_version")) is not int
+            or transaction["schema_version"] not in (1, 2)
+            or set(transaction) != {"schema_version", "platforms", "settings"} | (
+                {"preferences"} if transaction["schema_version"] == 2 else set()
+            )
         ):
             raise ValueError("工作台配置事务格式不正确，已保留原文件")
-        for key in ("platforms", "settings"):
+        for key in ("platforms", "settings", *(["preferences"] if transaction["schema_version"] == 2 else [])):
             entry = transaction[key]
             if (
                 not isinstance(entry, dict)
@@ -351,11 +347,15 @@ class WorkspaceConfigStore:
         names = [record["name"].casefold() for record in providers]
         if len(names) != len(set(names)):
             raise ValueError("工作台配置事务包含重复平台名称，已保留原文件")
+        if transaction["schema_version"] == 2:
+            SessionPreferenceStore.validate_payload(transaction["preferences"]["payload"])
 
     def _materialize_transaction(self, transaction: Dict[str, Any]) -> None:
         entries = [(self.path, transaction["platforms"]), (self.settings.path, transaction["settings"])]
+        if transaction["schema_version"] == 2:
+            entries.append((self.path.parent / "session_preferences.json", transaction["preferences"]))
         pending = []
-        # 必须先校验两个文件，再写任意一个；损坏或未知内容不能被恢复操作抹掉。
+        # 必须先校验全部文件，再写任意一个；损坏或未知内容不能被恢复操作抹掉。
         for path, entry in entries:
             digest = sha256(path.read_bytes()).hexdigest()
             committed = _payload_digest(entry["payload"])
@@ -407,7 +407,10 @@ class WorkspaceConfigStore:
         ):
             raise ValueError("配置文件已在外部修改，已保留原文件，请重新加载插件后再保存")
 
-    def _commit_rename(self, providers: List[Dict[str, Any]], values: Dict[str, Any], revision: int) -> None:
+    def _commit_rename(
+        self, providers: List[Dict[str, Any]], values: Dict[str, Any], revision: int,
+        preferences: Tuple[Dict[str, Any], str] | None = None,
+    ) -> None:
         transaction = {
             "schema_version": 1,
             "platforms": {
@@ -419,6 +422,9 @@ class WorkspaceConfigStore:
                 "payload": self.settings.payload(values, revision),
             },
         }
+        if preferences is not None:
+            transaction["schema_version"] = 2
+            transaction["preferences"] = {"previous_sha256": preferences[1], "payload": preferences[0]}
         self._validate_transaction(transaction)
         # 日志原子发布是唯一提交点。之后的故障只表示物化待恢复，不能报告保存失败。
         write_json_atomically(self.transaction_path, transaction)
@@ -479,6 +485,8 @@ class WorkspaceConfigStore:
             raise ValueError("平台参数包含未知字段")
         if not {"kind", "name", "config"} <= payload.keys() or not isinstance(payload["name"], str):
             raise ValueError("平台类型、名称与配置为必填项")
+        if any(char.isspace() for char in payload["name"]):
+            raise ValueError("平台名称不能包含空格，可使用中文、英文和下划线 _")
         if type(revision) is not int or type(payload.get("clear_api_key", False)) is not bool:
             raise ValueError("平台参数类型无效")
         identifier = payload.get("id", "")
@@ -498,6 +506,11 @@ class WorkspaceConfigStore:
         values = deepcopy(payload["config"])
         if not isinstance(values, dict):
             raise ValueError("平台配置必须是对象")
+        for field in ("models", "custom_models"):
+            if isinstance(values.get(field), list) and any(
+                isinstance(model, str) and "=" in model for model in values[field]
+            ):
+                raise ValueError("模型列表仅填写真实模型 ID，不再支持显示名称或别名")
         if "instances" in values and values["instances"]:
             raise ValueError("请将兼容实例分别添加为平台")
         if previous is not None and not values.get("api_key", "") and not payload.get("clear_api_key", False):
@@ -510,6 +523,7 @@ class WorkspaceConfigStore:
         if previous is None:
             updated.append(record)
         renamed_settings = None
+        preferences = None
         if previous is not None and previous["name"] != record["name"]:
             renamed_settings = deepcopy(self.settings.values)
             # 名称和模型本身都允许包含分隔符，只重写旧实例真正拥有的精确 selector。
@@ -517,14 +531,44 @@ class WorkspaceConfigStore:
             catalog_record = deepcopy(previous)
             catalog_record["config"]["enabled"] = True
             models = ProviderRouter(self.effective_config({}, [catalog_record])).get_all_models()
-            replacements = {f"{previous['name']} / {model}": f"{record['name']} / {model}" for model in models}
+            replacements = {f"{previous['name']}/{model}": f"{record['name']}/{model}" for model in models}
             general = renamed_settings["general"]
             general["default_model"] = replacements.get(general["default_model"], general["default_model"])
             for key in ("fallback_models", "image_edit_unsupported_models", "text_to_image_unsupported_models"):
                 general[key] = [replacements.get(value, value) for value in general[key]]
             renamed_settings = self._validate_common(renamed_settings, renamed_settings)
-        self._commit(updated, settings=renamed_settings)
+            preferences = remap_preferences(self.path.parent / "session_preferences.json", replacements)
+        self._commit(updated, settings=renamed_settings, preferences=preferences)
+        if renamed_settings is not None:
+            self.pending_model_renames = {
+                old: replacements.get(current, current) for old, current in self.pending_model_renames.items()
+            }
+            self.pending_model_renames.update(replacements)
         return {"id": record["id"], "revision": self.revision, "saved": True, "recovery_pending": self.recovery_pending}
+
+    @_locked
+    def set_provider_enabled(self, identifier: str, enabled: bool, revision: int) -> None:
+        """只更新启用状态，不经页面回传或重建平台的其他配置。"""
+        if type(revision) is not int or revision != self.revision:
+            raise ValueError("配置已更新，请刷新后切换平台状态")
+        if type(enabled) is not bool:
+            raise ValueError("平台启用状态必须是布尔值")
+        updated = deepcopy(self.providers)
+        record = next((item for item in updated if item["id"] == identifier), None)
+        if record is None:
+            raise ValueError("平台不存在")
+        record["config"]["enabled"] = enabled
+        self._commit(updated)
+
+    @_locked
+    def save_preferences(self, values: Dict[str, Dict[str, str]]) -> Dict[str, Dict[str, str]]:
+        """偏好写入与配置事务互斥；先恢复已提交快照，再接收新的会话修改。"""
+        self._recover_transaction()
+        updated = SessionPreferenceStore.validate_payload(values)
+        for value in updated.values():
+            value["model"] = self.pending_model_renames.get(value["model"], value["model"])
+        write_json_atomically(self.path.parent / "session_preferences.json", updated)
+        return updated
 
     @_locked
     def delete_provider(self, identifier: str, revision: int) -> None:
@@ -536,7 +580,10 @@ class WorkspaceConfigStore:
         self._commit(updated)
 
     @_locked
-    def _commit(self, providers: List[Dict[str, Any]], *, settings: Dict[str, Any] | None = None) -> None:
+    def _commit(
+        self, providers: List[Dict[str, Any]], *, settings: Dict[str, Any] | None = None,
+        preferences: Tuple[Dict[str, Any], str] | None = None,
+    ) -> None:
         self._recover_transaction()
         self._check_disk_state()
         if len(json.dumps(providers, ensure_ascii=False).encode("utf-8")) > 160 * 1024:
@@ -544,7 +591,7 @@ class WorkspaceConfigStore:
         providers = deepcopy(providers)
         revision = self.revision + 1
         if settings is not None:
-            self._commit_rename(providers, deepcopy(settings), revision)
+            self._commit_rename(providers, deepcopy(settings), revision, preferences)
         else:
             self._save(providers, revision)
             self.providers, self.platform_revision, self.revision = providers, revision, revision

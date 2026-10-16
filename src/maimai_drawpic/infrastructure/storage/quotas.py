@@ -5,10 +5,10 @@ from datetime import datetime
 from pathlib import Path
 from threading import RLock
 from typing import Any, Literal
-import json
 from uuid import uuid4
 
 from .atomic import write_json_atomically
+from .settings import read_json_file
 from ..concurrency import synchronized
 
 
@@ -45,6 +45,7 @@ class UserQuotaStore:
         self.path = path
         self.logger = logger
         self.records: dict[str, UserQuotaRecord] = {}
+        self._load_failed = False
 
     def bind_logger(self, logger: Any | None) -> None:
         """绑定运行期 logger。"""
@@ -55,41 +56,54 @@ class UserQuotaStore:
     def load(self) -> None:
         """读取额度数据。"""
 
+        self._load_failed = True
         if not self.path.exists():
             self.records = {}
+            self._load_failed = False
             return
         try:
-            raw_data = json.loads(self.path.read_text(encoding="utf-8"))
-        except Exception as exc:
-            self._log_warning("读取用户额度数据失败，将使用空状态: %s", exc)
-            self.records = {}
-            return
+            raw_data = read_json_file(self.path)
+        except (OSError, ValueError) as exc:
+            raise ValueError("用户额度文件无法读取，已保留原件，请从备份恢复") from exc
         if not isinstance(raw_data, dict):
-            self.records = {}
-            return
+            raise ValueError("用户额度文件格式不正确，已保留原件")
 
         records: dict[str, UserQuotaRecord] = {}
+        fields = {"period_key", "used", "quota_override", "reservation_ids"}
         for user_id, payload in raw_data.items():
-            if not isinstance(user_id, str) or not isinstance(payload, dict):
-                continue
+            if (
+                not isinstance(user_id, str) or not user_id.strip()
+                or not isinstance(payload, dict) or payload.keys() - fields
+                or not {"period_key", "used"} <= payload.keys()
+                or not isinstance(payload["period_key"], str) or not payload["period_key"].strip()
+                or type(payload["used"]) is not int or payload["used"] < 0
+                or (payload.get("quota_override") is not None and (
+                    type(payload["quota_override"]) is not int or payload["quota_override"] < 0
+                ))
+            ):
+                raise ValueError("用户额度记录格式不正确或包含未知字段，已保留原件")
             reservation_ids = payload.get("reservation_ids", [])
+            if (
+                not isinstance(reservation_ids, list)
+                or any(not isinstance(value, str) or not value for value in reservation_ids)
+                or len(reservation_ids) != len(set(reservation_ids))
+            ):
+                raise ValueError("用户额度预留记录格式不正确，已保留原件")
             records[user_id] = UserQuotaRecord(
-                period_key=str(payload.get("period_key") or ""),
-                used=max(int(payload.get("used") or 0), 0),
-                quota_override=(
-                    max(int(payload["quota_override"]), 0) if payload.get("quota_override") is not None else None
-                ),
-                reservation_ids=(
-                    list(dict.fromkeys(value for value in reservation_ids if isinstance(value, str) and value))
-                    if isinstance(reservation_ids, list) else []
-                ),
+                period_key=payload["period_key"],
+                used=payload["used"],
+                quota_override=payload.get("quota_override"),
+                reservation_ids=list(reservation_ids),
             )
         self.records = records
+        self._load_failed = False
 
     @synchronized
     def save(self) -> None:
         """保存额度数据。"""
 
+        if self._load_failed:
+            raise ValueError("用户额度文件尚未恢复，拒绝覆盖原件")
         write_json_atomically(
             self.path,
             {user_id: asdict(record) for user_id, record in self.records.items()},

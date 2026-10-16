@@ -24,6 +24,7 @@ from ..infrastructure.storage.quotas import UserQuotaStore
 from ..infrastructure.storage.platforms import PLATFORM_NAMES, WorkspaceConfigStore, host_config, host_default_config
 from ..infrastructure.storage.results import ImageResultStore
 from ..infrastructure.observability.redaction import SecretRedactor
+from ..infrastructure.concurrency import run_owned_thread
 from .workspace.lifecycle import attach_workspace, close_workspace, prepare_workspace, refresh_runtime
 from .workspace.service import WorkspaceService
 
@@ -169,10 +170,6 @@ class DrawpicRuntime(MaiBotPlugin):
     def _refresh_services(self) -> None:
         """刷新内部服务对象。"""
 
-        existing_preferences: dict[str, dict[str, str]] = {}
-        if self._session_store is not None:
-            existing_preferences = dict(self._session_store.preferences)
-
         self._task_store.bind_logger(self.ctx.logger)
         self._usage_store.bind_logger(self.ctx.logger)
         old_references = self._router.model_references() if isinstance(self._router, InstanceProviderRouter) else {}
@@ -185,17 +182,17 @@ class DrawpicRuntime(MaiBotPlugin):
         )
         references = self._router.model_references()
         renamed = {selector: references[key] for key, selector in old_references.items() if key in references}
-        existing_preferences = {
-            key: {**value, "model": renamed.get(value.get("model", ""), value.get("model", ""))}
-            for key, value in existing_preferences.items()
-        }
-        self._session_store = SessionPreferenceStore(
-            path=self._session_preferences_path,
-            router=self._router,
-            logger=self.ctx.logger,
-        )
-        self._session_store.preferences = existing_preferences
-        self._session_store.normalize_all()
+        # 禁用平台不在活动路由中，仍须同步重命名其已有会话引用，避免卸载时写回旧名。
+        renamed.update(self._platform_store.pending_model_renames)
+        if self._session_store is None:
+            self._session_store = SessionPreferenceStore(
+                path=self._session_preferences_path,
+                router=self._router,
+                logger=self.ctx.logger,
+                persist=self._platform_store.save_preferences,
+            )
+        else:
+            self._session_store.rebind_router(self._router, renamed, self._platform_store.save_preferences)
         self._style_prompt_resolver = StylePromptResolver(self.config.style)
         self._stream_service = ChatStreamService(self.ctx)
         self._moderation_service = DrawpicModerationService(self.config, self.ctx)
@@ -220,6 +217,7 @@ class DrawpicRuntime(MaiBotPlugin):
                 result_store=self._result_store,
             )
             self._draw_services.add(self._draw_service)
+        self._platform_store.pending_model_renames.clear()
 
     def _require_router(self) -> ProviderRouter:
         """返回当前 Provider 路由器。"""
@@ -271,13 +269,25 @@ class DrawpicRuntime(MaiBotPlugin):
         self._closing = False
         self._redactor.add_config(self.get_plugin_config_data())
         self.ctx.logger.addFilter(self._redactor)
-        await asyncio.to_thread(self._prepare_data_dir)
-        await prepare_workspace(self, PLUGIN_DIR / "config.toml")
-        await asyncio.to_thread(self._refresh_services)
-        await asyncio.to_thread(self._require_session_store().load)
-        await asyncio.to_thread(self._task_store.load)
-        await asyncio.to_thread(self._usage_store.load)
-        await attach_workspace(self)
+        try:
+            await run_owned_thread(self._prepare_data_dir)
+            await prepare_workspace(self, PLUGIN_DIR / "config.toml")
+            await run_owned_thread(self._refresh_services)
+            await run_owned_thread(self._require_session_store().load)
+            await run_owned_thread(self._task_store.load)
+            await run_owned_thread(self._usage_store.load)
+            await attach_workspace(self)
+        except BaseException:
+            # Runner 的 on_load 失败路径不会再调用 on_unload。只释放已创建
+            # 的资源，不能保存尚未成功读取的偏好、任务或额度，覆盖旧数据。
+            try:
+                if self._draw_service is not None:
+                    await close_workspace(self)
+            except Exception:
+                self.ctx.logger.exception("插件初始化失败后的资源清理失败")
+            finally:
+                self.ctx.logger.removeFilter(self._redactor)
+            raise
         router = self._require_router()
         moderation_service = self._require_moderation_service()
         try:
@@ -331,7 +341,6 @@ class DrawpicRuntime(MaiBotPlugin):
         del config_data
         if scope in {CONFIG_RELOAD_SCOPE_SELF, ON_MODEL_CONFIG_RELOAD, ON_BOT_CONFIG_RELOAD}:
             await refresh_runtime(self)
-            self._require_session_store().normalize_all()
             await asyncio.to_thread(self._require_session_store().save)
             router = self._require_router()
             moderation_service = self._require_moderation_service()

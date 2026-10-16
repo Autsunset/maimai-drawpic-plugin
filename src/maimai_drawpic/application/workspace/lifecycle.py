@@ -5,6 +5,7 @@ from typing import Any, List
 import asyncio
 
 from ...infrastructure.observability.logging import WorkspaceLogStore
+from ...infrastructure.concurrency import run_owned_thread, wait_owned
 from .service import WorkspaceService
 from .tasks import WorkspaceTaskService
 from ...interfaces.chat.message_images import _evict_expired_source_image_cache, clear_source_image_cache
@@ -21,7 +22,7 @@ def active_services(plugin: Any) -> List[DrawService]:
 async def prepare_workspace(plugin: Any, config_path: Path) -> None:
     raw = plugin.get_plugin_config_data()
     store = WorkspaceConfigStore(plugin.ctx.paths.data_dir, config_path)
-    recovery_backup = await asyncio.to_thread(store.initialize, raw)
+    recovery_backup = await run_owned_thread(store.initialize, raw)
     if recovery_backup is not None:
         plugin.ctx.logger.warning(
             "已备份并移除已知升级错误生成的 TOML 默认配置，继续使用工作台 JSON；backup=%s", recovery_backup
@@ -39,7 +40,7 @@ async def prepare_workspace(plugin: Any, config_path: Path) -> None:
         },
     )
     limits = plugin.config.plugin
-    plugin._result_store.configure_limits(limits.image_cache_max_mb, limits.upload_cache_max_mb)
+    await run_owned_thread(plugin._result_store.configure_limits, limits.image_cache_max_mb, limits.upload_cache_max_mb)
     plugin.set_plugin_config(host_config(raw))
 
 
@@ -77,9 +78,15 @@ async def attach_workspace(plugin: Any) -> None:
             values.append(plugin.config.proxy.password)
         return values
 
-    log_store = await asyncio.to_thread(
+    pending_log_store = asyncio.create_task(asyncio.to_thread(
         WorkspaceLogStore, plugin.ctx.paths.data_dir, plugin.ctx.logger, secrets, plugin.config.plugin.log_max_mb
-    )
+    ))
+    try:
+        log_store = await asyncio.shield(pending_log_store)
+    except asyncio.CancelledError:
+        log_store = await wait_owned(pending_log_store)
+        await run_owned_thread(log_store.close)
+        raise
     tasks = WorkspaceTaskService(
         ctx=plugin.ctx,
         data_dir=plugin.ctx.paths.data_dir,
@@ -91,9 +98,9 @@ async def attach_workspace(plugin: Any) -> None:
         active_services=lambda: active_services(plugin),
     )
     try:
-        await asyncio.to_thread(tasks.initialize)
-    except Exception:
-        await asyncio.to_thread(log_store.close)
+        await run_owned_thread(tasks.initialize)
+    except BaseException:
+        await run_owned_thread(log_store.close)
         raise
     plugin._workspace_service = WorkspaceService(
         ctx=plugin.ctx,

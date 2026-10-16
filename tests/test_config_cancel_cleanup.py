@@ -25,7 +25,7 @@ def test_cancelled_commit_keeps_lock_refresh_and_shutdown_ownership(make_plugin,
         snapshot = workspace.store.public_snapshot()
         if operation == "provider_save":
             method = "save_provider"
-            call = lambda: workspace.save_provider('{"kind":"google","name":"new provider","config":{}}', revision)
+            call = lambda: workspace.save_provider('{"kind":"google","name":"new_provider","config":{}}', revision)
         elif operation == "provider_delete":
             method = "delete_provider"
             call = lambda: workspace.delete_provider(snapshot["providers"][0]["id"], revision)

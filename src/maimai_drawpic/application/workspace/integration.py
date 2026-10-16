@@ -126,15 +126,19 @@ class IntegrationTaskService:
             return error_result(self.error_response(exc)["error"])
 
     async def cancel(self, task_id: str) -> Dict[str, Any]:
-        task = await self.task(task_id)
-        requested = task["status"] in {"pending", "running"}
+        try:
+            validate_task_id(task_id)
+        except ValueError as exc:
+            return {**self.error_response(exc), "cancel_requested": False, "upstream_cancelled": None}
+        record = self.tasks.task_store.get_task(task_id)
+        requested = record is not None and record.status in {"pending", "running"}
         if requested:
             try:
                 await self.tasks.cancel(task_id)
             except ValueError:
                 # 取消与完成竞争时返回实际终态，不能把已完成的任务改成已取消。
                 pass
-            task = await self.task(task_id)
+        task = await self.task(task_id)
         return {**task, "cancel_requested": requested, "upstream_cancelled": None}
 
     async def listing(self, page: int = 1, status: str = "", search: str = "") -> Dict[str, Any]:

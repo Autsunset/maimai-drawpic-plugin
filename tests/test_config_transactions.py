@@ -27,10 +27,10 @@ def renamed_fixture(tmp_path):
     }}, store.revision)
     values = deepcopy(store.settings.values)
     values["general"].update(
-        default_model="Original / image-a",
-        fallback_models=["Original / image-b", "Elsewhere / image-a"],
-        image_edit_unsupported_models=["Original / image-a"],
-        text_to_image_unsupported_models=["Original / image-b"],
+        default_model="Original/image-a",
+        fallback_models=["Original/image-b", "Elsewhere/image-a"],
+        image_edit_unsupported_models=["Original/image-a"],
+        text_to_image_unsupported_models=["Original/image-b"],
     )
     store.save_common(values, values, store.revision)
     payload = deepcopy(store.providers[0])
@@ -49,10 +49,10 @@ def assert_renamed(store, revision):
     assert store.providers[0]["name"] == "Renamed"
     assert store.providers[0]["config"]["api_key"] == "fixture-transaction-key"
     general = store.settings.values["general"]
-    assert general["default_model"] == "Renamed / image-a"
-    assert general["fallback_models"] == ["Renamed / image-b", "Elsewhere / image-a"]
-    assert general["image_edit_unsupported_models"] == ["Renamed / image-a"]
-    assert general["text_to_image_unsupported_models"] == ["Renamed / image-b"]
+    assert general["default_model"] == "Renamed/image-a"
+    assert general["fallback_models"] == ["Renamed/image-b", "Elsewhere/image-a"]
+    assert general["image_edit_unsupported_models"] == ["Renamed/image-a"]
+    assert general["text_to_image_unsupported_models"] == ["Renamed/image-b"]
     assert "fixture-transaction-key" not in json.dumps(store.public_snapshot())
 
 
@@ -388,7 +388,7 @@ def test_refresh_failure_reports_saved_and_bootstrap_uses_committed_settings(mak
             elif operation == "preset":
                 result = await workspace.presets("save", "", json.dumps({"name": "New preset"}))
             elif operation == "provider":
-                result = await workspace.save_provider(json.dumps({"kind": "google", "name": "New provider", "config": {}}), revision)
+                result = await workspace.save_provider(json.dumps({"kind": "google", "name": "New_provider", "config": {}}), revision)
             else:
                 result = await workspace.delete_provider(store.providers[0]["id"], revision)
             assert result["saved"] and result["runtime_refresh_pending"]
@@ -419,8 +419,9 @@ def test_rename_api_reports_pending_recovery_without_claiming_failure(make_plugi
             def fail(*args):
                 raise OSError("mock materialization failure")
 
-            monkeypatch.setattr(store, "_materialize_transaction", fail)
-            result = await workspace.save_provider(json.dumps(payload), revision)
+            with monkeypatch.context() as patch:
+                patch.setattr(store, "_materialize_transaction", fail)
+                result = await workspace.save_provider(json.dumps(payload), revision)
             assert result["saved"] and result["recovery_pending"]
             assert result["revision"] == revision + 1 and "已保存" in result["warning"]
             assert store.transaction_path.exists()
@@ -529,27 +530,27 @@ def test_valid_external_settings_edit_is_preserved(tmp_path):
 def test_rename_uses_exact_instance_selectors_not_shared_name_prefixes(tmp_path, enabled):
     store = new_store(tmp_path)
     for name, models in (
-        ("Account", ["image", "Model / Detail=upstream-alias"]),
-        ("Account / Secondary", ["image"]),
+        ("Account", ["image", "Model/Detail"]),
+        ("Account/Secondary", ["image"]),
     ):
         store.save_provider({"kind": "openai", "name": name, "config": {
             "enabled": enabled, "api_key": "fixture-key", "models": models,
         }}, store.revision)
     values = deepcopy(store.settings.values)
-    foreign = "Account / Secondary / image"
-    own = ["Account / image", "Account / Model / Detail"]
+    foreign = "Account/Secondary/image"
+    own = ["Account/image", "Account/Model/Detail"]
     values["general"]["default_model"] = foreign
     keys = ("fallback_models", "image_edit_unsupported_models", "text_to_image_unsupported_models")
     for key in keys:
         values["general"][key] = [foreign, *own]
     store.save_common(values, values, store.revision)
     rename = deepcopy(store.providers[0])
-    rename["name"] = "Renamed / Account"
+    rename["name"] = "Renamed/Account"
     store.save_provider(rename, store.revision)
     general = store.settings.values["general"]
     assert general["default_model"] == foreign
     for key in keys:
-        assert general[key] == [foreign, "Renamed / Account / image", "Renamed / Account / Model / Detail"]
+        assert general[key] == [foreign, "Renamed/Account/image", "Renamed/Account/Model/Detail"]
     restarted = storage.WorkspaceConfigStore(store.path.parent, store.config_path)
     restarted.initialize({})
     assert restarted.settings.values == store.settings.values

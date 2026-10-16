@@ -99,6 +99,7 @@
             );
           const full =
             meta.type === "array" ||
+            meta.type === "boolean" ||
             meta.multiple ||
             /prompt|description/.test(key);
           const array = meta.type === "array",

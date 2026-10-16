@@ -49,7 +49,7 @@
         "enabled": true,
         "base_url": "https://api.openai.com/v1",
         "api_key": "在此填写自己的密钥",
-        "models": ["gpt-image-2.5", "插画备用=gpt-image-1"],
+        "models": ["gpt-image-2.5", "gpt-image-1"],
         "default_openai_compatibility_mode": "auto",
         "default_size": "1024x1024",
         "model_size_overrides": ["gpt-image-1=1024x1536"],
@@ -62,12 +62,12 @@
 }
 ```
 
-- `providers` 是平台实例列表；同一种 `kind` 可以出现多次，但名称须不区分大小写唯一。最多 40 个实例。
+- `providers` 是平台实例列表；同一种 `kind` 可以出现多次，但名称须不区分大小写唯一，支持中英文且不能含空格。最多 40 个实例。
 - `id` 是 32 位小写十六进制字符串。已有实例不要改；新建实例优先通过工作台生成 ID，再在文件中编辑。
-- `kind` 支持 `openai`、`google`、`zhipu`、`aliyun`、`volcengine`、`siliconflow`、`novelai`、`comfyui`。
+- `kind` 支持 `openai`、`agnes`、`google`、`zhipu`、`aliyun`、`volcengine`、`siliconflow`、`novelai`、`comfyui`。
 - `config` 是该平台类型的字段，不能把另一种平台的参数混入。省略的已知字段会使用该平台默认值；已有文件通常已写出完整字段。
-- OpenAI 可写 `显示名称=上游模型ID`。上述“插画备用”向上游发送的模型仍是 `gpt-image-1`；分辨率覆盖建议使用真实模型 ID。
-- 要在通用配置中指定模型，应使用工作台显示的完整名称，例如 `日常创作 / gpt-image-2.5`。跨实例短名可能产生歧义。
+- 模型列表仅填写真实模型 ID，不再使用 `别名=模型ID`；分辨率覆盖也使用真实模型 ID。
+- 要在通用配置中指定模型，应使用工作台显示的完整名称，例如 `日常创作/gpt-image-2.5`。
 
 平台名称参与完整模型引用。已有默认或备选模型引用时，建议在 WebUI 重命名平台，让插件一起更新相关引用；手动改名则必须同步检查通用配置中的模型引用。
 
@@ -141,7 +141,7 @@
 
 常用字段：
 
-- `default_model`：空字符串表示自动选择；指定时填写完整“平台名 / 模型名”。
+- `default_model`：空字符串表示自动选择；指定时填写完整“平台名/模型名”。
 - `fallback_models`：有顺序的模型名称列表，空列表表示不启用备选。
 - `request_retry_count`：每模型额外重试次数，默认 1，可选 0～5；不是遇到任何失败都重新绘图。审核配置在界面中独立成标签页，文件中的字段仍在 `general` 下。
 - `request_timeout_seconds`：单次平台尝试的超时预算，不是任务整体的永久等待时间。

@@ -286,6 +286,12 @@ footer {
   width: 100%;
 }
 .icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  padding: 0;
+  line-height: 1;
   border: 0;
   background: var(--soft);
   border-radius: 9px;
@@ -583,7 +589,6 @@ textarea {
 .choice-item span {
   min-width: 0;
 }
-.model-editor-row,
 .model-override-row,
 .parameter-editor-row {
   display: grid;
@@ -596,6 +601,17 @@ textarea {
   border: 1px solid var(--line);
   border-radius: 12px;
 }
+.model-editor-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 9px;
+}
+.model-editor-row > .icon-button {
+  width: 44px;
+  height: 44px;
+}
 .parameter-editor-row {
   grid-template-columns: minmax(0, 1fr) 112px minmax(0, 1.3fr) 34px;
 }
@@ -604,12 +620,10 @@ textarea {
 .parameter-editor-row > * {
   min-width: 0;
 }
-.model-editor-row > button,
 .model-override-row > button,
 .parameter-editor-row > button {
   margin-top: 23px;
 }
-.model-editor-row label,
 .model-override-row label,
 .parameter-editor-row label,
 .control-caption,
@@ -639,18 +653,15 @@ textarea {
   .choice-list {
     grid-template-columns: minmax(0, 1fr);
   }
-  .model-editor-row,
   .model-override-row,
   .parameter-editor-row {
     grid-template-columns: minmax(0, 1fr) 32px;
     padding: 12px;
   }
-  .model-editor-row > :not(button),
   .model-override-row > :not(button),
   .parameter-editor-row > :not(button) {
     grid-column: 1;
   }
-  .model-editor-row > button,
   .model-override-row > button,
   .parameter-editor-row > button {
     grid-column: 2;
@@ -772,6 +783,45 @@ textarea {
   justify-content: space-between;
   align-items: start;
   gap: 12px;
+}
+.provider-switch {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+}
+.provider-switch[aria-checked="true"] {
+  color: var(--success);
+}
+.provider-switch-track {
+  position: relative;
+  width: 34px;
+  height: 20px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+}
+.provider-switch-track::before {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: currentColor;
+  transition: transform 160ms ease;
+}
+.provider-switch[aria-checked="true"] .provider-switch-track::before {
+  transform: translateX(14px);
+}
+.provider-top > .provider-icon {
+  flex-shrink: 0;
 }
 .provider-icon {
   width: 40px;
@@ -1045,6 +1095,25 @@ dialog::backdrop {
   border-top: 1px solid var(--line);
   padding-top: 20px;
   margin-top: 15px;
+}
+.provider-footer {
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.provider-footer-reset,
+.provider-footer-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.provider-footer-actions {
+  margin-left: auto;
+}
+.provider-footer .button {
+  min-height: 44px;
 }
 .detail-image {
   width: 100%;
@@ -1356,11 +1425,25 @@ dialog::backdrop {
 .collection-toolbar {
   margin-bottom: 12px;
 }
-.model-picker-content {
-  padding: 24px;
+.model-picker[open] {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 24px);
+  overflow: hidden;
 }
-.model-picker-filters,
-.model-picker-toolbar {
+.model-picker .modal-header,
+.model-picker-footer {
+  flex-shrink: 0;
+}
+.model-picker-content {
+  min-height: 0;
+  padding: 20px 24px 16px;
+  overflow-y: auto;
+}
+.model-picker-content > .hint {
+  margin: 0;
+}
+.model-picker-filters {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1382,11 +1465,39 @@ dialog::backdrop {
   width: auto;
   accent-color: var(--accent);
 }
+.model-picker-results {
+  display: flex;
+  flex-direction: column;
+  height: clamp(180px, 36dvh, 300px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.model-picker-summary {
+  flex-shrink: 0;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--soft);
+  overflow-wrap: anywhere;
+  max-height: 45%;
+  overflow-y: auto;
+}
+.model-picker-summary .hint {
+  margin: 0;
+}
+.model-picker-summary [data-count]:empty {
+  display: none;
+}
 .model-picker-list {
-  max-height: 40vh;
-  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
   display: grid;
+  align-content: start;
   gap: 8px;
+  padding: 8px;
 }
 .model-picker-item {
   display: flex;
@@ -1412,9 +1523,100 @@ dialog::backdrop {
   color: var(--muted);
   font-size: 12px;
 }
+.model-picker-content > .model-picker-selection-hint {
+  margin-top: 10px;
+}
+.model-picker-footer {
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0;
+  padding: 16px 24px;
+}
+.model-picker-toolbar,
+.model-picker-submit {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.model-picker-toolbar .button {
+  min-height: 42px;
+}
 @media (max-width: 640px) {
+  .model-picker .modal-header {
+    padding: 12px 16px;
+    gap: 12px;
+  }
+  .model-picker .modal-header h2 {
+    min-width: 0;
+    font-size: 16px;
+    overflow-wrap: anywhere;
+  }
+  .model-picker .icon-button {
+    width: 44px;
+    height: 44px;
+  }
   .model-picker-content {
-    padding: 18px;
+    padding: 16px;
+  }
+  .model-picker-filters {
+    align-items: stretch;
+    gap: 6px;
+    margin: 12px 0;
+  }
+  .model-picker-filters > input {
+    flex-basis: 100%;
+    font-size: 16px;
+  }
+  .model-picker-filters .inline-choice {
+    min-height: 44px;
+  }
+  .model-picker input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    flex-shrink: 0;
+  }
+  .model-picker-results {
+    height: clamp(160px, 32dvh, 250px);
+  }
+  .model-picker-item {
+    min-height: 48px;
+  }
+  .model-picker-footer {
+    padding: 12px 16px;
+  }
+  .model-picker-toolbar,
+  .model-picker-submit {
+    width: 100%;
+  }
+  .model-picker-footer .button {
+    flex: 1;
+    min-width: 0;
+    min-height: 44px;
+    padding-inline: 8px;
+  }
+  .model-picker-submit [data-retry] {
+    flex-basis: 100%;
+  }
+}
+@media (max-width: 640px) and (max-height: 640px) {
+  .model-picker-content {
+    padding: 12px;
+  }
+  .model-picker-content .hint {
+    font-size: 11px;
+    line-height: 1.6;
+  }
+  .model-picker-filters {
+    margin: 8px 0;
+    gap: 4px;
+  }
+  .model-picker-results {
+    height: 140px;
+  }
+  .model-picker-summary {
+    max-height: 55%;
+    padding: 8px 10px;
   }
 }
 @media (max-width: 640px) {
@@ -1423,6 +1625,16 @@ dialog::backdrop {
   }
   .modal-footer {
     flex-wrap: wrap;
+  }
+  .provider-footer-reset,
+  .provider-footer-actions {
+    width: 100%;
+  }
+  .provider-footer-reset {
+    justify-content: space-between;
+  }
+  .provider-footer-actions > .button {
+    flex: 1;
   }
 }
 
@@ -1559,9 +1771,7 @@ dialog::backdrop {
     <dialog id="modal" aria-labelledby="modal-title">
       <div class="modal-header">
         <h2 id="modal-title"></h2>
-        <button id="modal-close" class="icon-button" aria-label="关闭弹窗">
-          ×
-        </button>
+        <button id="modal-close" type="button" class="icon-button" data-icon="close" aria-label="关闭弹窗"></button>
       </div>
       <div id="modal-content"></div>
     </dialog>
@@ -2186,9 +2396,8 @@ dialog::backdrop {
       if (value && !choices.includes(value)) choices.unshift(value);
       return `<div class="array-row ${ordered ? "ordered-row" : "model-choice-row"}" data-array-row><select data-value aria-label="${title}"><option value="">请选择模型</option>${choices.map((name) => `<option value="${e(name)}" ${name === value ? "selected" : ""}>${e(name)}</option>`).join("")}</select>${ordered ? '<button type="button" class="icon-button" data-move="up" aria-label="上移备选模型">↑</button><button type="button" class="icon-button" data-move="down" aria-label="下移备选模型">↓</button>' : ""}${remove}</div>`;
     }
-    if (key === "models" && options.kind === "openai") {
-      const [alias, model] = split(value);
-      return `<div class="model-editor-row" data-array-row data-model-row><label>模型 ID<input data-model-id aria-label="模型 ID" value="${e(model || alias)}" placeholder="例如 gpt-image-2.5…" autocomplete="off" spellcheck="false"></label><label>显示名称（可选）<input data-model-alias value="${e(model ? alias : "")}" placeholder="例如 日常绘图…" autocomplete="off"></label>${remove}</div>`;
+    if (key === "models" || key === "custom_models") {
+      return `<div class="model-editor-row" data-array-row data-model-row><input data-model-id aria-label="模型 ID" value="${e(value)}" placeholder="填写平台提供的真实模型 ID…" autocomplete="off" spellcheck="false">${remove}</div>`;
     }
     if (key === "model_size_overrides" || key === "model_endpoint_overrides") {
       const [model, raw] = split(value);
@@ -2223,12 +2432,10 @@ dialog::backdrop {
   }
   function readRow(key, node) {
     if (node.hasAttribute("data-model-row")) {
-      const model = $("[data-model-id]", node).value.trim(),
-        alias = $("[data-model-alias]", node).value.trim();
-      if (!model && !alias) return "";
-      if (!model)
-        invalid($("[data-model-id]", node), "请为显示名称填写对应的模型 ID");
-      return alias ? `${alias}=${model}` : model;
+      const model = $("[data-model-id]", node).value.trim();
+      if (model.includes("="))
+        invalid($("[data-model-id]", node), "仅填写真实模型 ID，不支持别名=模型的写法");
+      return model;
     }
     if (node.hasAttribute("data-model-override")) {
       const model = $("[data-model-key]", node).value;
@@ -2305,12 +2512,10 @@ dialog::backdrop {
         const model = row.hasAttribute("data-model-row")
           ? $("[data-model-id]", row).value.trim()
           : $("[data-value]", row).value.trim();
-        const alias = $("[data-model-alias]", row)?.value.trim();
         if (model)
           result.push({
             id: model,
-            alias,
-            label: alias ? `${alias} · ${model}` : model,
+            label: model,
           });
       }
     }
@@ -2327,12 +2532,11 @@ dialog::backdrop {
     const choices = models(root);
     for (const select of root.querySelectorAll("[data-model-key]")) {
       const value = select.value;
-      const aliasMatch = choices.find((item) => item.alias === value);
       const present = choices.some((item) => item.id === value);
       select.innerHTML =
         '<option value="">请选择本平台模型</option>' +
         (value && !present
-          ? `<option value="${e(value)}">${e(value)}${aliasMatch ? "（显示名称）" : "（未在当前平台配置，保留原值）"}</option>`
+          ? `<option value="${e(value)}">${e(value)}（未在当前平台配置，保留原值）</option>`
           : "") +
         choices
           .map(
@@ -2471,6 +2675,7 @@ dialog::backdrop {
             );
           const full =
             meta.type === "array" ||
+            meta.type === "boolean" ||
             meta.multiple ||
             /prompt|description/.test(key);
           const array = meta.type === "array",
@@ -2644,7 +2849,36 @@ dialog::backdrop {
     const titleId = `model-picker-${++sequence}`;
     dialog.className = "model-picker";
     dialog.setAttribute("aria-labelledby", titleId);
-    dialog.innerHTML = `<div class="modal-header"><h2 id="${titleId}">选择 ${e(catalog.name)} 模型</h2><button type="button" class="icon-button" data-close aria-label="关闭模型选择">${icon("close")}</button></div><div class="model-picker-content"><p class="hint">从接口读取模型目录，不发起绘图请求。仅追加你选择的新模型，当前模型和显示名称会保留；保存平台后生效。</p><div class="model-picker-filters"><input type="search" data-search aria-label="搜索模型" placeholder="搜索模型 ID 或名称…"><label class="inline-choice"><input type="checkbox" data-images-only>仅显示可能的绘图模型</label></div><div class="model-picker-toolbar"><button type="button" class="button secondary compact" data-select-visible disabled>选择当前结果</button><button type="button" class="button ghost compact" data-clear-selection disabled>清空选择</button><span class="hint" data-count aria-live="polite"></span></div><p data-status role="status" aria-live="polite">正在获取模型…</p><div class="model-picker-list" data-model-list aria-label="接口返回的模型"></div><div class="modal-footer"><button type="button" class="button secondary" data-retry hidden>重新获取</button><button type="button" class="button secondary" data-cancel>取消</button><button type="button" class="button" data-apply disabled>添加所选模型</button></div></div>`;
+    dialog.innerHTML = `<div class="modal-header">
+      <h2 id="${titleId}">选择 ${e(catalog.name)} 模型</h2>
+      <button type="button" class="icon-button" data-close aria-label="关闭模型选择">${icon("close")}</button>
+    </div>
+    <div class="model-picker-content">
+      <p class="hint">从接口读取模型，勾选后加入草稿；保存平台后生效。</p>
+      <div class="model-picker-filters">
+        <input type="search" data-search aria-label="搜索模型" placeholder="搜索模型 ID 或名称…">
+        <label class="inline-choice"><input type="checkbox" data-images-only>仅显示可能的绘图模型</label>
+      </div>
+      <div class="model-picker-results">
+        <div class="model-picker-summary">
+          <p class="hint" data-count aria-live="polite"></p>
+          <p class="hint" data-status role="status" aria-live="polite">正在获取模型…</p>
+        </div>
+        <div class="model-picker-list" data-model-list role="group" aria-label="接口返回的模型" tabindex="0"></div>
+      </div>
+      <p class="hint model-picker-selection-hint">全选当前筛选结果；清空取消全部新勾选，已有模型保留。</p>
+    </div>
+    <div class="modal-footer model-picker-footer">
+      <div class="model-picker-toolbar">
+        <button type="button" class="button secondary compact" data-select-visible disabled>选择全部</button>
+        <button type="button" class="button ghost compact" data-clear-selection disabled>清空选择</button>
+      </div>
+      <div class="model-picker-submit">
+        <button type="button" class="button secondary" data-retry hidden>重新获取</button>
+        <button type="button" class="button secondary" data-cancel>取消</button>
+        <button type="button" class="button" data-apply disabled>添加所选模型</button>
+      </div>
+    </div>`;
     const existing = new Set(U.formCollections.models(form).map((model) => model.id));
     const selected = new Set();
     const list = $("[data-model-list]", dialog), status = $("[data-status]", dialog);
@@ -2686,7 +2920,9 @@ dialog::backdrop {
         models = result.models;
         $("[data-images-only]", dialog).checked = models.some((model) => model.image_candidate);
         status.textContent = models.length
-          ? "目录返回不代表账号已开通全部模型；名称筛选也不代表已验证绘图能力，可关闭筛选查看全部。"
+          ? kind === "aliyun"
+            ? "百炼在线目录，仅含插件已接入的图像模型，不代表账号已开通权限。"
+            : "目录已在线获取；名称筛选不代表绘图能力或账号权限。"
           : "接口没有返回可导入的图片模型，请检查账号权限，或返回手动添加。";
         renderList();
       } catch (error) {
@@ -2803,7 +3039,8 @@ dialog::backdrop {
     { state, $, e, icon, call, modal, closeModal, buttonAction, toast } = U;
   async function editor(kind, record = null, reset = false) {
     const catalog = state.data.catalog.find((item) => item.kind === kind);
-    let defaultName = catalog.name;
+    const baseName = catalog.default_name;
+    let defaultName = baseName;
     let suffix = 2;
     while (
       state.data.providers.some(
@@ -2812,19 +3049,29 @@ dialog::backdrop {
           defaultName.toLocaleLowerCase(),
       )
     )
-      defaultName = `${catalog.name} ${suffix++}`;
+      defaultName = `${baseName}_${suffix++}`;
     const values = structuredClone(
       reset ? catalog.defaults : record?.config || catalog.defaults,
     );
-    const fields = state.data.schema.sections[kind].fields;
+    const fields = Object.fromEntries(
+      Object.entries(state.data.schema.sections[kind].fields).filter(
+        ([key]) => key !== "enabled",
+      ),
+    );
+    // 启用状态由卡片独立管理，恢复参数默认也不能改变已有平台的状态。
+    values.enabled = record ? record.config.enabled : true;
     delete values.instances;
     const node = modal(
       record ? "编辑绘图平台" : "添加绘图平台",
-      `<p class="hint" style="margin:0 0 20px">${e(catalog.name)} · 先填写连接信息和模型，其他选项可按需调整。保存后应用到新任务。</p><form id="provider-form"><div class="field"><label for="provider-name">平台名称</label><input id="provider-name" maxlength="80" required value="${e(record?.name || defaultName)}" placeholder="给这个平台起一个容易辨认的名字"></div>${U.forms.html(fields, values, { platform: true, kind })}<div class="modal-footer"><button type="button" id="reset-provider" class="button ghost compact">恢复参数默认</button><span data-unsaved class="unsaved" hidden>有未保存的修改</span><button type="button" id="provider-back" class="button secondary">取消</button><button type="submit" class="button">${icon("check")}保存平台</button></div></form>`,
+      `<p class="hint" style="margin:0 0 20px">${e(catalog.name)} · 先填写连接信息和模型，其他选项可按需调整。保存后应用到新任务。</p><form id="provider-form"><div class="field"><label for="provider-name">平台名称</label><input id="provider-name" maxlength="80" required pattern="[^\\s]+" aria-describedby="provider-name-hint" value="${e(record?.name || defaultName)}" placeholder="例如 OpenAI_Compatible、日常绘图、备用_API"><p class="hint" id="provider-name-hint">支持中文、英文，名称不能包含空格，可使用下划线 _。</p></div>${U.forms.html(fields, values, { platform: true, kind })}<div class="modal-footer provider-footer"><div class="provider-footer-reset"><button type="button" id="reset-provider" class="button secondary">${icon("refresh")}恢复默认参数</button><span data-unsaved class="unsaved" hidden>有未保存的修改</span></div><div class="provider-footer-actions"><button type="button" id="provider-back" class="button secondary">取消</button><button type="submit" class="button">${icon("check")}保存平台</button></div></div></form>`,
     );
     const form = $("#provider-form", node),
       read = U.forms.bind(form, fields, values, { platform: true, kind });
     const keyControls = U.platformModels.bind(form, { kind, record, catalog });
+    const nameInput = $("#provider-name", form);
+    nameInput.addEventListener("input", () => {
+      nameInput.setCustomValidity(/\s/.test(nameInput.value) ? "平台名称不能包含空格，可使用下划线 _" : "");
+    });
     const modalVersion = state.modalVersion,
       revision = state.data.revision;
     const current = () =>
@@ -2904,6 +3151,7 @@ dialog::backdrop {
   }
   U.views.platforms = async () => {
     const items = state.data.providers;
+    const revision = state.data.revision;
     $("#workspace-content").innerHTML =
       `<div class="toolbar"><span class="muted">已添加 ${items.length} 个平台 · 仅启用的平台会出现在模型列表</span><button id="add-platform" class="button">${icon("plus")}添加平台</button></div><div class="card-grid">${items
         .map((item) => {
@@ -2916,7 +3164,7 @@ dialog::backdrop {
           } catch {
             /* 非 URL 的配置仍作为纯文本显示。 */
           }
-          return `<article class="panel provider-card" data-provider="${e(item.id)}"><div class="provider-top"><span class="provider-icon">${e(kind.name.slice(0, 1))}</span><div class="provider-name"><h3>${e(item.name)}</h3><small>${e(kind.name)}</small></div><span class="pill ${item.config.enabled ? "enabled" : ""}">${item.config.enabled ? "已启用" : "已停用"}</span></div><div class="provider-endpoint">${e(host || "使用平台默认地址")}</div><div class="provider-models">${models
+          return `<article class="panel provider-card" data-provider="${e(item.id)}"><div class="provider-top"><span class="provider-icon">${e(kind.name.slice(0, 1))}</span><div class="provider-name"><h3>${e(item.name)}</h3><small>${e(kind.name)}</small></div><button type="button" class="provider-switch" data-toggle role="switch" aria-checked="${item.config.enabled}" aria-label="启用平台：${e(item.name)}"><span class="provider-switch-track" aria-hidden="true"></span></button></div><div class="provider-endpoint">${e(host || "使用平台默认地址")}</div><div class="provider-models">${models
             .slice(0, 4)
             .map((model) => `<span class="pill">${e(model)}</span>`)
             .join(
@@ -2930,6 +3178,35 @@ dialog::backdrop {
     $("#add-platform-card").onclick = addPlatform;
     document.querySelectorAll("[data-provider]").forEach((card) => {
       const item = items.find((item) => item.id === card.dataset.provider);
+      $("[data-toggle]", card).onclick = (event) => {
+        const button = event.currentTarget;
+        buttonAction(button, async () => {
+          const enabled = !item.config.enabled;
+          card.inert = true;
+          button.setAttribute("aria-busy", "true");
+          try {
+            const result = await call("action", "provider_enabled", {
+              provider_id: item.id,
+              enabled,
+              revision,
+            });
+            // 写入确认后更新状态；刷新失败也不能显示成保存失败或自动再次切换。
+            item.config.enabled = enabled;
+            button.setAttribute("aria-checked", String(enabled));
+            let refreshError = null;
+            try {
+              await U.bootstrap();
+              if (card.isConnected && state.view === "platforms") await U.render();
+            } catch (error) {
+              refreshError = error;
+            }
+            U.savedNotice(result, `平台已${enabled ? "启用" : "停用"}`, refreshError);
+          } finally {
+            card.inert = false;
+            button.removeAttribute("aria-busy");
+          }
+        });
+      };
       $("[data-edit]", card).onclick = () => editor(item.kind, item);
       $("[data-delete]", card).onclick = (event) =>
         buttonAction(event.currentTarget, async () => {

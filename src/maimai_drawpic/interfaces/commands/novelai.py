@@ -3,6 +3,7 @@
 from ...infrastructure.observability.redaction import outward_error
 
 from typing import Any
+import asyncio
 
 from ..chat.texts import build_novelai_text
 
@@ -172,7 +173,7 @@ class NovelAICommandMixin:
                     platform=platform,
                 )
                 return False, "权限不足", 1
-            if router.get_model_provider(model_name) != "novelai":
+            if model_name not in router.get_novelai_models():
                 await self._send_command_reply(
                     title="NovelAI 模型不存在",
                     body=build_novelai_text(router, session_preference),
@@ -183,11 +184,13 @@ class NovelAICommandMixin:
                 )
                 return False, "NovelAI 模型不存在", 1
             implied_mode: str | None = None
-            if model_name == "nai-diffusion-furry-3":
+            upstream_model = router.describe_model(model_name)["upstream_model"]
+            if upstream_model == "nai-diffusion-furry-3":
                 implied_mode = "furry"
-            elif model_name == "nai-diffusion-3":
+            elif upstream_model == "nai-diffusion-3":
                 implied_mode = "anime"
-            self._set_session_preference(
+            await asyncio.to_thread(
+                self._set_session_preference,
                 stream_id,
                 user_id,
                 group_id,

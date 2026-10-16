@@ -64,7 +64,7 @@ def test_openai_fallback_keeps_instance_defaults_and_explicit_overrides(
                 plugin, "openai", "Backup", models=["backup-image"],
                 base_url="https://backup.invalid/v1", default_openai_compatibility_mode="chat_completions",
             )
-            await set_settings(plugin, fallback_models=["Backup / backup-image"], request_retry_count=0)
+            await set_settings(plugin, fallback_models=["Backup/backup-image"], request_retry_count=0)
             calls = []
             errors = module("domain.errors")
             encoded = base64.b64encode(image_bytes()).decode("ascii")
@@ -117,7 +117,7 @@ def test_novelai_fallback_keeps_each_instances_mode_and_artist_tags(make_plugin,
                     base_url=f"https://{name.lower()}.invalid", default_mode=mode,
                     default_artist_tags=f"artist:{name.lower()}",
                 )
-            await set_settings(plugin, fallback_models=["Backup / nai-diffusion-3"], request_retry_count=0)
+            await set_settings(plugin, fallback_models=["Backup/nai-diffusion-3"], request_retry_count=0)
             calls = []
             errors = module("domain.errors")
 
@@ -161,8 +161,7 @@ def test_nonempty_invalid_default_rejects_submit_but_discovery_remains_usable(ma
         await plugin.on_load()
         try:
             await add_provider(plugin, "openai", "Second", models=["sample-image"])
-            if default != "sample-image":
-                await set_settings(plugin, default_model=default)
+            await set_settings(plugin, default_model=default)
             await plugin.on_unload()
             plugin = make_plugin()
             await plugin.on_load()
@@ -172,13 +171,13 @@ def test_nonempty_invalid_default_rejects_submit_but_discovery_remains_usable(ma
             with pytest.raises(ValueError, match="平台"):
                 await plugin.drawpic_submit("a cat")
             assert plugin._task_store.get_task_count() == 0
-            assert router.resolve_model_name("Second / sample-image") == "Second / sample-image"
+            assert router.resolve_model_name("Second/sample-image") == "Second/sample-image"
             for result in [await plugin.drawpic_models(), await plugin.workspace_bootstrap()]:
                 assert len(result["models"]) == 2
                 assert result["default_model"] == ""
                 assert result["default_model_error"]
-            await set_settings(plugin, default_model="Second / sample-image")
-            assert plugin._require_router().resolve_default_model() == "Second / sample-image"
+            await set_settings(plugin, default_model="Second/sample-image")
+            assert plugin._require_router().resolve_default_model() == "Second/sample-image"
             await set_settings(plugin, default_model="")
             assert plugin._require_router().resolve_default_model() == plugin._require_router().get_all_models()[0]
         finally:
@@ -200,21 +199,21 @@ def test_unique_legacy_default_short_name_remains_supported(make_plugin):
     asyncio.run(run())
 
 
-def test_model_discovery_reports_actual_aliased_upstream(make_plugin):
+def test_model_discovery_reports_real_upstream(make_plugin):
     async def run():
         plugin = make_plugin(False)
         await plugin.on_load()
         try:
-            await add_provider(plugin, "openai", "Alias", models=["图片主力=gpt-image-2.5", "plain-image"])
+            await add_provider(plugin, "openai", "Alias", models=["gpt-image-2.5", "plain-image"])
             await add_provider(plugin, "novelai", "Novel", models=["nai-diffusion-3"])
             result = await plugin.drawpic_models()
             models = {item["name"]: item for item in result["models"]}
-            assert models["Alias / 图片主力"]["upstream_model"] == "gpt-image-2.5"
-            assert models["Alias / 图片主力"]["platform_name"] == "Alias"
-            assert models["Alias / plain-image"]["upstream_model"] == "plain-image"
-            assert models["Novel / nai-diffusion-3"]["upstream_model"] == "nai-diffusion-3"
-            route = plugin._require_router().resolve_openai_model_route("Alias / 图片主力")
-            assert route.upstream_model == models["Alias / 图片主力"]["upstream_model"]
+            assert models["Alias/gpt-image-2.5"]["upstream_model"] == "gpt-image-2.5"
+            assert models["Alias/gpt-image-2.5"]["platform_name"] == "Alias"
+            assert models["Alias/plain-image"]["upstream_model"] == "plain-image"
+            assert models["Novel/nai-diffusion-3"]["upstream_model"] == "nai-diffusion-3"
+            route = plugin._require_router().resolve_openai_model_route("Alias/gpt-image-2.5")
+            assert route.upstream_model == models["Alias/gpt-image-2.5"]["upstream_model"]
         finally:
             await plugin.on_unload()
 
@@ -231,7 +230,7 @@ def test_vidu_terminal_error_keeps_details_and_never_resubmits(make_plugin, monk
             model = "vidu/vidu-image_reference2image"
             await add_provider(plugin, "aliyun", "Vidu", models=[model])
             await add_provider(plugin, "openai", "Backup", models=["backup-image"])
-            await set_settings(plugin, fallback_models=["Backup / backup-image"], request_retry_count=2)
+            await set_settings(plugin, fallback_models=["Backup/backup-image"], request_retry_count=2)
             calls = []
 
             async def request(self, method, url, **kwargs):
@@ -257,7 +256,7 @@ def test_vidu_terminal_error_keeps_details_and_never_resubmits(make_plugin, monk
             monkeypatch.setattr(module("infrastructure.providers.openai").OpenaiImage, "_post_json", unexpected_post)
             service = plugin._require_draw_service()
             receipt = await service.start_background_image_request(
-                prompt="a cat", stream_id="", resolved_model=f"Vidu / {model}",
+                prompt="a cat", stream_id="", resolved_model=f"Vidu/{model}",
                 resolved_openai_mode="", provider_name="aliyun",
                 source_image_bytes_list=[image_bytes()], source_image_urls=["https://source.invalid/image.png"],
             )

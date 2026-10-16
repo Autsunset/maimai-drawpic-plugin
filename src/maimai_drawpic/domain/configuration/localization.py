@@ -446,9 +446,9 @@ _FIELD_HINT_OVERRIDES: Dict[str, Tuple[str, str, str]] = {
         "계정에서 사용 가능한 이미지 모델을 입력하세요. 이미지 생성과 여러 참조 이미지 편집을 지원합니다.",
     ),
     "AgnesModelConfig.default_size": (
-        "2.1 / 2.5 support 1K–4K tiers; use pixel dimensions for 2.0, with per-model overrides below.",
-        "2.1 / 2.5 は 1K～4K に対応します。2.0 はピクセル寸法を使用し、下でモデル別に上書きできます。",
-        "2.1 / 2.5는 1K~4K를 지원합니다. 2.0은 픽셀 크기를 사용하고 아래에서 모델별로 설정할 수 있습니다.",
+        "For 2.1 / 2.5, prefer 1K–4K tiers with an aspect ratio; pixel dimensions are also accepted but may be adjusted. Use only pixel dimensions for 2.0, with per-model overrides below.",
+        "2.1 / 2.5 は 1K～4K と縦横比の組み合わせを推奨します。ピクセル寸法も指定できますが、調整される場合があります。2.0 はピクセル寸法のみを使用し、下でモデル別に上書きできます。",
+        "2.1 / 2.5는 1K~4K와 화면 비율 조합을 권장합니다. 픽셀 크기도 사용할 수 있지만 조정될 수 있습니다. 2.0은 픽셀 크기만 사용하며 아래에서 모델별로 설정할 수 있습니다.",
     ),
     "AgnesModelConfig.ratio": (
         "Aspect ratio for tier-based sizes in 2.1 / 2.5; omitted for 2.0, which uses pixel dimensions.",

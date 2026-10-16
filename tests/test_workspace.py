@@ -74,7 +74,7 @@ def test_host_version_upgrade_preserves_json_settings(make_plugin):
         store.revision,
     )
     values = store.settings.values.copy()
-    values["general"] = {**values["general"], "default_model": "Saved / image-a", "request_retry_count": 0}
+    values["general"] = {**values["general"], "default_model": "Saved/image-a", "request_retry_count": 0}
     store.save_common(values, values, store.revision)
     originals = {p: p.read_bytes() for p in (store.path, store.settings.path)}
     raw = storage.host_config(DrawpicConfig().model_dump(mode="json"))
@@ -92,7 +92,7 @@ def test_host_version_upgrade_preserves_json_settings(make_plugin):
     async def run():
         await plugin.on_load()
         try:
-            assert plugin.config.general.default_model == "Saved / image-a"
+            assert plugin.config.general.default_model == "Saved/image-a"
             assert plugin.config.general.request_retry_count == 0
             assert plugin._platform_store.providers == store.providers
             assert set(tomlkit.parse(config_path.read_text(encoding="utf-8"))) == {"plugin", "proxy"}
@@ -219,6 +219,9 @@ def test_empty_workspace_load_and_presets(make_plugin):
         try:
             bootstrap = await plugin.workspace_bootstrap()
             assert not bootstrap["providers"] and not bootstrap["models"]
+            openai = next(item for item in bootstrap["catalog"] if item["kind"] == "openai")
+            assert openai["name"] == "OpenAI / 兼容服务"
+            assert openai["default_name"] == "OpenAI_Compatible"
             assert len(json.dumps(bootstrap, ensure_ascii=False).encode()) < 512 * 1024
             await plugin.drawpic_presets(
                 "save",
@@ -325,18 +328,18 @@ def test_same_kind_instances_keep_independent_credentials(tmp_path):
     store = storage.WorkspaceConfigStore(tmp_path / "data", tmp_path / "config.toml")
     store.initialize({})
     defaults = store.platform_model("google")().model_dump(mode="json")
-    for name, key in [("Google A", "key-A"), ("Google B", "key-B")]:
+    for name, key in [("Google_A", "key-A"), ("Google_B", "key-B")]:
         store.save_provider({"kind": "google", "name": name, "config": {**defaults, "api_key": key}}, store.revision)
     with pytest.raises(ValueError, match="不能重复"):
-        store.save_provider({"kind": "openai", "name": " google a ", "config": {}}, store.revision)
+        store.save_provider({"kind": "openai", "name": "google_a", "config": {}}, store.revision)
     router_class = importlib.import_module(
         f"{_PACKAGE}.src.maimai_drawpic.application.routing.instances"
     ).InstanceProviderRouter
     config = store.effective_config({})
     router = router_class(config, [(item, store.effective_config({}, [item])) for item in store.providers])
     models = router.get_google_models()
-    first = next(model for model in models if model.startswith("Google A / "))
-    second = next(model for model in models if model.startswith("Google B / "))
+    first = next(model for model in models if model.startswith("Google_A/"))
+    second = next(model for model in models if model.startswith("Google_B/"))
     provider_a, _ = router.require_platform_for_model(first)
     provider_b, _ = router.require_platform_for_model(second)
     assert provider_a.provider.api_key == "key-A"
@@ -357,14 +360,14 @@ def test_ordered_fallbacks_obey_retry_limit(make_plugin, monkeypatch):
             await plugin.workspace_provider_save(json.dumps(payload), plugin._platform_store.revision)
             current = storage.common_config(plugin.config.model_dump(mode="json"))
             current.pop("plugin", None)
-            current["general"]["fallback_models"] = [f"{record['name']} / backup-one", f"{record['name']} / backup-two"]
+            current["general"]["fallback_models"] = [f"{record['name']}/backup-one", f"{record['name']}/backup-two"]
             current["general"]["request_retry_count"] = 1
             await plugin.workspace_settings_save(json.dumps(current), plugin._platform_store.revision)
             service = plugin._require_draw_service()
             calls = []
 
             async def generate(**kwargs):
-                model = kwargs["attempt"].model.rsplit(" / ", 1)[1]
+                model = kwargs["attempt"].model.rsplit("/", 1)[1]
                 calls.append(model)
                 if model != "backup-two":
                     errors = importlib.import_module(f"{_PACKAGE}.src.maimai_drawpic.domain.errors")

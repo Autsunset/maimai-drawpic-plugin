@@ -4,7 +4,7 @@
 
 # 麦麦绘图
 
-![Plugin Version](https://img.shields.io/badge/Plugin-2.0.0-informational.svg) ![MaiBot](https://img.shields.io/badge/MaiBot-%3E%3D1.3.6-blue.svg) ![MaiBot Plugin SDK](https://img.shields.io/badge/Plugin%20SDK-%3E%3D2.12.0-blueviolet.svg) ![License](https://img.shields.io/badge/License-AGPL--3.0-green.svg)
+![Plugin Version](https://img.shields.io/badge/Plugin-2.1.0-informational.svg) ![MaiBot](https://img.shields.io/badge/MaiBot-1.3.6%E2%80%931.3.99-blue.svg) ![MaiBot Plugin SDK](https://img.shields.io/badge/Plugin%20SDK-2.12.0%E2%80%932.13.0-blueviolet.svg) ![License](https://img.shields.io/badge/License-AGPL--3.0-green.svg)
 
 在聊天与可视化工作台中轻松创作，按需接入多个绘图平台，自由搭配模型与风格，集中管理任务与图片结果
 
@@ -32,7 +32,7 @@
 
 ## 安装
 
-需要 **MaiBot ≥1.3.6、SDK ≥2.12.0、Python ≥3.12**，以及该 MaiBot 版本配套的官方 Dashboard。
+需要 **MaiBot 1.3.6–1.3.99、SDK 2.12.0–2.13.0、Python ≥3.12**，以及该 MaiBot 版本配套的官方 Dashboard。
 
 ### 源码安装
 
@@ -47,7 +47,7 @@ git clone https://github.com/WhiteCloudOL/maimai-drawpic-plugin.git
 
 ### 从插件市场安装
 
-插件市场使用其收录的发布版本，安装后可在插件管理中查看版本。本文介绍 **2.0.0** 的工作台与联动功能；旧版用户请先备份后升级。[官方版本选择说明](https://github.com/Mai-with-u/plugin-repo/blob/main/VERSIONING.md)。
+插件市场使用其收录的发布版本，安装后可在插件管理中查看版本。本文介绍 **2.1.0** 的工作台与联动功能；旧版用户请先备份后升级。[官方版本选择说明](https://github.com/Mai-with-u/plugin-repo/blob/main/VERSIONING.md)。
 
 已有安装不要重复克隆，应先备份数据，再更新原插件目录。
 
@@ -97,7 +97,7 @@ git clone https://github.com/WhiteCloudOL/maimai-drawpic-plugin.git
 
 ## 配置与数据
 
-平台连接与模型在 **绘图平台** 管理，每个平台独立保存。支持模型列表接口的平台可点击 **从接口获取模型**，在独立弹窗中搜索、多选并追加到模型草稿；已有模型和显示名称会保留，保存平台后生效。密钥输入框旁的 **清空密钥** 可撤销，保存后才删除已保存的密钥。
+平台连接与模型在 **绘图平台** 管理，每个平台独立保存。卡片右上角的胶囊开关可直接启用或停用该平台，立即保存并应用到新任务，保留密钥、模型及其他参数。平台名称支持中英文，不能包含空格，可用 `_` 分隔。模型仅填写真实 ID，选择与展示统一为 `平台名称/模型名称`，不再设置别名。已有空格名称、别名、首选模型和会话偏好会备份并自动迁移。支持模型列表接口的平台可点击 **从接口获取模型**，搜索、多选后追加到草稿，保存平台后生效。密钥输入框旁的 **清空密钥** 可撤销，保存后才删除已保存的密钥。
 
 审核、权限额度、模型偏好和风格模板在 **偏好与预设** 管理，分为“通用配置”“审核配置”“风格预设”三个标签页。切换标签页保留草稿，右上角与刷新对齐的 **保存全部设置** 统一保存全部修改。最多重试次数默认 1 次，已有明确设置保留；模型能力限制也通过按需添加的下拉列表维护。
 

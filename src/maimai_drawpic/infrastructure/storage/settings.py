@@ -86,10 +86,16 @@ class WorkspaceSettingsStore:
             )
 
     def initialize(self, legacy: Dict[str, Any]) -> None:
+        original = self.config_path.read_bytes() if self.config_path.exists() else b""
+        document = tomlkit.parse(original.decode("utf-8"))
         if self.config_path.exists():
-            self.check_legacy_conflicts(tomlkit.parse(self.config_path.read_text(encoding="utf-8")))
+            self.check_legacy_conflicts(document)
         payload = self.read_payload() if self.path.exists() else None
-        source = payload["settings"] if payload is not None else legacy
+        # 平台阶段可能已移除平台节；通用与审核设置仍以本阶段实际读取的
+        # TOML 为准，不能用较早的 Runner 快照盖掉两个阶段之间的外部修改。
+        source = document if set(document) & {*WORKSPACE_SECTIONS, *LEGACY_REVIEW_SECTIONS} else legacy
+        if payload is not None:
+            source = payload["settings"]
         self.values = workspace_config(
             DrawpicConfig.model_validate(migrate_legacy_review_config(source)).model_dump(mode="json")
         )
@@ -102,14 +108,18 @@ class WorkspaceSettingsStore:
                 if backup.read_bytes() != self.path.read_bytes():
                     raise RuntimeError("通用配置备份校验失败，保留原文件")
             self._save()
+        current = self.config_path.read_bytes() if self.config_path.exists() else b""
+        if current != original:
+            raise ValueError("config.toml 已在外部修改，已保留原文件，请重新加载插件")
         if self.config_path.exists():
-            document = tomlkit.parse(self.config_path.read_text(encoding="utf-8"))
             if any(key in document for key in (*WORKSPACE_SECTIONS, *LEGACY_REVIEW_SECTIONS)):
                 backup = self.path.parent / "migration_backups" / f"workspace-config-{uuid4().hex}.toml"
                 backup.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(self.config_path, backup)
                 if backup.read_bytes() != self.config_path.read_bytes():
                     raise RuntimeError("通用配置备份校验失败，保留原文件")
+                if self.config_path.read_bytes() != original:
+                    raise ValueError("config.toml 已在外部修改，已保留原文件，请重新加载插件")
                 for key in (*WORKSPACE_SECTIONS, *LEGACY_REVIEW_SECTIONS):
                     document.pop(key, None)
                 write_text_atomically(self.config_path, tomlkit.dumps(document))

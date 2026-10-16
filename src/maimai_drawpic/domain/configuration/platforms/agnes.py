@@ -32,7 +32,7 @@ class AgnesModelConfig(PluginConfigBase):
         min_length=1,
         json_schema_extra={
             "label": "默认分辨率",
-            "hint": "2.1 / 2.5 可选 1K～4K 档位；2.0 请使用像素尺寸，可在下方单独覆盖。",
+            "hint": "2.1 / 2.5 推荐 1K～4K 搭配宽高比，也兼容像素尺寸（可能被调整）；2.0 仅使用像素尺寸，可在下方单独覆盖。",
             "order": 3,
         },
     )

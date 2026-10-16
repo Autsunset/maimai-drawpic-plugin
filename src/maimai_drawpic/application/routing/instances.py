@@ -12,7 +12,7 @@ from .types import ModelTaskCapability
 
 
 class InstanceImageProvider:
-    """把实例模型显示名还原为该实例的上游模型，兼容异步及同步适配器。"""
+    """把完整平台模型标识还原为真实模型 ID，兼容异步及同步适配器。"""
 
     def __init__(self, provider: Any, model: str) -> None:
         self.provider, self.model = provider, model
@@ -60,7 +60,7 @@ class InstanceProviderRouter(ProviderRouter):
         for record, instance_config in instances:
             child = ProviderRouter(instance_config, logger=logger, data_dir=data_dir)
             for model in child.get_all_models():
-                selector = f"{record['name']} / {model}"
+                selector = f"{record['name']}/{model}"
                 if selector in self.routes:
                     raise ValueError("平台名称与模型组合重复")
                 self.routes[selector] = InstanceModelRoute(
@@ -153,7 +153,7 @@ class InstanceProviderRouter(ProviderRouter):
             if task_type == "edit_image"
             else self.config.general.text_to_image_unsupported_models
         )
-        if model in denied:
+        if route.selector in denied:
             return ModelTaskCapability(
                 allowed=False, reason="该实例模型已在任务能力名单中禁用", source="manual_override"
             )

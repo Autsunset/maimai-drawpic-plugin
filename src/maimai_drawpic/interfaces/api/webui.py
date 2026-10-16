@@ -29,6 +29,11 @@ class WebUIAPIMixin(WorkspaceAPIBase):
     async def workspace_provider_delete(self, provider_id: str, revision: int) -> Dict[str, Any]:
         return await self._workspace().delete_provider(provider_id, revision)
 
+    @API("workspace_provider_enabled", version="1")
+    @workspace_endpoint
+    async def workspace_provider_enabled(self, provider_id: str, enabled: bool, revision: int) -> Dict[str, Any]:
+        return await self._workspace().set_provider_enabled(provider_id, enabled, revision)
+
     @API("workspace_settings_save", version="1")
     @workspace_endpoint
     async def workspace_settings_save(self, config_json: str, revision: int) -> Dict[str, Any]:

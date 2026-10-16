@@ -5,6 +5,7 @@ import asyncio
 
 from ...domain.configuration.models import DrawpicConfig, StylePresetConfig
 from ...infrastructure.storage.platforms import (
+    PLATFORM_DEFAULT_NAMES,
     PLATFORM_NAMES,
     WorkspaceConfigStore,
     _mask_secrets,
@@ -112,6 +113,7 @@ class WorkspaceService:
                 {
                     "kind": key,
                     "name": name,
+                    "default_name": PLATFORM_DEFAULT_NAMES[key],
                     "model_discovery": key in DISCOVERY_KINDS,
                     "model_discovery_hint": DISCOVERY_HINTS.get(key, ""),
                     "defaults": _mask_secrets(self.store.platform_model(key)().model_dump(mode="json")),
@@ -158,6 +160,9 @@ class WorkspaceService:
     async def delete_provider(self, provider_id: str, revision: int) -> Dict[str, Any]:
         return await self._run_transaction(lambda: self._delete_provider(provider_id, revision))
 
+    async def set_provider_enabled(self, provider_id: str, enabled: bool, revision: int) -> Dict[str, Any]:
+        return await self._run_transaction(lambda: self._set_provider_enabled(provider_id, enabled, revision))
+
     async def save_settings(self, config_json: str, revision: int) -> Dict[str, Any]:
         return await self._run_transaction(lambda: self._save_settings(config_json, revision))
 
@@ -179,6 +184,12 @@ class WorkspaceService:
         status = await self._refresh_committed()
         self.ctx.logger.info("平台配置已移除: platform_id=%s", provider_id)
         return {"deleted": True, **status}
+
+    async def _set_provider_enabled(self, provider_id: str, enabled: bool, revision: int) -> Dict[str, Any]:
+        await asyncio.to_thread(self.store.set_provider_enabled, provider_id, enabled, revision)
+        status = await self._refresh_committed()
+        self.ctx.logger.info("平台启用状态已保存: platform_id=%s enabled=%s", provider_id, enabled)
+        return {"enabled": enabled, **status}
 
     async def _save_settings(self, config_json: str, revision: int) -> Dict[str, Any]:
         values = parse_json_object(config_json)

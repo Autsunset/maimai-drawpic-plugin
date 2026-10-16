@@ -30,7 +30,7 @@ def saved_workspace(tmp_path):
         store.revision,
     )
     values = deepcopy(store.settings.values)
-    values["general"].update(default_model="Saved / image-a", request_retry_count=2)
+    values["general"].update(default_model="Saved/image-a", request_retry_count=2)
     values["style"]["default_style"] = "fixture-saved-style"
     store.save_common(values, values, store.revision)
     return store

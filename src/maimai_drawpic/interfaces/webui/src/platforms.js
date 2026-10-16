@@ -4,7 +4,8 @@
     { state, $, e, icon, call, modal, closeModal, buttonAction, toast } = U;
   async function editor(kind, record = null, reset = false) {
     const catalog = state.data.catalog.find((item) => item.kind === kind);
-    let defaultName = catalog.name;
+    const baseName = catalog.default_name;
+    let defaultName = baseName;
     let suffix = 2;
     while (
       state.data.providers.some(
@@ -13,19 +14,29 @@
           defaultName.toLocaleLowerCase(),
       )
     )
-      defaultName = `${catalog.name} ${suffix++}`;
+      defaultName = `${baseName}_${suffix++}`;
     const values = structuredClone(
       reset ? catalog.defaults : record?.config || catalog.defaults,
     );
-    const fields = state.data.schema.sections[kind].fields;
+    const fields = Object.fromEntries(
+      Object.entries(state.data.schema.sections[kind].fields).filter(
+        ([key]) => key !== "enabled",
+      ),
+    );
+    // 启用状态由卡片独立管理，恢复参数默认也不能改变已有平台的状态。
+    values.enabled = record ? record.config.enabled : true;
     delete values.instances;
     const node = modal(
       record ? "编辑绘图平台" : "添加绘图平台",
-      `<p class="hint" style="margin:0 0 20px">${e(catalog.name)} · 先填写连接信息和模型，其他选项可按需调整。保存后应用到新任务。</p><form id="provider-form"><div class="field"><label for="provider-name">平台名称</label><input id="provider-name" maxlength="80" required value="${e(record?.name || defaultName)}" placeholder="给这个平台起一个容易辨认的名字"></div>${U.forms.html(fields, values, { platform: true, kind })}<div class="modal-footer"><button type="button" id="reset-provider" class="button ghost compact">恢复参数默认</button><span data-unsaved class="unsaved" hidden>有未保存的修改</span><button type="button" id="provider-back" class="button secondary">取消</button><button type="submit" class="button">${icon("check")}保存平台</button></div></form>`,
+      `<p class="hint" style="margin:0 0 20px">${e(catalog.name)} · 先填写连接信息和模型，其他选项可按需调整。保存后应用到新任务。</p><form id="provider-form"><div class="field"><label for="provider-name">平台名称</label><input id="provider-name" maxlength="80" required pattern="[^\\s]+" aria-describedby="provider-name-hint" value="${e(record?.name || defaultName)}" placeholder="例如 OpenAI_Compatible、日常绘图、备用_API"><p class="hint" id="provider-name-hint">支持中文、英文，名称不能包含空格，可使用下划线 _。</p></div>${U.forms.html(fields, values, { platform: true, kind })}<div class="modal-footer provider-footer"><div class="provider-footer-reset"><button type="button" id="reset-provider" class="button secondary">${icon("refresh")}恢复默认参数</button><span data-unsaved class="unsaved" hidden>有未保存的修改</span></div><div class="provider-footer-actions"><button type="button" id="provider-back" class="button secondary">取消</button><button type="submit" class="button">${icon("check")}保存平台</button></div></div></form>`,
     );
     const form = $("#provider-form", node),
       read = U.forms.bind(form, fields, values, { platform: true, kind });
     const keyControls = U.platformModels.bind(form, { kind, record, catalog });
+    const nameInput = $("#provider-name", form);
+    nameInput.addEventListener("input", () => {
+      nameInput.setCustomValidity(/\s/.test(nameInput.value) ? "平台名称不能包含空格，可使用下划线 _" : "");
+    });
     const modalVersion = state.modalVersion,
       revision = state.data.revision;
     const current = () =>
@@ -105,6 +116,7 @@
   }
   U.views.platforms = async () => {
     const items = state.data.providers;
+    const revision = state.data.revision;
     $("#workspace-content").innerHTML =
       `<div class="toolbar"><span class="muted">已添加 ${items.length} 个平台 · 仅启用的平台会出现在模型列表</span><button id="add-platform" class="button">${icon("plus")}添加平台</button></div><div class="card-grid">${items
         .map((item) => {
@@ -117,7 +129,7 @@
           } catch {
             /* 非 URL 的配置仍作为纯文本显示。 */
           }
-          return `<article class="panel provider-card" data-provider="${e(item.id)}"><div class="provider-top"><span class="provider-icon">${e(kind.name.slice(0, 1))}</span><div class="provider-name"><h3>${e(item.name)}</h3><small>${e(kind.name)}</small></div><span class="pill ${item.config.enabled ? "enabled" : ""}">${item.config.enabled ? "已启用" : "已停用"}</span></div><div class="provider-endpoint">${e(host || "使用平台默认地址")}</div><div class="provider-models">${models
+          return `<article class="panel provider-card" data-provider="${e(item.id)}"><div class="provider-top"><span class="provider-icon">${e(kind.name.slice(0, 1))}</span><div class="provider-name"><h3>${e(item.name)}</h3><small>${e(kind.name)}</small></div><button type="button" class="provider-switch" data-toggle role="switch" aria-checked="${item.config.enabled}" aria-label="启用平台：${e(item.name)}"><span class="provider-switch-track" aria-hidden="true"></span></button></div><div class="provider-endpoint">${e(host || "使用平台默认地址")}</div><div class="provider-models">${models
             .slice(0, 4)
             .map((model) => `<span class="pill">${e(model)}</span>`)
             .join(
@@ -131,6 +143,35 @@
     $("#add-platform-card").onclick = addPlatform;
     document.querySelectorAll("[data-provider]").forEach((card) => {
       const item = items.find((item) => item.id === card.dataset.provider);
+      $("[data-toggle]", card).onclick = (event) => {
+        const button = event.currentTarget;
+        buttonAction(button, async () => {
+          const enabled = !item.config.enabled;
+          card.inert = true;
+          button.setAttribute("aria-busy", "true");
+          try {
+            const result = await call("action", "provider_enabled", {
+              provider_id: item.id,
+              enabled,
+              revision,
+            });
+            // 写入确认后更新状态；刷新失败也不能显示成保存失败或自动再次切换。
+            item.config.enabled = enabled;
+            button.setAttribute("aria-checked", String(enabled));
+            let refreshError = null;
+            try {
+              await U.bootstrap();
+              if (card.isConnected && state.view === "platforms") await U.render();
+            } catch (error) {
+              refreshError = error;
+            }
+            U.savedNotice(result, `平台已${enabled ? "启用" : "停用"}`, refreshError);
+          } finally {
+            card.inert = false;
+            button.removeAttribute("aria-busy");
+          }
+        });
+      };
       $("[data-edit]", card).onclick = () => editor(item.kind, item);
       $("[data-delete]", card).onclick = (event) =>
         buttonAction(event.currentTarget, async () => {

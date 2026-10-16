@@ -77,7 +77,7 @@ class ImageCommandMixin:
                 title="当前模型不支持图生图",
                 body=(
                     f"{capability.reason}。\n"
-                    "请先用 /绘图 模型 <模型名> 设置支持图生图的首选模型，或改用 /绘图 文生图 <prompt>。"
+                    "请先用 /绘图 模型 <平台名称/模型名称或索引> 设置支持图生图的首选模型，或改用 /绘图 文生图 <prompt>。"
                 ),
                 stream_id=stream_id,
                 user_id=user_id,

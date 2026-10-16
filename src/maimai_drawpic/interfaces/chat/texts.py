@@ -25,7 +25,8 @@ def build_command_usage_text() -> str:
         [
             "可用子命令",
             "/绘图 模型",
-            "查看当前首选模型与可用模型；后接模型名可设置当前会话首选模型。",
+            "查看从 1 开始编号的可用模型列表。",
+            "/绘图 模型 <平台名称/模型名称或索引>，例如 /绘图 模型 openai/gpt-image-2 或 /绘图 模型 1。",
             "",
             "/绘图 状态",
             "查看当前会话首选模型、备选模型、兼容模式、额度与绘图任务。",
@@ -55,31 +56,25 @@ def build_command_usage_text() -> str:
 def build_model_text(router: ProviderRouter, session_preference: dict[str, str]) -> str:
     """构建模型列表文本。"""
 
-    current_model = session_preference["model"] or router.resolve_default_model()
-    current_provider = router.get_model_provider(current_model) or "unknown"
+    models = router.get_all_models()
+    current_model = session_preference["model"] or router.config.general.default_model
+    if not current_model and models:
+        current_model = router.resolve_default_model()
     fallback_model = router.resolve_fallback_model(current_model)
     fallback_model_text = fallback_model or "未启用"
     fallback_unavailable_reason = router.get_fallback_model_unavailable_reason(current_model)
     if fallback_unavailable_reason:
         fallback_model_text = f"未启用（{fallback_unavailable_reason}）"
-    provider_lines = [
-        ("阿里百炼", router.get_aliyun_models()),
-        ("OpenAI", router.get_openai_models()),
-        ("Google", router.get_google_models()),
-        ("智谱", router.get_zhipu_models()),
-        ("火山引擎", router.get_volcengine_models()),
-        ("硅基流动", router.get_siliconflow_models()),
-        ("NovelAI / NovelAPI", router.get_novelai_models()),
-    ]
     lines = [
-        f"当前首选模型：{current_provider}：{current_model}",
+        f"当前首选模型：{current_model or '未设置'}",
         f"生图备选模型：{fallback_model_text}",
-        "后接模型名称即可设置当前会话首选模型。",
+        "使用 /绘图 模型 <平台名称/模型名称> 或 /绘图 模型 <索引> 切换。",
+        "索引以当前列表为准，增删模型或启停平台后请重新查看列表。",
         "",
     ]
-    for provider_name, models in provider_lines:
-        models_text = "，".join(models) if models else "未配置"
-        lines.append(f"{provider_name}：{models_text}")
+    lines.extend(f"{index}. {model}" for index, model in enumerate(models, 1))
+    if not models:
+        lines.append("暂无可用模型，请在工作台添加并启用绘图平台。")
     return "\n".join(lines)
 
 
@@ -181,7 +176,7 @@ def build_novelai_text(router: ProviderRouter, session_preference: dict[str, str
             "",
             "/绘图 nai 模式 [anime|furry|background|跟随]",
             "/绘图 nai 画师 [画师标签|跟随]",
-            "/绘图 nai 模型 [NAI模型名]",
+            "/绘图 nai 模型 [平台名称/NAI模型名]",
             "/绘图 nai 参数",
             "/绘图 nai 文生图 <正向提示词> [--反向 <反向提示词>]",
             "/绘图 nai 图生图 <正向提示词> [--反向 <反向提示词>]",
