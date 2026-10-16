@@ -109,6 +109,8 @@ git clone https://github.com/WhiteCloudOL/maimai-drawpic-plugin.git
 
 平台、通用设置与风格均保存为可直接编辑的 **UTF-8 JSON 文件**，不存入数据库。需要用编辑器修改、备份或批量调整时，请阅读[手动编辑配置](docs/manual-configuration.md)。
 
+升级时会识别已知错误补回的完整默认 TOML，校验已有配置后自动备份清理，继续使用工作台 JSON。含实际修改的配置冲突保留原件，恢复范围与备份位置见[升级与恢复](docs/configuration.md#升级迁移与冲突恢复)。
+
 ### 权限、额度与审核
 
 请在“偏好与预设 → 通用配置”设置管理员与聊天额度，在“审核配置”设置提示词和图片审核规则。[权限与审核说明](docs/configuration.md#权限额度与审核)。

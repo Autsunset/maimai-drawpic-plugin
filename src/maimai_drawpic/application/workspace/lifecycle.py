@@ -21,7 +21,11 @@ def active_services(plugin: Any) -> List[DrawService]:
 async def prepare_workspace(plugin: Any, config_path: Path) -> None:
     raw = plugin.get_plugin_config_data()
     store = WorkspaceConfigStore(plugin.ctx.paths.data_dir, config_path)
-    await asyncio.to_thread(store.initialize, raw)
+    recovery_backup = await asyncio.to_thread(store.initialize, raw)
+    if recovery_backup is not None:
+        plugin.ctx.logger.warning(
+            "已备份并移除已知升级错误生成的 TOML 默认配置，继续使用工作台 JSON；backup=%s", recovery_backup
+        )
     plugin._redactor.add(store.secrets())
     plugin._platform_store = store
     plugin._effective_config = await asyncio.to_thread(store.effective_config, raw)

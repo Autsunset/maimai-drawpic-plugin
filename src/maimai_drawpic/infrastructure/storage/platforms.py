@@ -23,6 +23,7 @@ from ...domain.configuration.models import (
 )
 from ...application.routing import ProviderRouter
 from .atomic import write_json_atomically, write_text_atomically
+from .config_recovery import is_reseeded_defaults, remove_reseeded_defaults
 from .settings import LEGACY_REVIEW_SECTIONS, WorkspaceSettingsStore, read_json_file, workspace_config
 
 
@@ -171,10 +172,18 @@ class WorkspaceConfigStore:
         return DrawpicConfig.model_fields[kind].annotation
 
     @_locked
-    def initialize(self, legacy_config: Dict[str, Any]) -> None:
+    def initialize(self, legacy_config: Dict[str, Any]) -> Path | None:
         """平台配置成功持久化并备份之后，才移除 TOML 平台节。"""
         # 在写 JSON、重命名平台或移除任何 TOML 节之前完成全部冲突检查。
-        document = tomlkit.parse(self.config_path.read_text(encoding="utf-8")) if self.config_path.exists() else {}
+        original = self.config_path.read_bytes() if self.config_path.exists() else b""
+        document = tomlkit.parse(original.decode("utf-8"))
+        reseeded = is_reseeded_defaults(document) and self.path.exists() and self.settings.path.exists()
+        if reseeded:
+            # 已知完整默认模板没有用户绘图设置；两份权威 JSON 都必须有效，
+            # 之后仍走原有事务与冲突校验，不能借修复跳过损坏文件或未提交数据。
+            self._validate_platform_payload(read_json_file(self.path))
+            self.settings.read_payload()
+            document = host_config(document)
         self._recover_transaction(document)
         self.settings.check_legacy_conflicts(document)
         settings_revision = self.settings.read_payload().get("revision", 0) if self.settings.path.exists() else 0
@@ -216,6 +225,9 @@ class WorkspaceConfigStore:
             self.revision = self.platform_revision = max(1, settings_revision)
             self._save()
 
+        recovery_backup = None
+        if reseeded:
+            recovery_backup = remove_reseeded_defaults(self.config_path, self.path.parent, original)
         if self.config_path.exists():
             document = tomlkit.parse(self.config_path.read_text(encoding="utf-8"))
             if any(key in document for key in PLATFORM_NAMES):
@@ -231,6 +243,7 @@ class WorkspaceConfigStore:
 
         self.settings.initialize(legacy_config)
         self.revision = max(self.platform_revision, self.settings.revision)
+        return recovery_backup
 
     def _import_legacy_platforms(self, legacy_config: Dict[str, Any]) -> None:
         """只导入有实际配置的平台，用于首次迁移与无副作用冲突检查。"""

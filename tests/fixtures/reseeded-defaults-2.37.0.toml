@@ -1,0 +1,204 @@
+# Historical generated defaults from d689e63 (config_version 2.37.0).
+# Fixture keys are empty defaults; this is not a user configuration.
+[plugin]
+enabled = true
+config_version = "2.37.0"
+image_cache_max_mb = 300
+log_max_mb = 10
+upload_cache_max_mb = 256
+
+[proxy]
+enabled = false
+use_system_proxy = true
+scheme = "http"
+host = "127.0.0.1"
+port = 7890
+username = ""
+password = ""
+bypass_china_providers = true
+
+[general]
+default_model = ""
+fallback_model = ""
+fallback_models = []
+request_retry_count = 0
+request_timeout_seconds = 150
+command_reply_mode = "图片"
+failure_reason_enabled = true
+permission_enabled = true
+admin_user_ids = []
+group_quota_enabled = true
+group_quota_period = "daily"
+group_default_quota = 5
+private_quota_enabled = true
+private_quota_period = "daily"
+private_default_quota = 5
+image_edit_unsupported_models = []
+text_to_image_unsupported_models = []
+prompt_review_enabled = false
+prompt_review_prompt = "你是绘图提示词审核器。请判断下面的绘图提示词是否适合继续交给绘图模型生成。\n审核要求：\n1. 如果提示词涉及明显违法、暴力犯罪、血腥猎奇、未成年人色情、仇恨歧视、现实人物色情深度伪造等高风险内容，必须拒绝。\n2. 如果提示词内容普通、安全、可接受，则允许通过。\n3. 你的回复必须严格使用以下格式，不要输出多余内容：\n结论：PASS 或 REJECT\n原因：一句简短中文说明\n\n待审核提示词：\n{user_prompt}\n"
+image_review_enabled = false
+image_review_prompt = "你是绘图结果审核器。请审核这张图片是否适合直接发送给普通聊天场景。\n审核要求：\n1. 如果图片包含明显违法、暴力犯罪、血腥猎奇、未成年人色情、仇恨歧视、现实人物色情深度伪造等高风险内容，必须拒绝。\n2. 如果图片内容普通、安全、可接受，则允许通过。\n3. 结合本次生成提示词一起判断。\n4. 你的回复必须严格使用以下格式，不要输出多余内容：\n结论：PASS 或 REJECT\n原因：一句简短中文说明\n\n本次生成提示词：\n{user_prompt}\n"
+
+[style]
+default_style = ""
+presets = []
+
+[openai]
+enabled = true
+base_url = "https://api.openai.com/v1"
+api_key = "your-openai-api-key"
+models = ["gpt-image-2.5"]
+default_openai_compatibility_mode = "auto"
+default_size = "1024x1024"
+model_size_overrides = []
+quality = ""
+response_format = ""
+output_format = ""
+background = ""
+moderation = ""
+max_images = 1
+extra_parameters = []
+rewrite_prompt_to_english = false
+instances = []
+
+[google]
+enabled = true
+base_url = "https://generativelanguage.googleapis.com"
+api_key = "your-google-api-key"
+models = ["gemini-3.1-flash-image", "gemini-3-pro-image"]
+aspect_ratio = ""
+image_size = ""
+negative_prompt = ""
+seed = -1
+extra_parameters = []
+rewrite_prompt_to_english = false
+
+[zhipu]
+enabled = true
+api_key = "your-zhipu-api-key"
+models = ["glm-image"]
+quality = ""
+size = "1280x1280"
+watermark_enabled = true
+user_id = ""
+extra_parameters = []
+rewrite_prompt_to_english = false
+
+[aliyun]
+enabled = true
+base_url = "https://dashscope.aliyuncs.com/api/v1"
+api_key = "your-aliyun-api-key"
+models = ["qwen-image-3.0-pro", "qwen-image-3.0", "qwen-image-2.0-pro", "qwen-image-2.0", "z-image-turbo", "kling/kling-v3-image-generation", "kling/kling-v3-omni-image-generation", "vidu/vidu-image_reference2image", "vidu/vidu-image-pro_reference2image", "vidu/vidu-image-lite_reference2image", "vidu/viduq3-fast_reference2image"]
+default_size = "2048*2048"
+model_size_overrides = ["qwen-image-2.0=2048*2048", "qwen-image-2.0-pro=2048*2048", "qwen-image-max=1328*1328", "qwen-image-plus=1328*1328", "qwen-image-edit-max=1024*1024", "qwen-image-edit-plus=1024*1024"]
+negative_prompt = "低分辨率，低画质，肢体畸形，手指畸形，文字模糊，构图混乱，过度光滑，画面具有 AI 感"
+prompt_extend = true
+qwen_prompt_extend_mode = "direct"
+qwen_enable_thinking = true
+zimage_prompt_extend = false
+seed = 0
+watermark = false
+max_images = 1
+image_input_mode = "auto"
+async_poll_interval_seconds = 5.0
+kling_aspect_ratio = "1:1"
+kling_resolution = "1k"
+kling_result_type = "single"
+kling_series_amount = 4
+qwen_extra_parameters = []
+zimage_extra_parameters = []
+kling_extra_parameters = []
+vidu_extra_parameters = []
+extra_parameters = []
+rewrite_prompt_to_english = false
+
+[volcengine]
+enabled = true
+api_key = "your-volcengine-api-key"
+base_url = "https://ark.cn-beijing.volces.com/api/v3"
+models = ["doubao-seedream-5-0-flash-260915", "doubao-seedream-5-0-pro-260628", "doubao-seedream-5-0-260128"]
+default_size = "2K"
+model_size_overrides = []
+model_endpoint_overrides = []
+response_format = "url"
+output_format = ""
+sequential_image_generation = "disabled"
+optimize_prompt_mode = ""
+web_search_enabled = false
+background = ""
+layer_decomposition = false
+guidance_scale = 0.0
+seed = -1
+watermark = false
+max_images = 1
+extra_parameters = []
+rewrite_prompt_to_english = false
+
+[siliconflow]
+enabled = true
+api_key = "your-siliconflow-api-key"
+models = ["Kwai-Kolors/Kolors", "stabilityai/stable-diffusion-3-5-large"]
+image_size = "1024x1024"
+model_size_overrides = []
+seed = -1
+num_inference_steps = 20
+guidance_scale = 7.5
+cfg = 0.0
+negative_prompt = ""
+extra_parameters = []
+rewrite_prompt_to_english = false
+
+[novelai]
+enabled = true
+base_url = "https://image.novelai.net"
+api_key = "your-novelai-api-key"
+models = ["nai-diffusion-5-full", "nai-diffusion-5-curated", "nai-diffusion-4-5-full", "nai-diffusion-4-5-curated", "nai-diffusion-4-full", "nai-diffusion-4-curated-preview", "nai-diffusion-3", "nai-diffusion-furry-3"]
+custom_models = []
+default_mode = "anime"
+width = 832
+height = 1216
+model_size_overrides = []
+sampler = "k_euler_ancestral"
+steps = 28
+scale = 5.0
+seed = -1
+positive_prompt = ""
+default_artist_tags = ""
+negative_prompt = "lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, blurry"
+uc_preset = 0
+quality_toggle = true
+sm = false
+sm_dyn = false
+noise_schedule = "native"
+v4_noise_schedule = "karras"
+img2img_strength = 0.6
+img2img_noise = 0.1
+max_images = 1
+extra_parameters = []
+rewrite_prompt_to_english = true
+
+[comfyui]
+enabled = false
+base_url = "http://127.0.0.1:8188"
+t2i_workflow_path = "data/workflows/t2i.json"
+i2i_workflow_path = "data/workflows/i2i.json"
+t2i_prompt_mode = "positive_negative"
+i2i_prompt_mode = "positive_negative"
+prompt_input_name = "text"
+t2i_prompt_node_id = ""
+t2i_positive_prompt_node_id = ""
+t2i_negative_prompt_node_id = ""
+t2i_negative_prompt = ""
+i2i_prompt_node_id = ""
+i2i_positive_prompt_node_id = ""
+i2i_negative_prompt_node_id = ""
+i2i_negative_prompt = ""
+i2i_image_node_id = ""
+image_input_name = "image"
+poll_interval_seconds = 1.0
+rewrite_prompt_to_english = false
+seed = -1
+seed_input_name = "seed"
+t2i_seed_node_id = ""
+i2i_seed_node_id = ""
