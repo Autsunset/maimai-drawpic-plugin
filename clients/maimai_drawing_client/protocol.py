@@ -21,7 +21,7 @@ def validate_task(result: Dict[str, Any], task_id: str) -> None:
         raise DrawingTransportError(message, task_id=task_id, request_id=request_id)
 
     if (
-        result["task_id"] != task_id
+        not isinstance(result["task_id"], str) or not result["task_id"] or result["task_id"] != task_id
         or not isinstance(result.get("status"), str)
         or result["status"] not in TASK_STATUSES
         or type(result.get("generation_completed")) is not bool

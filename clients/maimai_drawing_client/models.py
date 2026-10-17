@@ -1,7 +1,30 @@
 """客户端结果类型；不依赖绘图插件内部代码或第三方库。"""
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional, Sequence, TypedDict, Union
+
+
+class DrawingPreferences(TypedDict, total=False):
+    """部分更新；省略字段保留原值，空字符串清除对应会话覆盖。"""
+
+    model: str
+    openai_compatibility_mode: str
+    novelai_mode: str
+    novelai_artist_tags: str
+
+
+class DrawingRequest(TypedDict, total=False):
+    """提交选项；源图既可使用已有 Base64 文本，也可直接传入图片 bytes。"""
+
+    model: str
+    negative_prompt: str
+    style: str
+    task_type: Literal["draw", "edit_image"]
+    stream_id: str
+    source_images: Optional[Sequence[Union[str, bytes]]]
+    openai_compatibility_mode: str
+    novelai_mode: str
+    novelai_artist_tags: Optional[str]
 
 
 class DrawingTransportError(RuntimeError):

@@ -1077,8 +1077,8 @@ def test_image_lookup_candidates_stay_in_current_streams() -> None:
     print("[OK] message_utils: 图片查询候选聊天流保持隔离")
 
 
-def test_image_delivery_retries_only_remaining_images() -> None:
-    """多图部分发送失败时仅续传剩余图片。"""
+def test_image_delivery_exception_preserves_partial_without_resend() -> None:
+    """多图部分发送异常时保留已确认数量，不切换聊天流重复发送。"""
 
     class _FakeSend:
         def __init__(self) -> None:
@@ -1101,16 +1101,17 @@ def test_image_delivery_retries_only_remaining_images() -> None:
 
     sender = _FakeSend()
     ctx = types.SimpleNamespace(send=sender, logger=_FakeLogger())
-    sent_count = asyncio.run(
-        _DeliveryService(ctx).send_generated_images_with_fallback(
-            "original-stream",
-            [b"first", b"second"],
+    try:
+        asyncio.run(
+            _DeliveryService(ctx).send_generated_images_with_fallback(
+                "original-stream", [b"first", b"second"],
+            )
         )
-    )
-    assert sent_count == 2
-    assert [stream_id for stream_id, _ in sender.calls] == ["stream-1", "stream-1", "stream-2"]
-    assert sender.calls[0][1] != sender.calls[2][1]
-    print("[OK] stream_service: 多图续传不会重复已发送图片")
+        raise AssertionError("发送异常应保留未确认结果")
+    except ImageDeliveryUnconfirmedError as exc:
+        assert exc.sent_count == 1
+    assert [stream_id for stream_id, _ in sender.calls] == ["stream-1", "stream-1"]
+    print("[OK] stream_service: 多图发送异常不会切换会话或重复发送")
 
 
 def test_unconfirmed_image_delivery_is_not_retried() -> None:
@@ -1793,7 +1794,7 @@ def main() -> None:
     test_source_image_cache_preserves_url_and_compatibility_view()
     test_command_source_image_inputs_keep_url()
     test_image_lookup_candidates_stay_in_current_streams()
-    test_image_delivery_retries_only_remaining_images()
+    test_image_delivery_exception_preserves_partial_without_resend()
     test_unconfirmed_image_delivery_is_not_retried()
     test_provider_router_openai_routes_cache()
     test_provider_router_fallback_model_resolution()

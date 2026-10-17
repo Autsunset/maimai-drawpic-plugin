@@ -1,9 +1,9 @@
 {
   "manifest_version": 2,
   "id": "maimai-drawpic-plugin",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "name": "麦麦绘图",
-  "description": "聊天绘图与可视化工作台一体，支持多平台多实例、文生图与图生图、模型与风格管理、任务追踪及插件联动",
+  "description": "让麦麦拥有绘图能力，提供LLM工具、命令调用、在线WebUI，支持多平台多实例、文生图与图生图、模型与风格管理、任务追踪及插件联动",
   "author": {
     "name": "清蒸云鸭",
     "url": "https://github.com/WhiteCloudOL"

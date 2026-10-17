@@ -17,6 +17,7 @@ from ...domain.styles import StylePromptResolver
 from ...infrastructure.storage.tasks import DrawTaskStore
 from ...domain.task_errors import TaskRequestError, task_error
 from ..drawing.admission import update_task_owned
+from .preferences import validate_preferences
 
 
 def validate_task_id(task_id: str) -> None:
@@ -135,6 +136,10 @@ class WorkspaceTaskService:
         source_images: List[str] | None = None,
         request_id: str = "",
         origin: str = "webui",
+        openai_compatibility_mode: str = "",
+        novelai_mode: str = "",
+        novelai_artist_tags: str | None = None,
+        require_existing_stream: bool = False,
     ) -> Dict[str, Any]:
         if not isinstance(prompt, str) or not prompt.strip() or len(prompt) > 16000:
             raise ValueError("提示词应为 1～16000 个字符")
@@ -157,10 +162,18 @@ class WorkspaceTaskService:
             raise ValueError("源图片参数必须为列表")
         if len(source_ids or []) + len(source_images or []) > 8:
             raise ValueError("最多提供 8 张源图")
+        options = {"openai_compatibility_mode": openai_compatibility_mode, "novelai_mode": novelai_mode}
+        if novelai_artist_tags is not None:
+            options["novelai_artist_tags"] = novelai_artist_tags
+        options = validate_preferences(options)
+        signature_values = [prompt, model, negative_prompt, style, task_type, stream_id, source_ids, source_images]
+        # 保留旧请求的签名；只有显式覆盖新参数时才扩展签名，不能让升级破坏幂等恢复。
+        if any(options.values()) or novelai_artist_tags is not None:
+            signature_values.append(options)
         signature = await asyncio.to_thread(
             lambda: sha256(
                 json.dumps(
-                    [prompt, model, negative_prompt, style, task_type, stream_id, source_ids, source_images],
+                    signature_values,
                     ensure_ascii=False,
                 ).encode()
             ).hexdigest()
@@ -211,11 +224,21 @@ class WorkspaceTaskService:
                 "style": style,
             }
             if stream_id:
+                context = {}
+                if require_existing_stream:
+                    context = await service.stream_service.existing_stream_context(stream_id)
+                    if not context:
+                        raise TaskRequestError("STREAM_UNAVAILABLE", "必须提供当前实例中已存在的真实聊天流 ID")
                 result = await self.submit_chat(
                     prompt=resolved_style.positive_prompt,
                     stream_id=stream_id,
                     requested_model=resolved_model,
                     request_negative_prompt=resolved_style.negative_prompt,
+                    requested_openai_compatibility_mode=options["openai_compatibility_mode"],
+                    requested_novelai_mode=options["novelai_mode"],
+                    requested_novelai_artist_tags=options.get("novelai_artist_tags"),
+                    **({"user_id": context["user_id"], "group_id": context["group_id"],
+                        "platform_name": context["platform"]} if context else {}),
                     source_image_bytes_list=images,
                     notify_start=False,
                     defer_prompt_review=True,
@@ -226,7 +249,9 @@ class WorkspaceTaskService:
                     prompt=resolved_style.positive_prompt,
                     stream_id="",
                     resolved_model=resolved_model,
-                    resolved_openai_mode="",
+                    resolved_openai_mode=options["openai_compatibility_mode"],
+                    novelai_mode=options["novelai_mode"],
+                    novelai_artist_tags=options.get("novelai_artist_tags", ""),
                     provider_name=router.get_model_provider(resolved_model),
                     request_negative_prompt=resolved_style.negative_prompt,
                     source_image_bytes_list=images,

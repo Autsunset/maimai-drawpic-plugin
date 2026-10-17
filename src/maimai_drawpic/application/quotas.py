@@ -1,8 +1,9 @@
 """commands/quota.py 的插件组件。"""
 
+import asyncio
+
 from ..interfaces.chat.texts import build_quota_adjust_text
 from ..infrastructure.storage.quotas import QuotaPeriod, QuotaReservation
-
 
 class QuotaMixin:
     """commands/quota.py 对应的插件行为。"""
@@ -299,7 +300,7 @@ class QuotaMixin:
     ) -> tuple[bool, str, int]:
         """处理绘图次数调整命令。
 
-        命令格式：/绘图 设置/增加/减少 群聊/用户 群ID/用户ID 数量
+        命令格式：/绘图 设置/添加/减少 群聊/用户 群ID/用户ID 数量
         例如：/绘图 设置 用户 12345678 10
         """
 
@@ -319,7 +320,7 @@ class QuotaMixin:
         if action not in {"add", "remove", "set"}:
             await self._send_command_reply(
                 title="次数命令用法",
-                body=("/绘图 设置/增加/减少 群聊/用户 群ID/用户ID 数量\n例如：/绘图 设置 用户 12345678 10"),
+                body=("/绘图 设置/添加/减少 群聊/用户 群ID/用户ID 数量\n例如：/绘图 设置 用户 12345678 10"),
                 stream_id=stream_id,
                 user_id=user_id,
                 group_id=group_id,
@@ -334,7 +335,7 @@ class QuotaMixin:
                 title="次数命令用法",
                 body=(
                     "请指定调整范围：群聊 或 用户。\n"
-                    "格式：/绘图 设置/增加/减少 群聊/用户 群ID/用户ID 数量\n"
+                    "格式：/绘图 设置/添加/减少 群聊/用户 群ID/用户ID 数量\n"
                     "例如：/绘图 设置 群聊 673381211 50"
                 ),
                 stream_id=stream_id,
@@ -372,7 +373,8 @@ class QuotaMixin:
         else:
             quota_period = self.config.general.private_quota_period
             default_quota = self.config.general.private_default_quota
-        remaining = self._usage_store.adjust_remaining(
+        remaining = await asyncio.to_thread(
+            self._usage_store.adjust_remaining,
             quota_key,
             action=action,  # type: ignore[arg-type]
             count=count,

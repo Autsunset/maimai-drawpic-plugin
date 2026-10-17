@@ -204,7 +204,7 @@ class SessionPreferenceStore:
             "novelai_artist_tags": current_value["novelai_artist_tags"],
         }
         if model is not None:
-            next_value["model"] = self.router.resolve_model_name(model, allow_unknown_model=False)
+            next_value["model"] = self.router.resolve_model_name(model, allow_unknown_model=False) if model.strip() else ""
         if openai_compatibility_mode is not None:
             normalized_mode = normalize_openai_mode(openai_compatibility_mode)
             next_value["openai_compatibility_mode"] = (

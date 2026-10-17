@@ -19,6 +19,7 @@ class RequestMixin:
         requested_openai_compatibility_mode: str = "",
         request_negative_prompt: str = "",
         requested_novelai_mode: str = "",
+        requested_novelai_artist_tags: Optional[str] = None,
         source_image_bytes_list: list[bytes] | None = None,
         source_image_urls: list[str] | None = None,
         matched_message_id: str = "",
@@ -68,7 +69,10 @@ class RequestMixin:
             # Preserve explicit overrides; each fallback instance owns its defaults.
             resolved_openai_mode = requested_openai_compatibility_mode or session_preference["openai_compatibility_mode"]
             resolved_novelai_mode = requested_novelai_mode or session_preference.get("novelai_mode", "")
-            resolved_novelai_artist_tags = session_preference.get("novelai_artist_tags", "")
+            resolved_novelai_artist_tags = (
+                session_preference.get("novelai_artist_tags", "")
+                if requested_novelai_artist_tags is None else requested_novelai_artist_tags
+            )
             provider_name = draw_service.router.get_model_provider(resolved_model)
             if not provider_name:
                 raise ValueError(f"指定模型不可用：{resolved_model}")

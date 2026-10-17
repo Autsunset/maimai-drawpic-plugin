@@ -388,6 +388,10 @@ class ChatStreamService(ImageDeliveryMixin):
         )
         return {}
 
+    async def existing_stream_context(self, stream_id: str) -> dict[str, str]:
+        """按真实会话 ID 查询，不将未命中的 ID 解释为用户/群号并创建会话。"""
+        return await self._scan_streams_for_context(session_id=stream_id, user_id="", group_id="", platform="all_platforms")
+
     async def resolve_live_stream_id(
         self,
         stream_id: str,

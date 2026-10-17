@@ -163,6 +163,10 @@ class InstanceProviderRouter(ProviderRouter):
         route = self._route(model)
         route.router.validate_source_image_count(route.model, image_count)
 
+    def get_max_source_images(self, model: str) -> int | None:
+        route = self._route(model)
+        return route.router.get_max_source_images(route.model)
+
     def validate_forced_command_task(self, model: str, task_type: str) -> None:
         route = self._route(model)
         route.router.validate_forced_command_task(route.model, task_type)

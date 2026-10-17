@@ -22,6 +22,9 @@ class TaskAPIV2Mixin(WorkspaceAPIBase):
         stream_id: str = "",
         source_images: Optional[List[str]] = None,
         request_id: str = "",
+        openai_compatibility_mode: str = "",
+        novelai_mode: str = "",
+        novelai_artist_tags: Optional[str] = None,
     ) -> Dict[str, Any]:
         return await self._task_api_v2().submit(
             prompt=prompt,
@@ -32,11 +35,18 @@ class TaskAPIV2Mixin(WorkspaceAPIBase):
             stream_id=stream_id,
             source_images=source_images,
             request_id=request_id,
+            openai_compatibility_mode=openai_compatibility_mode,
+            novelai_mode=novelai_mode,
+            novelai_artist_tags=novelai_artist_tags,
         )
 
     @API("drawpic_task_v2", version="2", public=True, description="查询状态、结构化错误和图片引用，不返回图片内容")
     async def drawpic_task_v2(self, task_id: str) -> Dict[str, Any]:
         return await self._task_api_v2().task(task_id)
+
+    @API("drawpic_request_v2", version="2", public=True, description="按原 request_id 只读找回任务，不重新提交生成")
+    async def drawpic_request_v2(self, request_id: str) -> Dict[str, Any]:
+        return await self._task_api_v2().request(request_id)
 
     @API("drawpic_image_v2", version="2", public=True, description="读取有界图片分块，过期时返回稳定错误码")
     async def drawpic_image_v2(

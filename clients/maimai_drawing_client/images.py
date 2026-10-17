@@ -1,6 +1,7 @@
 """严格校验分块协议，保存路径由调用插件明确提供。"""
 
 from pathlib import Path
+from typing import List, Sequence, Union
 import asyncio
 import base64
 import binascii
@@ -9,6 +10,24 @@ import tempfile
 
 from .models import DrawingError, DrawingTransportError
 from .transport import DrawingRPC
+
+
+def encode_sources(images: Sequence[Union[str, bytes]]) -> List[str]:
+    """只负责有界编码；真实图片内容继续交由服务端统一验证。"""
+    if not isinstance(images, (list, tuple)) or len(images) > 8:
+        raise ValueError("source_images 应为最多 8 张图片的列表或元组")
+    result = []
+    for image in images:
+        if isinstance(image, bytes):
+            if not image or 4 * ((len(image) + 2) // 3) > 8 * 1024 * 1024:
+                raise ValueError("单张源图编码后应为 1～8 MiB，图片 bytes 过大或为空")
+            encoded = base64.b64encode(image).decode("ascii")
+        elif isinstance(image, str) and image and len(image) <= 8 * 1024 * 1024:
+            encoded = image
+        else:
+            raise ValueError("源图应为非空图片 bytes 或不超过 8 MiB 的 Base64 文本")
+        result.append(encoded)
+    return result
 
 
 async def read_image(rpc: DrawingRPC, task_id: str, index: int, max_bytes: int) -> bytes:

@@ -88,7 +88,8 @@ class NovelAICommandMixin:
                     platform=platform,
                 )
                 return False, "NovelAI mode 无效", 1
-            next_preference = self._set_session_preference(
+            next_preference = await asyncio.to_thread(
+                self._set_session_preference,
                 stream_id,
                 user_id,
                 group_id,
@@ -130,7 +131,8 @@ class NovelAICommandMixin:
                 return False, "权限不足", 1
             clear_aliases = {"默认", "跟随", "清空", "default", "unset", "clear"}
             session_artist_tags = "" if artist_tags.casefold() in clear_aliases else artist_tags
-            next_preference = self._set_session_preference(
+            next_preference = await asyncio.to_thread(
+                self._set_session_preference,
                 stream_id,
                 user_id,
                 group_id,
@@ -234,18 +236,19 @@ class NovelAICommandMixin:
             source_images: list[bytes] = []
             source_image_urls: list[str] = []
             matched_message_id = ""
-            if forced_task_type != "draw":
-                (
-                    source_images,
-                    source_image_urls,
-                    matched_message_id,
-                ) = await self._collect_optional_command_source_images(
-                    message=message,
-                    stream_id=stream_id,
-                    user_id=user_id,
-                    group_id=group_id,
-                    platform=platform,
-                )
+            (
+                source_images,
+                source_image_urls,
+                matched_message_id,
+            ) = await self._collect_optional_command_source_images(
+                message=message,
+                stream_id=stream_id,
+                user_id=user_id,
+                group_id=group_id,
+                platform=platform,
+            )
+            if forced_task_type == "draw" and source_images:
+                raise ValueError("NAI 文生图不能附带或引用图片，请改用 /绘图 nai 图生图 <描述>")
             if forced_task_type == "edit_image" and not source_images:
                 raise ValueError("NAI 图生图需要在同一条消息中附带或引用图片")
             if not positive_prompt and not source_images:

@@ -2,6 +2,7 @@
 
 from typing import Any, Dict
 import asyncio
+import re
 
 from ...domain.task_errors import TaskRequestError, task_error
 from .tasks import WorkspaceTaskService, validate_task_id
@@ -36,10 +37,26 @@ class IntegrationTaskService:
 
     async def submit(self, **kwargs: Any) -> Dict[str, Any]:
         try:
-            receipt = await self.tasks.submit(**kwargs, origin="plugin")
+            receipt = await self.tasks.submit(**kwargs, origin="plugin", require_existing_stream=True)
         except (ValueError, PermissionError) as exc:
             return {**self.error_response(exc), "accepted": False, "request_id": kwargs.get("request_id", "")}
         return {**await self.task(receipt["task_id"]), **receipt, "accepted": True}
+
+    async def request(self, request_id: str) -> Dict[str, Any]:
+        """只查询持久化请求映射；未找到不证明从未受理，也不能据此自动重画。"""
+        if not isinstance(request_id, str) or not re.fullmatch(r"[A-Za-z0-9_-]{8,80}", request_id):
+            return self.error_response(ValueError("request_id 应为 8～80 位字母、数字、下划线或横线"))
+        # 与提交共享锁，避免已进入提交持久化阶段的请求被误报为不存在。
+        async with self.tasks.lock:
+            record = await asyncio.to_thread(self.tasks.task_store.find_request, request_id)
+        if record is None:
+            return {
+                **self.error_response(TaskRequestError(
+                    "REQUEST_NOT_FOUND", "未找到保留期内的请求记录，可能尚未完成受理或已淘汰；不能据此自动重新生成"
+                )),
+                "request_id": request_id,
+            }
+        return await self.task(record["task_id"])
 
     async def task(self, task_id: str) -> Dict[str, Any]:
         try:

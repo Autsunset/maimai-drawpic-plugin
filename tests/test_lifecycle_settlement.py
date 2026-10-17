@@ -27,7 +27,11 @@ async def configured_plugin(make_plugin, monkeypatch):
     async def notice(**kwargs):
         return None
 
+    async def streams(**kwargs):
+        return {"success": True, "streams": [await context()]}
+
     monkeypatch.setattr(plugin._require_stream_service(), "resolve_live_stream_context", context)
+    monkeypatch.setattr(plugin.ctx.chat, "get_all_streams", streams)
     monkeypatch.setattr(plugin, "_send_draw_failure_notice", notice)
     return plugin
 

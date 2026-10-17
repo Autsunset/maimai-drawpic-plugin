@@ -27,3 +27,21 @@ def workspace_endpoint(handler: Callable[..., Awaitable[Dict[str, Any]]]) -> Cal
             return {"__workspace_error__": outward_error(args[0], exc)}
 
     return invoke
+
+
+def integration_endpoint(handler: Callable[..., Awaitable[Dict[str, Any]]]) -> Callable:
+    """公开资源 API 返回稳定输入错误；未知运行异常仍由 Runner 记录。"""
+
+    @wraps(handler)
+    async def invoke(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+        try:
+            return {**await handler(*args, **kwargs), "error": None}
+        except (ValueError, PermissionError) as exc:
+            return {"error": {
+                "code": "PERMISSION_DENIED" if isinstance(exc, PermissionError) else "INVALID_REQUEST",
+                "message": outward_error(args[0], exc),
+                "retry_query": False,
+                "retry_submit": False,
+            }}
+
+    return invoke

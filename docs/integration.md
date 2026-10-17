@@ -29,8 +29,9 @@ from .vendor.maimai_drawing_client import DrawingClient, DrawingError
 - v1 原有七个 API 名称、参数和取消返回保持兼容；显式传 `version="1"`。
 - 新协议使用 `drawpic_submit_v2`、`drawpic_task_v2`、`drawpic_image_v2`、`drawpic_cancel_v2`、`drawpic_tasks_v2`，同时传 `version="2"`。
 - 使用新名称是为了保留旧的无版本调用：当前 Host 对同名多版本且未给 version 的调用会报歧义。正式客户端显式使用新名称和版本，不自动降级。
-- 模型发现 `drawpic_models` 与预设管理 `drawpic_presets` 继续是 v1；预设写入不是绘图接入的必经步骤。
+- 模型发现 `drawpic_models` 继续是 v1；旧预设接口 `drawpic_presets` 保持兼容。
 - 这些能力要求绘图插件 2.0.0；旧版本可能没有相同接口。没有新增长时间阻塞的 `drawpic_generate` RPC。
+- **2.1.1 起**另增 `drawpic_request_v2`、会话偏好读写和 `drawpic_presets_v2`，并扩展单次模式参数。下文对应的新客户端方法要求绘图服务 ≥2.1.1，2.1.0 尚无这些新接口；没有接口时明确报错，不自动降级或重新生成。
 
 ## 最小提交示例
 
@@ -170,11 +171,8 @@ async def resume_drawing(ctx, saved, wait_seconds=120):
             saved["task_id"], request_id=saved["request_id"],
             wait_seconds=wait_seconds,
         )
-    # 没有提交回执：仅使用原键与原参数找回受理结果，不生成新随机键。
-    return await client.generate(
-        **saved["request"], request_id=saved["request_id"],
-        wait_seconds=wait_seconds,
-    )
+    # 2.1.1 起支持纯查询恢复，不需要再次发送提示词和图片。
+    return await client.recover(saved["request_id"], wait_seconds=wait_seconds)
 ```
 
 去重记录已淘汰时，相同请求键可能重新产生任务，因此恢复前也需核对记录保留范围及提供商记录；`request_id` 不是永久幂等保证。
@@ -190,10 +188,24 @@ async def resume_drawing(ctx, saved, wait_seconds=120):
 | `drawpic_image_v2` | 读取预览或原图分块 |
 | `drawpic_cancel_v2` | 请求取消并返回实际状态 |
 | `drawpic_tasks_v2` | 分页恢复/管理任务，不夹带缩略图 |
+| `drawpic_request_v2` | 按原 request_id 只读找回任务，不提交生成 |
+| `drawpic_preferences_v2` | 读取真实会话的绘图偏好覆盖值 |
+| `drawpic_preferences_set_v2` | 部分更新会话模型、兼容模式与 NAI 偏好 |
+| `drawpic_presets_v2` | 风格预设查询、保存、重命名与删除，返回结构化错误 |
 
 ### submit 参数与返回
 
-参数与 v1 相同，完整约束见下方 [drawpic_submit 参数表](#drawpic_submit)。默认 `stream_id=""` 不发送；`source_images` 只接受 Base64，调用者不能指定本机文件路径或伪造 owner。客户端省略 request_id 时生成 UUID；底层允许空键，但不适合超时恢复。
+基础参数与 v1 相同，完整约束见下方 [drawpic_submit 参数表](#drawpic_submit)。默认 `stream_id=""` 不发送；显式回传只接受当前 Host 已存在的真实会话 ID，不能传 QQ 号或 OpenID 来创建会话。`source_images` 在底层只接受 Base64；客户端还接受图片 bytes 列表/元组，在线程中编码，单张编码仍最多 8 MiB。调用者不能指定本机文件路径或伪造 owner。客户端省略 request_id 时生成 UUID；底层允许空键，但不适合超时恢复。
+
+2.1.1 起增加以下**仅本次任务生效**的参数，不修改会话、平台或默认配置：
+
+| 参数 | 含义 |
+| --- | --- |
+| `openai_compatibility_mode=""` | `auto`、`images_api`、`chat_completions`、`rinkoai`；空值在回传会话时继承会话偏好，否则跟随平台默认 |
+| `novelai_mode=""` | `anime`、`furry`、`background`；空值的继承规则同上 |
+| `novelai_artist_tags=None` | `None` 在回传会话时继承会话画师偏好；文本覆盖，空文本跳过会话画师偏好并跟随平台默认 |
+
+模型省略时继续使用工作台默认模型，不自动改为会话模型；需使用会话偏好模型时先读取偏好再显式传入。风格使用 `style` 预设名，未指定时遵循工作台默认风格；反向提示词使用 `negative_prompt`。模式只对对应平台生效。相同 request_id 下改变显式参数会返回冲突；未指定新参数的历史请求仍保持原签名。
 
 成功返回 `accepted=True`、`task_id`、`request_id`、`reused`，并附 task 结构。明确未受理返回 `accepted=False`、`task_id=None`、`status="not_accepted"` 和结构化 error。磁盘/Host/IPC 故障可能没有可信业务回执，客户端保留原请求键返回 submission_unknown，不假定未受理。
 
@@ -241,6 +253,37 @@ async def resume_drawing(ctx, saved, wait_seconds=120):
 
 `page=1`：整数 1～100；`status=""`：不筛选或上述任务状态；`search=""`：最多 200 字，匹配任务 ID、模型或消息。返回 `items/total/page/page_size=12/error`，每项为 task 结构，不夹带缩略图。
 
+### request 与模型能力
+
+`drawpic_request_v2(request_id)` 在持久化去重记录中查询，返回同一 task 结构。未找到为 `REQUEST_NOT_FOUND`，可能尚未受理完毕或已超出最多 500 条记录的保留范围，**不能据此自动重画**。`client.recover` 只查询、等待和读取原任务，任何情况下都不调用 submit；RPC 失败或预算结束仍保留原键。
+
+`client.models()` 读取 v1 模型目录，新增 `draw_reason`、`api_edit_image`、`api_edit_reason`、`max_source_images`。`edit_image` 表示模型总体编辑能力；`api_edit_image` 表示当前 Base64 API 能否提供所需输入。例如百炼只接受原图 URL 的模型会单独说明限制。`max_source_images` 是模型已知上限与 API 上限 8 的较小值，未知模型按 API 上限；仍需先检查编辑能力，数量值不代表支持编辑。
+
+### 绘图偏好与风格写入
+
+`drawpic_preferences_v2(stream_id)` 返回 `stream_id/preferences/error`，preferences 包含以下四个字符串字段。`drawpic_preferences_set_v2(stream_id, preference_json)` 使用 JSON 对象**部分更新**，未给出的字段保留，空字符串清除会话覆盖并恢复默认行为：
+
+| 字段 | 约束 |
+| --- | --- |
+| `model` | 已启用的完整 `平台名称/模型名称`，最多 200 字；不接受短名或索引 |
+| `openai_compatibility_mode` | 上述四种 OpenAI 模式 |
+| `novelai_mode` | `anime`、`furry`、`background` |
+| `novelai_artist_tags` | 最多 16000 字 |
+
+查询和写入均要求真实已有会话，不创建聊天流。群聊偏好作用于该群，私聊偏好作用于该用户；写入不能由未授权的群成员通过调用方插件越权触发。模型暂时停用时保留旧偏好，新的显式模型设置必须有效。
+
+`drawpic_presets_v2(operation="list", name="", preset_json="")` 沿用下方 v1 预设字段与操作；客户端提供 `presets/preset/save_preset/delete_preset`。`save_preset(preset, name="旧名称")` 可重命名，同时更新默认风格引用；省略 name 时按 preset.name 创建或更新。预设是当前实例共享数据，删除当前默认预设会清空默认选择。保存响应可能含 `warning/runtime_refresh_pending/recovery_pending`，表示已保存但刷新或同步尚未完成，不能当作未保存再次盲写。
+
+这三个设置 API 的预期错误统一返回 `error.code/message/retry_query/retry_submit`，成功 `error=null`；未知运行和存储异常继续由 SDK 报错。客户端写入不会自动重试，RPC 结果未知时先重新读取核对。
+
+```python
+async def configure_drawing(ctx, stream_id, model):
+    client = DrawingClient(ctx.api)
+    await client.set_preferences(stream_id, model=model, openai_compatibility_mode="images_api")
+    await client.save_preset({"name": "水彩", "positive_prompt_template": "watercolor, {prompt}"})
+    return await client.preferences(stream_id)
+```
+
 ## 结构化错误
 
 error 为 null 或对象：`code/message/retry_query/retry_submit`。message 为脱敏诊断，代码稳定；两个重试字段不能混为笼统 retryable。
@@ -255,6 +298,7 @@ error 为 null 或对象：`code/message/retry_query/retry_submit`。message 为
 | CONCURRENCY_LIMIT | 4 个后台任务已满，稍后用原参数/键提交 |
 | PERMISSION_DENIED | 聊天额度或权限拒绝 |
 | TASK_NOT_FOUND | 记录不存在或被淘汰，核对保留范围 |
+| REQUEST_NOT_FOUND | 原请求记录未找到，先核对受理进度、保留范围及提供商记录，不自动重画 |
 | MODERATION_REJECTED | 审核拒绝，不自动重画 |
 | UPSTREAM_REJECTED / UPSTREAM_UNREACHABLE | 明确上游拒绝或未建立连接，按错误标记决定人工恢复 |
 | UPSTREAM_UNCONFIRMED / RESTART_UNCONFIRMED | 待确认，核对原提供商任务，不换键重画 |
@@ -285,7 +329,7 @@ error 为 null 或对象：`code/message/retry_query/retry_submit`。message 为
 
 当前 Host 验证 API 可见性，但没有向静态 API 方法注入可供插件信赖的调用方身份，因此**不提供插件间逐任务隔离承诺**。不接受 owner 字符串来伪装鉴权。这是同实例可信插件接口；调用方必须校验用户/会话授权并保存自己的任务关联，预设写入属于管理能力。
 
-保存图片只在调用方获授目录中进行。公开接口不读取任意路径，也不读取平台密钥、原始日志或修改配置。`stream_id` 必须是真实已有聊天流，不自行哈希/构造。发送只在显式传入 stream_id 时发生。
+保存图片只在调用方获授目录中进行。公开接口不读取任意路径，不开放平台密钥、原始日志或全局管理配置；写入范围限绘图会话偏好、共享风格预设和本次任务参数。`stream_id` 必须是真实已有聊天流，不自行哈希/构造。发送只在显式传入 stream_id 时发生。
 
 ## v1 API 一览
 

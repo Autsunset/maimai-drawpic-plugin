@@ -244,7 +244,8 @@ class CommandMixin:
                 )
                 return False, "兼容模式无效", 1
 
-            next_preference = self._set_session_preference(
+            next_preference = await asyncio.to_thread(
+                self._set_session_preference,
                 normalized_stream_id,
                 normalized_user_id,
                 normalized_group_id,

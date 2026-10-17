@@ -1,6 +1,7 @@
 """麦麦绘图插件：组合组件并向 Runner 提供工厂入口。"""
 
 from .src.maimai_drawpic.interfaces.api.integration import IntegrationAPIMixin
+from .src.maimai_drawpic.interfaces.api.preferences import PreferenceAPIMixin
 from .src.maimai_drawpic.interfaces.api.tasks_v2 import TaskAPIV2Mixin
 from .src.maimai_drawpic.interfaces.api.webui import WebUIAPIMixin
 from .src.maimai_drawpic.application.plugin import DrawpicRuntime
@@ -22,6 +23,7 @@ from .src.maimai_drawpic.interfaces.commands.dispatcher import CommandMixin
 class DrawpicPlugin(
     WebUIAPIMixin,
     IntegrationAPIMixin,
+    PreferenceAPIMixin,
     TaskAPIV2Mixin,
     CommandMixin,
     ImageCommandMixin,

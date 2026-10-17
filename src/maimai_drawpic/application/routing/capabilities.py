@@ -218,6 +218,12 @@ class TaskCapabilityMixin:
 
         if image_count == 0:
             return
+        maximum = self.get_max_source_images(model)
+        if maximum is not None and image_count > maximum:
+            raise ValueError(f"当前模型 {model} 最多支持 {maximum} 张参考图片，当前提供了 {image_count} 张")
+
+    def get_max_source_images(self, model: str) -> int | None:
+        """返回模型已知的参考图上限；None 表示注册表未声明。"""
         provider = self.get_model_provider(model)
         maximum = None
         if provider in {"novelai", "comfyui"}:
@@ -230,8 +236,7 @@ class TaskCapabilityMixin:
             maximum = resolve_aliyun_model_profile(model).max_input_images
         elif provider == "volcengine":
             maximum = VolcengineImage._max_reference_images(VolcengineImage._resolve_model_family(model))
-        if maximum is not None and image_count > maximum:
-            raise ValueError(f"当前模型 {model} 最多支持 {maximum} 张参考图片，当前提供了 {image_count} 张")
+        return maximum
 
     def resolve_volcengine_model_for_task(
         self,

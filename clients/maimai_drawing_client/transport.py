@@ -14,7 +14,7 @@ class DrawingRPC:
     def __init__(self, api: APIProxy, timeout: float) -> None:
         self.api, self.timeout = api, timeout
 
-    async def call(self, name: str, *, version: str = "2", **kwargs: Any) -> Dict[str, Any]:
+    async def call(self, name: str, /, *, version: str = "2", **kwargs: Any) -> Dict[str, Any]:
         handles = {"task_id": kwargs.get("task_id"), "request_id": kwargs.get("request_id", "")}
         try:
             async with asyncio.timeout(self.timeout):

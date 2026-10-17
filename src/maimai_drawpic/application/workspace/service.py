@@ -79,16 +79,29 @@ class WorkspaceService:
                 default_model = router.resolve_default_model()
             except ValueError as exc:
                 default_model_error = str(exc)
+        models = []
+        for model in router.get_all_models():
+            draw = router.evaluate_model_task_capability(model, "draw")
+            edit = router.evaluate_model_task_capability(model, "edit_image")
+            api_edit_reason = edit.reason
+            if edit.allowed:
+                try:
+                    router.validate_local_source_images(model)
+                except ValueError as exc:
+                    api_edit_reason = str(exc)
+            maximum = router.get_max_source_images(model)
+            models.append({
+                **router.describe_model(model),
+                "draw": draw.allowed,
+                "draw_reason": draw.reason,
+                "edit_image": edit.allowed,
+                "edit_reason": edit.reason,
+                "api_edit_image": edit.allowed and not api_edit_reason,
+                "api_edit_reason": api_edit_reason,
+                "max_source_images": min(8, maximum) if maximum is not None else 8,
+            })
         return {
-            "models": [
-                {
-                    **router.describe_model(model),
-                    "draw": router.evaluate_model_task_capability(model, "draw").allowed,
-                    "edit_image": router.evaluate_model_task_capability(model, "edit_image").allowed,
-                    "edit_reason": router.evaluate_model_task_capability(model, "edit_image").reason,
-                }
-                for model in router.get_all_models()
-            ],
+            "models": models,
             "default_model": default_model,
             "default_model_error": default_model_error,
         }
@@ -231,6 +244,8 @@ class WorkspaceService:
                     item is not target and item["name"].casefold() == preset["name"].casefold() for item in presets
                 ):
                     raise ValueError("已有同名预设")
+                if current["style"]["default_style"].casefold() == target["name"].casefold():
+                    current["style"]["default_style"] = preset["name"]
                 presets[presets.index(target)] = preset
             else:
                 if any(item["name"].casefold() == preset["name"].casefold() for item in presets):
