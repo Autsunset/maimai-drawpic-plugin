@@ -166,6 +166,7 @@ class RequestPlanningMixin:
         source_image_urls: list[str],
         matched_message_id: str,
         request_negative_prompt: str = "",
+        stream_id: str = "",
     ) -> list[bytes]:
         """执行单次图片请求尝试。"""
 
@@ -197,6 +198,16 @@ class RequestPlanningMixin:
         if _enhancer is not None:
             try:
                 provider_prompt, _matched = _enhancer.enhance(provider_prompt)
+                if not _matched:
+                    # chat LLM 常把「画个星瞳」改写成一大段自编的外貌描述，
+                    # 角色名就此丢失，角色库永远补不上。这里从最近消息里的
+                    # 用户原话找回角色名，再补一次。
+                    provider_prompt, _matched = await self.recover_character_from_recent_messages(
+                        provider_prompt,
+                        _enhancer,
+                        stream_id,
+                        task_id,
+                    )
                 if _matched:
                     self.ctx.logger.info(
                         "角色形象已补全: task_id=%s characters=%s model=%s",

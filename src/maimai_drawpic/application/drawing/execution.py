@@ -135,6 +135,7 @@ class ImageExecutionMixin:
                 source_image_urls=normalized_source_urls,
                 matched_message_id=matched_message_id,
                 request_negative_prompt=request_negative_prompt,
+                stream_id=stream_id,
             )
 
             if successful_attempt is None:
