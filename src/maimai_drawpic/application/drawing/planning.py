@@ -6,6 +6,7 @@ from ...infrastructure.media.collection import validate_result_images
 from .admission import wait_for_admission
 from .types import ImageRequestAttempt
 from .character_prompt import CharacterPromptEnhancer, SearxngClient
+from .unknown_character import _strip_conflicting_appearance
 
 
 class RequestPlanningMixin:
@@ -197,8 +198,14 @@ class RequestPlanningMixin:
             )
         if _enhancer is not None:
             try:
-                provider_prompt, _matched = _enhancer.enhance(provider_prompt)
-                if not _matched:
+                # 顺序要紧：先认出角色、洗掉冲突的外貌描述，再追加角色库标签。
+                # 反过来的话，刚追加的 silver white short hair 会被当成「外貌
+                # 短语」一并删掉。
+                _profiles = _enhancer.matched_profiles(provider_prompt)
+                if _profiles:
+                    provider_prompt = _strip_conflicting_appearance(provider_prompt, _profiles)
+                    provider_prompt, _matched = _enhancer.enhance(provider_prompt)
+                else:
                     # chat LLM 常把「画个星瞳」改写成一大段自编的外貌描述，
                     # 角色名就此丢失，角色库永远补不上。这里从最近消息里的
                     # 用户原话找回角色名，再补一次。

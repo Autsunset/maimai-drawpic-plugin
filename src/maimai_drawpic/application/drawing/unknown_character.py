@@ -38,6 +38,8 @@ APPEARANCE_TRANSLATE_PROMPT = (
 
 # 提示词里描述角色外观的词。合并用户原话与 LLM 改写时，这些词所在的短语
 # 一律以用户原话为准——LLM 编造的「长发」不能留下来和角色的「短发」打架。
+# 只收真正描述发型/发色/瞳色的词：不能收「形象」「偶像」这种泛词，否则
+# 「虚拟偶像星瞳」整条会被当成外貌删掉，角色名也跟着丢了。
 _APPEARANCE_WORDS = (
     "头发", "发型", "长发", "短发", "卷发", "直发", "马尾", "双马尾", "呆毛",
     "刘海", "发色", "银发", "金发", "黑发", "白发", "棕发", "粉发", "蓝发",
@@ -90,6 +92,36 @@ def _merge_user_words_and_style(user_text: str, llm_prompt: str) -> str:
         if any(clause in existing for existing in kept):
             continue
         kept.append(clause)
+    return ", ".join(kept)
+
+
+def _strip_conflicting_appearance(prompt: str, profiles: list[Any]) -> str:
+    """删掉提示词里与角色库冲突的外貌短语。
+
+    chat LLM 会在「画个星瞳」后面自作主张加上「银白色长发扎成蓬松双马尾」
+    「蓝紫色大眼睛」。名字还在，角色库一样能命中，于是这些编造的外貌就跟着
+    正确标签一起进了模型，两个描述打架，画出来还是长发。
+
+    角色库有权威的发型/发色/瞳色，所以提示词里凡是提到这些的短语一律丢掉，
+    只留用户真正说过的其他内容（场景、动作、服装）。用户自己写了外貌时会被
+    一起丢掉，这是有意的取舍：角色形象以角色库为准。
+
+    含角色名的短语必须保留：「虚拟偶像星瞳」里带着「瞳」字，按词表会被误判
+    成瞳色描述，把角色名一起删掉，角色库就再也命中不了。
+    """
+
+    if not profiles:
+        return prompt
+
+    names = [alias for profile in profiles for alias in profile.aliases]
+    kept: list[str] = []
+    for clause in _split_clauses(prompt):
+        has_name = any(name in clause for name in names)
+        if not has_name and _is_appearance_clause(clause):
+            continue
+        kept.append(clause)
+    if not kept:
+        return prompt
     return ", ".join(kept)
 
 
