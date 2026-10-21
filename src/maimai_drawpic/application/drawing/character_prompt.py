@@ -11,6 +11,7 @@
 补全必须发生在英文改写之前，否则中文角色名会被翻成拼音，信息量更少。
 
 形象描述用英文：魔搭等渠道不做中文改写，英文标签是图像模型最稳的表达方式。
+服装不写进角色库——用户说「穿红色衣服」时，衣服由中文原话交给模型。
 """
 
 from __future__ import annotations
@@ -30,6 +31,10 @@ class CharacterProfile:
     key: str
     aliases: tuple[str, ...]
     appearance: str
+    # 判断提示词是否已经补过本角色的唯一片段：取角色罗马名。
+    # 不能用 appearance 的某一段通用标签，24 个角色的开头都是「1girl, solo」，
+    # 拿它当标记会导致提示词里只要出现 solo 就整条跳过补全。
+    marker: str
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +48,7 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="星瞳",
         aliases=("星瞳", "xingtong", "xing tong", "馬星瞳", "马星瞳"),
+        marker="Xing Tong (QQ Xuanwu)",
         appearance=(
             "1girl, solo, Xing Tong (QQ Xuanwu) virtual idol, "
             "silver white short hair, short bob hair, ahoge, "
@@ -54,6 +60,7 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="嘉然",
         aliases=("嘉然", "diana", "嘉然Diana", "然然", "嘉然小姐"),
+        marker="Diana (A-SOUL)",
         appearance=(
             "1girl, solo, Diana (A-SOUL) virtual idol, "
             "light brown milk tea brown hair, long hair, bright blue eyes, "
@@ -65,6 +72,7 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="向晚",
         aliases=("向晚", "ava", "向晚Ava", "晚晚"),
+        marker="Ava (A-SOUL)",
         appearance=(
             "1girl, solo, Ava (A-SOUL) virtual idol, "
             "light purple gradient hair, blue-purple gradient, drill twin tails, "
@@ -75,6 +83,7 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="贝拉",
         aliases=("贝拉", "bella", "贝拉Bella", "拉姐"),
+        marker="Bella (A-SOUL)",
         appearance=(
             "1girl, solo, Bella (A-SOUL) virtual idol, "
             "dark purple blue-purple hair, long straight hair, purple eyes, "
@@ -85,6 +94,7 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="乃琳",
         aliases=("乃琳", "eileen", "乃琳Eileen"),
+        marker="Eileen (A-SOUL)",
         appearance=(
             "1girl, solo, Eileen (A-SOUL) virtual idol, "
             "silver white hair, long wavy curly hair, clear blue eyes, "
@@ -95,6 +105,7 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="心宜",
         aliases=("心宜", "心宜不是心仪"),
+        marker="Xinyi (A-SOUL)",
         appearance=(
             "1girl, solo, Xinyi (A-SOUL) virtual idol, "
             "bright pink hair, short hair, pink eyes, small hair ornament, "
@@ -104,6 +115,7 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="思诺",
         aliases=("思诺", "思诺 snow"),
+        marker="Sinuo (A-SOUL)",
         appearance=(
             "1girl, solo, Sinuo (A-SOUL) virtual idol, "
             "navy blue hair, long straight hair, blunt bangs, amber gold eyes, "
@@ -114,6 +126,7 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="恬豆",
         aliases=("恬豆", "bekki", "恬豆Bekki", "恬豆发芽了"),
+        marker="Bekki (Si Xi Wanzi)",
         appearance=(
             "1girl, solo, Bekki (Si Xi Wanzi) virtual idol, "
             "blue hair, short hair, blue eyes, ahoge, "
@@ -123,6 +136,7 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="梨安",
         aliases=("梨安", "lian", "梨安Lian"),
+        marker="Lian (Si Xi Wanzi)",
         appearance=(
             "1girl, solo, Lian (Si Xi Wanzi) virtual idol, "
             "white silver hair, long straight hair, red eyes, thigh ring accessory, "
@@ -132,6 +146,7 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="沐霂",
         aliases=("沐霂", "queenie", "沐霂Queenie", "沐霂是MUMU呀"),
+        marker="Queenie (Si Xi Wanzi)",
         appearance=(
             "1girl, solo, Queenie (Si Xi Wanzi) virtual idol, "
             "milky tea brown hair, long hair, teal green eyes, "
@@ -142,6 +157,7 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="又一",
         aliases=("又一", "yoyi", "又一Yoyi"),
+        marker="Yoyi (Si Xi Wanzi)",
         appearance=(
             "1girl, solo, Yoyi (Si Xi Wanzi) virtual idol, "
             "yellow blonde hair, twin tails, one cyan blue streak highlight, yellow eyes, "
@@ -152,8 +168,9 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="雫lulu",
         aliases=("雫lulu", "雫るる", "lulu", "雫露露", "雫Lulu", "露胖"),
+        marker="Shizuku Lulu",
         appearance=(
-            "1girl, solo, Shizuku Lulu virtual UP主, "
+            "1girl, solo, Shizuku Lulu virtual streamer, "
             "silver white hair, long curly hair in low twin tails, "
             "light purple eyes, airy blunt bangs, "
             "gentle sweet expression, soft charming aura"
@@ -162,6 +179,7 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="永雏塔菲",
         aliases=("永雏塔菲", "塔菲", "taffy", "永雛タフィー", "Ace Taffy"),
+        marker="Ace Taffy",
         appearance=(
             "1girl, solo, Ace Taffy virtual idol, "
             "pink and blonde two-tone hair, long hair, gold eyes, heart-shaped pupils, "
@@ -173,8 +191,9 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="七海",
         aliases=("七海", "七海Nana7mi", "Nana7mi", "海子姐", "七海娜娜米"),
+        marker="Nanami (VirtuaReal)",
         appearance=(
-            "1girl, solo, Nanami (VirtuaReal) virtual UP主, "
+            "1girl, solo, Nanami (VirtuaReal) virtual streamer, "
             "brown dark brown hair, shoulder-length short hair, warm brown eyes, "
             "side smile-shaped V hair clip, shark tail accessory, "
             "silly cheerful expression, shark-themed idol"
@@ -183,8 +202,9 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="阿梓",
         aliases=("阿梓", "阿梓Azusa", "Azusa", "阿梓从小就很可爱"),
+        marker="Azusa",
         appearance=(
-            "1girl, solo, Azusa virtual UP主, "
+            "1girl, solo, Azusa virtual streamer, "
             "light purple blue hair, long twin tails, orange gold eyes, "
             "panda hair ornament, butterfly hair ornament, "
             "lively songstress expression, petite figure 158cm, idol stage presence"
@@ -193,8 +213,9 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="早稻叽",
         aliases=("早稻叽", "阿叽"),
+        marker="Waseda Ji",
         appearance=(
-            "1girl, solo, Waseda Ji virtual UP主, "
+            "1girl, solo, Waseda Ji virtual streamer, "
             "sakura pink hair, little-devil motif, heterochromia eyes, "
             "right eye gold left eye red, petite figure, strong singer aura"
         ),
@@ -202,8 +223,9 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="艾尔莎",
         aliases=("艾尔莎", "艾尔莎Elza", "Elza"),
+        marker="Elza Hodophilax York",
         appearance=(
-            "1girl, solo, Elza Hodophilax York virtual UP主, "
+            "1girl, solo, Elza Hodophilax York virtual streamer, "
             "silver white hair, long wavy curly hair, ice blue eyes, "
             "side-parted bangs, white wolf ears, "
             "elegant noble aura, graceful posture, idol stage presence"
@@ -212,8 +234,9 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="菜菜子",
         aliases=("菜菜子", "菜菜子Nanako", "Nanako"),
+        marker="Nanako",
         appearance=(
-            "1girl, solo, Nanako virtual UP主, "
+            "1girl, solo, Nanako virtual streamer, "
             "white hair, grey eyes, hair buns, oversized long sleeves, "
             "loli-like petite figure, cute gentle expression"
         ),
@@ -221,6 +244,7 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="中国绊爱",
         aliases=("中国绊爱", "中國絆愛", "爱哥", "中國愛"),
+        marker="Kizuna AI China",
         appearance=(
             "1girl, solo, Kizuna AI China virtual idol, "
             "brown hair, long hair, blue eyes, pink hair ribbon headband, "
@@ -231,8 +255,9 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="扇宝",
         aliases=("扇宝",),
+        marker="Shanbao",
         appearance=(
-            "1girl, solo, Shanbao virtual UP主, "
+            "1girl, solo, Shanbao virtual streamer, "
             "peach pink hair, long straight hair, red eyes, "
             "signature fan-shaped hair ornament, "
             "lively bright expression, idol stage presence"
@@ -241,8 +266,9 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="东爱璃",
         aliases=("东爱璃", "东爱璃Lovely", "Agari Raburi", "Lovely"),
+        marker="Agari Raburi (Lovely)",
         appearance=(
-            "1girl, solo, Agari Raburi (Lovely) virtual UP主, "
+            "1girl, solo, Agari Raburi (Lovely) virtual streamer, "
             "black tea brown hair, long twin tails, pink highlights at hair tips and inner layer, "
             "blue eyes, choppy bangs, ahoge, deer antlers, "
             "bright cheerful smile, radiant friendly expression, idol stage presence"
@@ -251,8 +277,9 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="白神遥",
         aliases=("白神遥", "白神遥Haruka", "Haruka"),
+        marker="Shirakami Haruka",
         appearance=(
-            "1girl, solo, Shirakami Haruka virtual UP主, "
+            "1girl, solo, Shirakami Haruka virtual streamer, "
             "short curly hair with pink roots fading to white tips, "
             "wine red eyes, seal hair clip, no horns no animal ears, "
             "soft cute expression, gentle refined aura"
@@ -261,8 +288,9 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="牧牧白",
         aliases=("牧牧白", "牧牧白miiu", "miiu"),
+        marker="Mumubai (Miiu)",
         appearance=(
-            "1girl, solo, Mumubai (Miiu) virtual UP主, "
+            "1girl, solo, Mumubai (Miiu) virtual streamer, "
             "sakura pink hair, long straight hair, lake blue star-shaped pupils, "
             "side small hair bundle, skull and yellow star hair clips, "
             "cute sweet expression, idol stage presence"
@@ -271,14 +299,30 @@ PROFILES: tuple[CharacterProfile, ...] = (
     CharacterProfile(
         key="花花",
         aliases=("花花", "花花Haya", "Haya"),
+        marker="Hana (Haya)",
         appearance=(
-            "1girl, solo, Hana (Haya) virtual UP主, "
+            "1girl, solo, Hana (Haya) virtual streamer, "
             "dark brown hair, long fluffy wavy hair, amber brown eyes, "
             "side choppy bangs, cheerful bright expression, idol stage presence"
         ),
     ),
 )
 DEFAULT_PROFILES = PROFILES
+
+
+# ---------------------------------------------------------------------------
+# 别名匹配：中文没有词边界，必须防「花花绿绿」这类误命中
+# ---------------------------------------------------------------------------
+
+# 两字中文别名后面紧跟这些字时，说明它是普通词语的一部分，不是角色名。
+# 例：「画一个花花绿绿的春日风景」里的「花花」、「又一个气球」里的「又一」、
+# 「七海相连」里的「七海」。
+#
+# 这里刻意用「黑名单」而不是「白名单」：白名单要穷举角色名后面所有合法的
+# 接续字（正、今、刚、已……），漏一个就会把「星瞳正在唱歌」判成没提角色，
+# 结果画出一只猫——漏检的代价远大于误检。黑名单只需覆盖真正会组成常用词的
+# 那几个后缀，万一误判，最坏也只是多贴一段形象标签。
+_ALIAS_BLOCK_SUFFIX = frozenset({"绿", "草", "界", "个", "次", "相", "起", "样"})
 
 
 # ---------------------------------------------------------------------------
@@ -385,7 +429,11 @@ class CharacterPromptEnhancer:
 
         if not prompt:
             return []
-        return [profile for profile, pattern in self._patterns if pattern.search(prompt)]
+        return [
+            profile
+            for profile, pattern in self._patterns
+            if self._has_alias_hit(pattern, prompt)
+        ]
 
     def enhance(self, prompt: str) -> tuple[str, list[str]]:
         """补全内置角色。返回补全后的提示词和命中的角色名。"""
@@ -396,16 +444,15 @@ class CharacterPromptEnhancer:
 
         additions: list[str] = []
         for profile in profiles:
-            marker = profile.appearance.split(",")[1].strip() if "," in profile.appearance else profile.appearance
-            if marker and marker.lower() in prompt.lower():
+            if profile.marker and profile.marker.casefold() in prompt.casefold():
                 continue
             additions.append(profile.appearance)
 
         if not additions:
             return prompt, [profile.key for profile in profiles]
 
-        merged = ", ".join([prompt.strip().rstrip(","), *additions]).strip(", ")
-        return merged, [profile.key for profile in profiles]
+        merged = ", ".join([prompt.strip().rstrip(","), _compose_appearance(additions)])
+        return merged.strip(", "), [profile.key for profile in profiles]
 
     # -- 联网查证 -------------------------------------------------------
 
@@ -470,6 +517,49 @@ class CharacterPromptEnhancer:
         if not picked:
             picked = [raw[:400]]
         return "；".join(picked)[:600]
+
+    @staticmethod
+    def _has_alias_hit(pattern: re.Pattern[str], prompt: str) -> bool:
+        """判断别名是否作为独立的角色名出现，而不是普通词语的一部分。
+
+        中文没有词边界，`re.search` 会让「花花」命中「花花绿绿」。这里逐个
+        检查匹配位置后面那个字：如果它会把别名补成另一个常用词（绿、个、相
+        等），就跳过继续找下一个匹配。
+        """
+
+        for match in pattern.finditer(prompt):
+            following = prompt[match.end() : match.end() + 1]
+            if following and following in _ALIAS_BLOCK_SUFFIX:
+                continue
+            return True
+        return False
+
+
+def _compose_appearance(additions: Sequence[str]) -> str:
+    """把一到多个角色的形象拼成一段，人数标签只出现一次。
+
+    每个角色的 appearance 都以「1girl, solo」开头；两个角色直接拼接会得到
+    两句「1girl, solo」，等于告诉模型「单人」两次，模型容易只画一个人。
+    多角色时改成「2girls, multiple girls」并去掉各自的单人标签。
+    """
+
+    if len(additions) == 1:
+        return additions[0]
+    bodies = ", ".join(_strip_group_tags(appearance) for appearance in additions)
+    return f"{len(additions)}girls, multiple girls, {bodies}"
+
+
+def _strip_group_tags(appearance: str) -> str:
+    """去掉人数与 solo 标签，只留角色本身的特征。"""
+
+    tags = [tag.strip() for tag in appearance.split(",")]
+    kept = [tag for tag in tags if tag.casefold() not in _GROUP_TAGS]
+    return ", ".join(kept)
+
+
+_GROUP_TAGS = frozenset(
+    {"1girl", "1boy", "2girls", "2boys", "solo", "multiple girls", "multiple boys"}
+)
 
 
 def _alias_pattern(alias: str) -> str:
