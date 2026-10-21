@@ -1,6 +1,7 @@
 from ...paths import PLUGIN_DIR
 from ...infrastructure.providers.aliyun import AliyunImage
 from ...infrastructure.providers.agnes import AgnesImage
+from ...infrastructure.providers.modelscope import ModelScopeImage
 from ...infrastructure.providers.comfyui import ComfyUIImage
 from ...infrastructure.providers.gemini import GoogleImage
 from ...infrastructure.providers.novelai import NovelAIImage
@@ -49,6 +50,22 @@ class ProviderConstructionMixin:
             port=proxy_config.port,
             username=proxy_config.username,
             password=proxy_config.password,
+        )
+
+    def create_modelscope_provider(self) -> ModelScopeImage:
+        """构造 ModelScope 适配器。"""
+        config = self.config.modelscope
+        return ModelScopeImage(
+            api_key=config.api_key,
+            base_url=config.base_url,
+            logger=self.logger,
+            request_timeout_seconds=self.resolve_request_timeout_seconds(),
+            default_size=config.default_size,
+            model_size_overrides=parse_model_value_overrides(config.model_size_overrides),
+            extra_parameters=parse_key_value_options(config.extra_parameters),
+            poll_interval_seconds=config.poll_interval_seconds,
+            poll_timeout_seconds=config.poll_timeout_seconds,
+            proxy_settings=self._get_proxy_settings("modelscope"),
         )
 
     def create_aliyun_provider(self, request_negative_prompt: str = "") -> AliyunImage:
@@ -339,6 +356,8 @@ class ProviderConstructionMixin:
             )
         elif provider_type == "comfyui":
             provider = self.create_comfyui_provider(normalized_negative_prompt)
+        elif provider_type == "modelscope":
+            provider = self.create_modelscope_provider()
         elif provider_type == "agnes":
             provider = self.create_agnes_provider()
         elif provider_type == "openai":

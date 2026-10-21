@@ -39,6 +39,7 @@ PLATFORM_NAMES = {
     "novelai": "NovelAI / NovelAPI",
     "agnes": "Agnes AI",
     "comfyui": "ComfyUI",
+    "modelscope": "ModelScope 魔搭",
 }
 PLATFORM_DEFAULT_NAMES = {kind: kind for kind in PLATFORM_NAMES}
 PLATFORM_DEFAULT_NAMES["openai"] = "OpenAI_Compatible"

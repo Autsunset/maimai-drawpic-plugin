@@ -24,6 +24,7 @@ from .platforms.siliconflow import SiliconFlowModelConfig as SiliconFlowModelCon
 from .platforms.novelai import NovelAIModelConfig as NovelAIModelConfig
 from .platforms.comfyui import ComfyUIModelConfig as ComfyUIModelConfig
 from .platforms.agnes import AgnesModelConfig as AgnesModelConfig
+from .platforms.modelscope import ModelScopeModelConfig as ModelScopeModelConfig
 from .moderation import ImageModerationConfig as ImageModerationConfig, PromptModerationConfig as PromptModerationConfig
 from .types import (
     AliyunImageInputMode as AliyunImageInputMode,
@@ -58,6 +59,7 @@ class DrawpicConfig(PluginConfigBase):
     novelai: NovelAIModelConfig = Field(default_factory=NovelAIModelConfig)
     comfyui: ComfyUIModelConfig = Field(default_factory=ComfyUIModelConfig)
     agnes: AgnesModelConfig = Field(default_factory=AgnesModelConfig)
+    modelscope: ModelScopeModelConfig = Field(default_factory=ModelScopeModelConfig)
 
 
 apply_config_i18n(

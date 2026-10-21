@@ -178,6 +178,13 @@ class ModelCatalogMixin:
         configured_models = self.config.novelai.models + self.config.novelai.custom_models
         return list(dict.fromkeys(model.strip() for model in configured_models if model.strip()))
 
+    def get_modelscope_models(self) -> list[str]:
+        """获取 ModelScope 模型列表。"""
+
+        if not self.config.modelscope.enabled:
+            return []
+        return [model.strip() for model in self.config.modelscope.models if model.strip()]
+
     def get_comfyui_models(self) -> list[str]:
         """获取 ComfyUI 统一模型列表。"""
 
@@ -198,6 +205,7 @@ class ModelCatalogMixin:
             + self.get_novelai_models()
             + self.get_comfyui_models()
             + self.get_agnes_models()
+            + self.get_modelscope_models()
         )
 
     def get_agnes_models(self) -> List[str]:
@@ -208,6 +216,8 @@ class ModelCatalogMixin:
         """根据模型名称判断其所属提供商。"""
 
         normalized_model = model.strip()
+        if normalized_model in self.get_modelscope_models():
+            return "modelscope"
         if normalized_model in self.get_agnes_models():
             return "agnes"
         if normalized_model in self.get_aliyun_models():
