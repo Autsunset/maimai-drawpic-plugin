@@ -187,9 +187,13 @@ class UnknownCharacterMixin:
 
     @staticmethod
     def _message_plain_text(message: dict[str, Any]) -> str:
-        """取出消息正文。兼容常见字段名与结构化消息段。"""
+        """取出消息正文。兼容常见字段名与结构化消息段。
 
-        for key in ("plain_text", "text", "content", "message"):
+        宿主 message.get_recent 实际返回 `processed_plain_text`，只读 text/
+        content 会拿到空串，整条找回逻辑就静默失效了。
+        """
+
+        for key in ("processed_plain_text", "plain_text", "text", "content", "message"):
             value = message.get(key)
             if isinstance(value, str) and value.strip():
                 return value.strip()
