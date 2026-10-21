@@ -170,8 +170,8 @@ class UnknownCharacterMixin:
                 "从用户原话找回角色名: task_id=%s characters=%s llm_prompt=%s user_text=%s",
                 task_id,
                 ",".join(matched),
-                prompt[:80],
-                text[:80],
+                prompt[:400],
+                text[:400],
             )
             # 以用户原话为基准重建提示词，再补上 LLM 写的风格/场景部分。
             # 直接把原话追在 LLM 的编造描述后面会同时留下「长发」和「短发」。
@@ -292,7 +292,7 @@ class UnknownCharacterMixin:
                 "未知角色形象已补全: task_id=%s name=%s labels=%s",
                 task_id,
                 name,
-                labels[:160],
+                labels[:400],
             )
         return labels
 

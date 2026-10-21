@@ -275,7 +275,7 @@ class RequestPlanningMixin:
                 len(source_image_bytes_list),
                 [len(image_bytes) for image_bytes in source_image_bytes_list],
                 matched_message_id,
-                provider_prompt[:120],
+                provider_prompt[:600],
             )
             if provider_name == "aliyun":
                 return await self.run_provider_call(
@@ -301,7 +301,7 @@ class RequestPlanningMixin:
             provider_name,
             attempt.model,
             attempt.is_fallback,
-            provider_prompt[:120],
+            provider_prompt[:600],
         )
         return await self.run_provider_call(
             image_platform.generate_images,
