@@ -224,3 +224,8 @@ data.migrated-*/
 session_preferences.json
 config_back/
 draw_tasks.json
+
+# 本地运行产物（不上传）
+.maibot-release.json
+data/plugins/
+temp/

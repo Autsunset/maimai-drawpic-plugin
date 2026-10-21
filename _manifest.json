@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "id": "maimai-drawpic-plugin",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "name": "麦麦绘图",
   "description": "让麦麦拥有绘图能力，提供LLM工具、命令调用、在线WebUI，支持多平台多实例、文生图与图生图、模型与风格管理、任务追踪及插件联动",
   "author": {
@@ -10,10 +10,10 @@
   },
   "license": "AGPL-3.0",
   "urls": {
-    "repository": "https://github.com/WhiteCloudOL/maimai-drawpic-plugin",
-    "homepage": "https://github.com/WhiteCloudOL/maimai-drawpic-plugin",
-    "documentation": "https://github.com/WhiteCloudOL/maimai-drawpic-plugin/blob/main/README.md",
-    "issues": "https://github.com/WhiteCloudOL/maimai-drawpic-plugin/issues"
+    "repository": "https://github.com/Autsunset/maimai-drawpic-plugin",
+    "homepage": "https://github.com/Autsunset/maimai-drawpic-plugin",
+    "documentation": "https://github.com/Autsunset/maimai-drawpic-plugin/blob/main/README.md",
+    "issues": "https://github.com/Autsunset/maimai-drawpic-plugin/issues"
   },
   "host_application": {
     "min_version": "1.3.6",
