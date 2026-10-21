@@ -147,6 +147,9 @@ class OpenaiImage:
         if is_rinkoai_nai_model(self.base_url, model):
             raise ValueError(RINKOAI_EDIT_UNSUPPORTED_REASON)
 
+        if self._uses_sensenova_json_edit(model):
+            return await self._edit_images_via_sensenova_json(prompt, model, image_bytes_list, n)
+
         modes = await self._resolve_request_modes(model, "edit_image")
         for index, mode in enumerate(modes):
             try:
@@ -187,6 +190,46 @@ class OpenaiImage:
             except Exception as exc:
                 raise RuntimeError(f"OpenAI 图生图失败: {self._sanitize_text(exc)}") from None
         raise RuntimeError("未找到可用的图生图端点")
+
+    def _uses_sensenova_json_edit(self, model: str) -> bool:
+        """商汤 U1.5 Lite 的编辑接口接收 JSON images，不接收 OpenAI 图片表单。"""
+
+        return (
+            (urlsplit(self.base_url).hostname or "").lower() == "token.sensenova.cn"
+            and model.strip().lower() == "sensenova-u1.5-lite"
+        )
+
+    async def _edit_images_via_sensenova_json(
+        self, prompt: str, model: str, image_bytes_list: list[bytes], n: int
+    ) -> list[bytes]:
+        """按商汤 JSON 格式提交参考图编辑请求，源图以 Data-URL 传入。"""
+
+        try:
+            source_urls = await asyncio.gather(
+                *(asyncio.to_thread(self._source_image_data_url, image_bytes) for image_bytes in image_bytes_list)
+            )
+            payload: dict[str, Any] = {
+                "model": model,
+                "prompt": prompt,
+                "images": [{"image_url": url} for url in source_urls],
+                "n": self._resolve_n(n),
+                "size": "auto",
+                "response_format": self.response_format or "b64_json",
+            }
+            if self.output_format:
+                payload["output_format"] = self.output_format
+            payload.update(self.extra_parameters)
+            response = await self._post_json(
+                url=self._build_api_url("images/edits"),
+                payload=payload,
+            )
+            return await self._extract_images_auto(response)
+        except ProviderError:
+            raise
+        except (TimeoutError, aiohttp.ClientConnectionError):
+            raise ProviderOutcomeUnknown("图片请求超时或中断，远端受理状态不确定，未自动重绘") from None
+        except Exception as exc:
+            raise RuntimeError(f"OpenAI 图生图失败: {self._sanitize_text(exc)}") from None
 
     @staticmethod
     def _source_image_data_url(image_bytes: bytes) -> str:
