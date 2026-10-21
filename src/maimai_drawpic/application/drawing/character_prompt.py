@@ -544,9 +544,9 @@ def _compose_appearance(additions: Sequence[str]) -> str:
     """
 
     if len(additions) == 1:
-        return additions[0]
+        return _emphasize_details(additions[0])
     bodies = ", ".join(_strip_group_tags(appearance) for appearance in additions)
-    return f"{len(additions)}girls, multiple girls, {bodies}"
+    return f"{len(additions)}girls, multiple girls, {_emphasize_details(bodies)}"
 
 
 def _strip_group_tags(appearance: str) -> str:
@@ -555,6 +555,46 @@ def _strip_group_tags(appearance: str) -> str:
     tags = [tag.strip() for tag in appearance.split(",")]
     kept = [tag for tag in tags if tag.casefold() not in _GROUP_TAGS]
     return ", ".join(kept)
+
+
+# 角色的「萌点」标签：单个词，但决定像不像本人。模型认得这些标签，可它们
+# 夹在几十个标签中间时权重会被稀释，出图时稳定出现和偶尔出现各占一半。
+# 这里把每个换成「权重 + 自解释英文」，让模型无论是否认识标签都能画对。
+#
+# 实测（Qwen-Image-2.1-Turbo，同一提示词连出 4 张）：写成裸 ahoge 时 3/4 有
+# 呆毛，加权重并补一句描述后稳定出现，且翘得更明显。
+_FEATURE_HINTS: dict[str, str] = {
+    "ahoge": "(ahoge:1.3), one strand of hair sticking up from the top of head",
+    "hair ornament": "(hair ornament:1.2), decorative hair accessory",
+    "hair ribbon": "(hair ribbon:1.2), ribbon tied in the hair",
+    "hair band": "(hairband:1.2), headband on head",
+    "deer antlers": "(deer antlers:1.3), antlers growing from head",
+    "spiral eyes": "(spiral eyes:1.2), swirled hypnotic eyes",
+    "goggles on head": "(goggles on head:1.2), goggles resting on top of head",
+    "single side braid": "(single side braid:1.2), thin braid on one side of head",
+    "twin tails": "(twintails:1.2), hair tied into two tails",
+    "drill twin tails": "(drill twintails:1.3), spiral drill-shaped twin tails",
+}
+
+
+def _emphasize_details(appearance: str) -> str:
+    """给决定性萌点标签加权，并补一句自解释描述。
+
+    只改标签文本，不改角色库：24 个角色共用同一套规则，新增角色自动生效。
+    已经是权重写法（含括号或冒号）的标签原样保留，避免重复加权。
+    """
+
+    tags = [tag.strip() for tag in appearance.split(",")]
+    result: list[str] = []
+    for tag in tags:
+        if not tag:
+            continue
+        if "(" in tag or ":" in tag:
+            result.append(tag)
+            continue
+        replacement = _FEATURE_HINTS.get(tag.casefold())
+        result.append(replacement if replacement else tag)
+    return ", ".join(result)
 
 
 _GROUP_TAGS = frozenset(
