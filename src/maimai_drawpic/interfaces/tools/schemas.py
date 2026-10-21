@@ -8,7 +8,12 @@ DRAW_TOOL_PARAMETERS_SCHEMA: dict[str, Any] = {
     "properties": {
         "prompt": {
             "type": "string",
-            "description": "图片提示词，尽量描述清楚主体、风格和画面内容",
+            "description": (
+                "图片提示词，描述主体、风格和画面内容。"
+                "用户提到具体角色名（如某位虚拟主播）时，原样传用户的原话即可，"
+                "不要自行补充发色、发型、瞳色、服装等外貌细节——插件的角色库会补全形象，"
+                "自行编造会与角色库冲突，反而画错。"
+            ),
         },
         "model": {
             "type": "string",

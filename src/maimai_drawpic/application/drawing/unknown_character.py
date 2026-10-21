@@ -40,14 +40,20 @@ class UnknownCharacterMixin:
     """未知角色的联网查证职责。"""
 
     def should_lookup_unknown_character(self, prompt: str) -> bool:
-        """判断是否值得为这个提示词联网查角色外观。"""
+        """判断是否值得为这个提示词联网查角色外观。
 
-        if not prompt or not prompt.strip():
+        联网查证慢且不可靠（SearXNG 会把别的角色资料混进来），只在提示词
+        **几乎就是一句「画XX」** 时才值得试。用户自己写了详细形象描述时，
+        那些描述比搜索结果可信，补一条查来的标签反而可能打架。
+        """
+
+        text = (prompt or "").strip()
+        if not text:
             return False
-        if not DRAW_INTENT_PATTERN.search(prompt):
+        if not DRAW_INTENT_PATTERN.search(text):
             return False
-        # 提示词已经很长时，多半用户自己写了详细描述，不需要再补。
-        return len(prompt.strip()) <= 60
+        # 超过 20 字基本就是在描述画面了，不再猜角色名。
+        return len(text) <= 20
 
     async def lookup_character_appearance(
         self,

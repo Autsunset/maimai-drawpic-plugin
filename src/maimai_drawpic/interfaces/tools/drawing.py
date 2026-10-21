@@ -16,7 +16,9 @@ class DrawingToolMixin:
         "draw",
         description=(
             "根据纯文本提示创建独立的后台绘图任务，并在完成后发送到当前聊天流；可选传入反向提示词。"
-            "用户要求修改、编辑、重绘已有图片时不要调用本工具，应调用 edit_image"
+            "用户要求修改、编辑、重绘已有图片时不要调用本工具，应调用 edit_image。"
+            "用户提到具体角色名时，prompt 原样传用户的话，不要自己编造外貌、发色或服装——"
+            "插件的角色库会自动补全形象，自行编写会与角色库冲突。"
         ),
         parameters=DRAW_TOOL_PARAMETERS_SCHEMA,
     )
