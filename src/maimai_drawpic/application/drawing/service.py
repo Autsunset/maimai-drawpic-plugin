@@ -14,12 +14,14 @@ from .prompts import PromptReviewMixin
 from .planning import RequestPlanningMixin
 from .execution import ImageExecutionMixin
 from .queries import TaskQueryMixin
+from .unknown_character import UnknownCharacterMixin
 from .admission import persist_submission, tracked_submission, wait_for_admission
 from ...domain.task_errors import task_error
 
 
 class DrawService(
-    RequestAttemptRunnerMixin, PromptReviewMixin, RequestPlanningMixin, ImageExecutionMixin, TaskQueryMixin
+    RequestAttemptRunnerMixin, PromptReviewMixin, RequestPlanningMixin, ImageExecutionMixin, TaskQueryMixin,
+    UnknownCharacterMixin
 ):
     """协调平台路由与绘图任务所需的独立职责。"""
 

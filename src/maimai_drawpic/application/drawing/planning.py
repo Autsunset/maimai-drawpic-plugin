@@ -5,6 +5,7 @@ import inspect
 from ...infrastructure.media.collection import validate_result_images
 from .admission import wait_for_admission
 from .types import ImageRequestAttempt
+from .character_prompt import CharacterPromptEnhancer, SearxngClient
 
 
 class RequestPlanningMixin:
@@ -183,6 +184,31 @@ class RequestPlanningMixin:
                 f"Negative prompt: {provider_negative_prompt}",
             )
             provider_negative_prompt = ""
+        # 角色形象补全必须在英文改写之前：模型不认识「星瞳」这类角色名，
+        # 改写只会把中文名变成拼音，信息量更少。
+        try:
+            _enhancer = self._character_enhancer
+        except AttributeError:
+            _enhancer = self._character_enhancer = CharacterPromptEnhancer(
+                searcher=SearxngClient()
+            )
+        if _enhancer is not None:
+            provider_prompt, _matched = _enhancer.enhance(provider_prompt)
+            if _matched:
+                self.ctx.logger.info(
+                    "角色形象已补全: task_id=%s characters=%s model=%s",
+                    task_id,
+                    ",".join(_matched),
+                    attempt.model,
+                )
+            elif self.router.should_lookup_unknown_character(provider_prompt):
+                # 内置库里没有：联网查一次外观，再让 LLM 翻成英文标签。
+                _unknown = _enhancer.guess_unknown_character(provider_prompt)
+                if _unknown:
+                    _looked = await self.lookup_character_appearance(_enhancer, _unknown, task_id)
+                    if _looked:
+                        provider_prompt = ", ".join([provider_prompt.strip().rstrip(","), _looked])
+
         provider_prompt = await self.rewrite_prompt_to_english_if_needed(
             provider_prompt,
             provider_name,
