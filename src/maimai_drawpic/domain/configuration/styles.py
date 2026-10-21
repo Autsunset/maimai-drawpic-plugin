@@ -77,6 +77,21 @@ class StyleConfig(PluginConfigBase):
             "order": 0,
         },
     )
+    auto_style_prompt: str = Field(
+        default=(
+            "masterpiece, best quality, highly detailed, anime illustration, "
+            "soft lighting, depth of field, beautiful detailed eyes, clean lineart"
+        ),
+        description="提示词本身没有描述画风时，自动追加的画风与画质标签；提示词已指定风格时不追加。留空表示关闭",
+        json_schema_extra={
+            "label": "自动补全画风",
+            "hint": "仅当提示词里没有任何画风、媒介、画质描述时追加。用户在提示词中写了风格（如水彩、厚涂、写实摄影）就完全不加，由提示词决定。清空可关闭该功能。",
+            "input_type": "textarea",
+            "x-widget": "textarea",
+            "rows": 3,
+            "order": 0.5,
+        },
+    )
     presets: List[StylePresetConfig] = Field(
         default=[],
         description="适用于所有图片平台的正向、反向提示词模板列表",

@@ -154,6 +154,7 @@ _FIELD_LABELS: Dict[str, Tuple[str, str, str]] = {
     ),
     "default_size": ("Default Resolution", "既定の解像度", "기본 해상도"),
     "default_style": ("Default Style", "既定スタイル", "기본 스타일"),
+    "auto_style_prompt": ("Automatic Art Style Tags", "自動画風タグ", "자동 화풍 태그"),
     "description": ("Description", "説明", "설명"),
     "enabled": ("Enabled", "有効", "활성화"),
     "extra_parameters": ("Extra Parameters", "追加パラメータ", "추가 매개변수"),
@@ -435,6 +436,15 @@ _OPENAI_MODE_HINTS = (
 
 
 _FIELD_HINT_OVERRIDES: Dict[str, Tuple[str, str, str]] = {
+    "StyleConfig.auto_style_prompt": (
+        "Appended only when the prompt itself contains no art style, medium or quality wording. "
+        "If the prompt already names a style such as watercolor, thick paint or photorealism, nothing is added. "
+        "Clear the field to disable.",
+        "プロンプトに画風・画材・画質の記述がまったくない場合だけ末尾に追加します。"
+        "水彩・厚塗り・実写写真などのスタイルがプロンプトにある場合は追加しません。空欄で無効になります。",
+        "프롬프트에 화풍·재료·화질 표현이 전혀 없을 때만 뒤에 추가합니다. "
+        "수채화·두꺼운 채색·실사 사진 같은 스타일이 프롬프트에 있으면 추가하지 않습니다. 비우면 사용하지 않습니다.",
+    ),
     "AgnesModelConfig.base_url": (
         "Use the API base URL, not the console or documentation URL.",
         "コンソールやドキュメントではなく API のベース URL を入力します。",

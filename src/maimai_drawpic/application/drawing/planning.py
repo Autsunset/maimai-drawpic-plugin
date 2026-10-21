@@ -6,6 +6,7 @@ from ...infrastructure.media.collection import validate_result_images
 from .admission import wait_for_admission
 from .types import ImageRequestAttempt
 from .character_prompt import CharacterPromptEnhancer, SearxngClient
+from .style_anchor import append_default_style
 from .unknown_character import _strip_conflicting_appearance
 
 
@@ -233,6 +234,16 @@ class RequestPlanningMixin:
                 self.ctx.logger.warning(
                     "角色形象补全失败，按原提示词继续: task_id=%s error=%s", task_id, exc
                 )
+
+        # 画风兜底：提示词自己没写画风时才补默认风格，写了就完全让位给提示词。
+        provider_prompt, _style_added = append_default_style(
+            provider_prompt,
+            self.router.config.style.auto_style_prompt,
+        )
+        if _style_added:
+            self.ctx.logger.info(
+                "提示词未指定画风，已追加默认画风: task_id=%s", task_id
+            )
 
         provider_prompt = await self.rewrite_prompt_to_english_if_needed(
             provider_prompt,
