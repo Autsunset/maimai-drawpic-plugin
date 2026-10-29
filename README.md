@@ -4,11 +4,13 @@
 
 # 麦麦绘图
 
-![Plugin Version](https://img.shields.io/badge/Plugin-2.1.1-informational.svg) ![MaiBot](https://img.shields.io/badge/MaiBot-1.3.6%E2%80%931.3.99-blue.svg) ![MaiBot Plugin SDK](https://img.shields.io/badge/Plugin%20SDK-2.12.0%E2%80%932.13.0-blueviolet.svg) ![License](https://img.shields.io/badge/License-AGPL--3.0-green.svg)
+![Plugin Version](https://img.shields.io/badge/Plugin-2.2.1-informational.svg) ![MaiBot](https://img.shields.io/badge/MaiBot-1.3.6%E2%80%931.3.99-blue.svg) ![MaiBot Plugin SDK](https://img.shields.io/badge/Plugin%20SDK-2.12.0%E2%80%932.17.0-blueviolet.svg) ![License](https://img.shields.io/badge/License-AGPL--3.0-green.svg)
 
 在聊天与可视化工作台中轻松创作，按需接入多个绘图平台，自由搭配模型与风格，集中管理任务与图片结果
 
 </div>
+
+本仓库为 **Autsunset fork**，v2.2.1 已合并上游 v2.1.3，保留 ModelScope、角色形象补全和默认画风等增强。完整改动见 [更新日志](changelog.md)。
 
 - **WebUI与聊天**：你可以通过聊天命令或绘图工具发起任务，也可以在工作台输入提示词、上传参考图片，选择模型与风格
 - **绘图平台管理**：添加自己使用的平台，同类平台可以创建多个独立命名的实例，支持分别设置服务地址、密钥、模型和参数；同时提供首选与备选模型
@@ -19,7 +21,7 @@
 ## 🩷 问题反馈&功能建议
 | 方式 | 联系 |
 | :--: | :--: |
-| Github Issue | [跳转](https://github.com/WhiteCloudOL/maimai-drawpic-plugin/issues) |
+| Github Issue | [跳转](https://github.com/Autsunset/maimai-drawpic-plugin/issues) |
 | QQ群 | [637174573](https://qm.qq.com/q/3f2bdkDsyW) |
 
 
@@ -40,7 +42,7 @@
 ## 安装
 **环境要求：**<br>
 **MaiBot** `1.3.6–1.3.99`<br>
-**SDK** `2.12.0–2.13.0`<br>
+**SDK** `2.12.0–2.17.0`<br>
 **Python** `≥3.12`
 
 ### 源码安装
@@ -49,7 +51,7 @@
 
 ```bash
 cd plugins
-git clone https://github.com/WhiteCloudOL/maimai-drawpic-plugin.git
+git clone https://github.com/Autsunset/maimai-drawpic-plugin.git
 ```
 
 重新加载插件或重启 MaiBot，在 WebUI 插件扩展页面打开**麦麦绘图**，已有安装请先备份并在原目录执行更新
@@ -128,11 +130,18 @@ git clone https://github.com/WhiteCloudOL/maimai-drawpic-plugin.git
 
 请在“偏好与预设 → 通用配置”设置管理员与聊天额度，在“审核配置”设置提示词和图片审核规则。[权限与审核说明](docs/configuration.md#权限额度与审核)。
 
+提示词审核使用宿主 `replyer`，图片审核使用 `vlm`，输出预算沿用宿主的模型／任务配置，不另设 512 token 上限。
+模型没有返回有效结论时仍停止发送，不把思考内容或空结果当成审核通过。
+
+内置角色的默认外貌已按官方头像、直播间形象和设定图逐一核对；星瞳现有外貌保持不变。
+核对依据、各角色的修正和多套皮肤的取舍见[角色外貌核对记录](docs/character-appearance-audit.md)。
+
 ## 常见问题
 
 - **没有可选模型**：确认平台已启用、模型列表非空且名称与账号权限一致。
 - **图生图被拒绝**：检查模型能力与参考图数量；要求公网源图 URL 的模型不能直接使用网页上传或联动 Base64 图片。
 - **请求超时或结果待确认**：先查询原任务及提供商记录，避免立即提交新任务；取消本地等待不代表上游停费。
+- **图片地址被判为非公网**：手动或系统代理会保留域名交由代理解析；仅有 TUN/Fake-IP 或可信内网图床时，可在“偏好与预设 → 通用配置”开启默认关闭的“忽略图片地址 IP 校验”。[网络与下载说明](docs/configuration.md#请求与安全边界)。
 - **创作页提交回执丢失**：使用页面的“恢复原提交”继续原请求，不要为同一幅图重新创建请求。恢复信息可跨工作台内切页保留，但不保证跨浏览器整页刷新保留。
 - **历史任务看不到图片**：缓存会按容量及保留期清理，重要作品请及时另外保存。
 - **ComfyUI 找不到工作流**：确认 JSON 为 API 格式，并核对路径与节点 ID。[ComfyUI 配置](docs/platforms.md#comfyui-本地工作流)。
@@ -153,4 +162,4 @@ git clone https://github.com/WhiteCloudOL/maimai-drawpic-plugin.git
 
 支持通过官方 QQ 机器人适配器或统一SnowLuma适配器接入，沿用 MaiBot 的真实会话与身份。官方引用图片、只接受原图 URL 的模型和 QQ 回复次数存在上游限制，详见 [QQ 适配器说明](docs/qq-adapters.md)。
 
-问题反馈：[GitHub Issues](https://github.com/WhiteCloudOL/maimai-drawpic-plugin/issues)。许可证：[AGPL-3.0](LICENSE)。
+问题反馈：[GitHub Issues](https://github.com/Autsunset/maimai-drawpic-plugin/issues)。上游项目：[WhiteCloudOL/maimai-drawpic-plugin](https://github.com/WhiteCloudOL/maimai-drawpic-plugin)。许可证：[AGPL-3.0](LICENSE)。

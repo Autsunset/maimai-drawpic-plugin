@@ -731,6 +731,7 @@ def test_draw_service_passes_source_urls_only_to_aliyun_adapter() -> None:
         def __init__(self, provider: Any, provider_name: str) -> None:
             self.provider = provider
             self.provider_name = provider_name
+            self.config = _config_module().DrawpicConfig(style={"auto_style_prompt": ""})
 
         def validate_source_image_count(self, model: str, image_count: int) -> None:
             del model

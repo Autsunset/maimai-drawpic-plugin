@@ -8,6 +8,14 @@ from typing import Dict, Tuple, Type
 _LOCALES = ("en_US", "ja_JP", "ko_KR")
 
 _SECTION_TEXTS: Dict[str, Tuple[Tuple[str, str, str], Tuple[str, str, str]]] = {
+    "ModelScopeModelConfig": (
+        ("ModelScope Settings", "ModelScope 設定", "ModelScope 설정"),
+        (
+            "ModelScope image models and asynchronous task polling.",
+            "ModelScope の画像モデルと非同期タスクのポーリング設定です。",
+            "ModelScope 이미지 모델 및 비동기 작업 폴링 설정입니다.",
+        ),
+    ),
     "AgnesModelConfig": (
         ("Agnes Settings", "Agnes 設定", "Agnes 설정"),
         ("Agnes image generation and editing.", "Agnes の画像生成・編集設定です。", "Agnes 이미지 생성 및 편집 설정입니다."),
@@ -123,6 +131,9 @@ _SECTION_TEXTS: Dict[str, Tuple[Tuple[str, str, str], Tuple[str, str, str]]] = {
 }
 
 _FIELD_LABELS: Dict[str, Tuple[str, str, str]] = {
+    "skip_image_url_ip_check": (
+        "Skip Image URL IP Checks", "画像 URL の IP 検証を省略", "이미지 URL IP 검사 건너뛰기"
+    ),
     "ratio": ("Aspect Ratio", "アスペクト比", "화면 비율"),
     "image_cache_max_mb": ("Image Cache Limit (MB)", "画像キャッシュ上限（MB）", "이미지 캐시 한도(MB)"),
     "log_max_mb": ("Total Log Limit (MB)", "ログ合計上限（MB）", "전체 로그 한도(MB)"),
@@ -238,6 +249,7 @@ _FIELD_LABELS: Dict[str, Tuple[str, str, str]] = {
     "permission_enabled": ("Enable Command Permissions", "コマンド権限を有効化", "명령 권한 활성화"),
     "person_generation": ("Person Generation", "人物生成", "인물 생성"),
     "poll_interval_seconds": ("Poll Interval", "ポーリング間隔", "폴링 간격"),
+    "poll_timeout_seconds": ("Poll Timeout", "ポーリングタイムアウト", "폴링 시간 제한"),
     "port": ("Proxy Port", "プロキシポート", "프록시 포트"),
     "positive_prompt": ("Default Positive Prompt", "既定のポジティブプロンプト", "기본 포지티브 프롬프트"),
     "positive_prompt_template": (
@@ -444,6 +456,21 @@ _FIELD_HINT_OVERRIDES: Dict[str, Tuple[str, str, str]] = {
         "水彩・厚塗り・実写写真などのスタイルがプロンプトにある場合は追加しません。空欄で無効になります。",
         "프롬프트에 화풍·재료·화질 표현이 전혀 없을 때만 뒤에 추가합니다. "
         "수채화·두꺼운 채색·실사 사진 같은 스타일이 프롬프트에 있으면 추가하지 않습니다. 비우면 사용하지 않습니다.",
+    ),
+    "GeneralConfig.skip_image_url_ip_check": (
+        "Off by default. Enable only for trusted services to allow private or special-DNS image hosts. HTTP(S) URL and redirect checks remain. Proxied hostnames are always resolved by the proxy.",
+        "既定は無効です。信頼できるサービスの内部ネットワークや特殊 DNS の画像ホストにのみ使用してください。HTTP(S) URL と各リダイレクトの検証は継続します。プロキシ経由のドメインは常にプロキシ側で解決します。",
+        "기본적으로 꺼져 있습니다. 신뢰할 수 있는 서비스의 사설망 또는 특수 DNS 이미지 호스트에만 사용하세요. HTTP(S) URL 및 리디렉션 검사는 유지됩니다. 프록시를 사용하는 도메인은 항상 프록시에서 해석합니다.",
+    ),
+    "NovelAIModelConfig.models": (
+        "Add official presets or enter compatible-service model IDs in this single list. Save the platform to apply changes.",
+        "公式プリセットの追加と互換サービスのモデル ID の入力を同じ一覧で行います。プラットフォームを保存すると反映されます。",
+        "공식 프리셋 추가와 호환 서비스 모델 ID 입력을 하나의 목록에서 관리합니다. 플랫폼을 저장하면 적용됩니다.",
+    ),
+    "NovelAIModelConfig.custom_models": (
+        "Legacy custom models are merged into the unified model list and are no longer edited separately.",
+        "旧カスタムモデルは統一モデル一覧へ統合され、個別には編集しません。",
+        "기존 사용자 지정 모델은 통합 모델 목록에 병합되며 별도로 편집하지 않습니다.",
     ),
     "AgnesModelConfig.base_url": (
         "Use the API base URL, not the console or documentation URL.",

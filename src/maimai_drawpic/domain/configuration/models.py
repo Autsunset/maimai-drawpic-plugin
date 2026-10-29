@@ -79,6 +79,7 @@ apply_config_i18n(
         NovelAIModelConfig,
         ComfyUIModelConfig,
         AgnesModelConfig,
+        ModelScopeModelConfig,
         PromptModerationConfig,
         ImageModerationConfig,
     )

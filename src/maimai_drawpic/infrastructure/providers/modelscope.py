@@ -55,6 +55,7 @@ class ModelScopeImage(OpenaiImage):
         poll_timeout_seconds: float = 300.0,
         logger: Any = None,
         proxy_settings: Optional[HttpProxySettings] = None,
+        skip_image_url_ip_check: bool = False,
     ) -> None:
         super().__init__(
             api_key=api_key,
@@ -65,6 +66,7 @@ class ModelScopeImage(OpenaiImage):
             request_timeout_seconds=request_timeout_seconds,
             logger=logger,
             proxy_settings=proxy_settings,
+            skip_image_url_ip_check=skip_image_url_ip_check,
         )
         self.poll_interval_seconds = float(poll_interval_seconds)
         self.poll_timeout_seconds = float(poll_timeout_seconds)
@@ -185,6 +187,7 @@ class ModelScopeImage(OpenaiImage):
                     base_url=self.base_url,
                     proxy_settings=self.proxy_settings,
                     timeout_seconds=self.request_timeout_seconds,
+                    skip_ip_check=self.skip_image_url_ip_check,
                 )
                 for url in urls
             )

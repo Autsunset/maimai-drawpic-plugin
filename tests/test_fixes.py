@@ -33,6 +33,7 @@ from maimai_drawpic_pkg.src.maimai_drawpic.interfaces.chat.message_images import
 from maimai_drawpic_pkg.src.maimai_drawpic.application.moderation import DrawpicModerationService  # noqa: E402
 from maimai_drawpic_pkg.src.maimai_drawpic.application.chat import ChatStreamService, ImageDeliveryUnconfirmedError  # noqa: E402
 from maimai_drawpic_pkg.src.maimai_drawpic.domain.styles import StylePromptResolver  # noqa: E402
+from maimai_drawpic_pkg.src.maimai_drawpic.application.drawing.character_prompt import CharacterPromptEnhancer  # noqa: E402
 from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.storage.tasks import DrawTaskStore  # noqa: E402
 from maimai_drawpic_pkg.src.maimai_drawpic.interfaces.chat.texts import build_style_text  # noqa: E402
 from maimai_drawpic_pkg.src.maimai_drawpic.infrastructure.storage.quotas import UserQuotaStore  # noqa: E402
@@ -359,12 +360,11 @@ def test_novelai_custom_gateway_keeps_legacy_parameters() -> None:
 
 
 def test_novelai_defaults_include_v5_models() -> None:
-    """NovelAI 默认模型列表包含 V5 Full 与 Curated。"""
+    """NovelAI 新配置只默认添加 V5 Full 与 Curated。"""
 
     configured_models = NovelAIModelConfig().models
-    assert "nai-diffusion-5-full" in configured_models
-    assert "nai-diffusion-5-curated" in configured_models
-    print("[OK] NovelAI 配置：默认模型列表包含 V5")
+    assert configured_models == ["nai-diffusion-5-full", "nai-diffusion-5-curated"]
+    print("[OK] NovelAI 配置：默认模型列表仅提供 V5")
 
 
 def test_novelai_mode_and_prompt_merging() -> None:
@@ -457,7 +457,7 @@ def test_style_descriptions_are_structured_and_backward_compatible() -> None:
 
     legacy_preset = StylePresetConfig(name="旧风格")
     assert legacy_preset.description == ""
-    assert DrawpicConfig().plugin.config_version == "2.38.0"
+    assert DrawpicConfig().plugin.config_version == "2.40.0"
 
     resolver = StylePromptResolver(
         StyleConfig(
@@ -576,7 +576,9 @@ def test_novelai_v3_mode_switches_effective_model() -> None:
     from maimai_drawpic_pkg.src.maimai_drawpic.domain.configuration.models import DrawpicConfig
     from maimai_drawpic_pkg.src.maimai_drawpic.application.routing import ProviderRouter
 
-    router = ProviderRouter(DrawpicConfig(), logger=_FakeLogger())
+    config = DrawpicConfig()
+    config.novelai.models += ["nai-diffusion-3", "nai-diffusion-furry-3"]
+    router = ProviderRouter(config, logger=_FakeLogger())
     router.config.novelai.default_artist_tags = "artist:default"
     assert router.resolve_novelai_artist_tags() == "artist:default"
     assert router.resolve_novelai_artist_tags("artist:session") == "artist:session"
@@ -600,6 +602,7 @@ def test_regular_novelai_route_uses_session_settings_and_prompts() -> None:
     from maimai_drawpic_pkg.src.maimai_drawpic.application.routing import ProviderRouter
 
     config = DrawpicConfig()
+    config.novelai.models += ["nai-diffusion-3", "nai-diffusion-furry-3"]
     config.novelai.positive_prompt = "default positive"
     config.novelai.negative_prompt = "default negative"
     config.novelai.default_artist_tags = "artist:default"
@@ -739,7 +742,8 @@ def test_background_tasks_are_concurrent_and_user_isolated() -> None:
         def __init__(self, provider: _ConcurrentProvider) -> None:
             self.provider = provider
             self.config = types.SimpleNamespace(
-                general=types.SimpleNamespace(fallback_model="", fallback_models=[], request_retry_count=0)
+                general=types.SimpleNamespace(fallback_model="", fallback_models=[], request_retry_count=0),
+                style=types.SimpleNamespace(auto_style_prompt=""),
             )
 
         @staticmethod
@@ -1148,6 +1152,10 @@ def test_provider_router_openai_routes_cache() -> None:
     from maimai_drawpic_pkg.src.maimai_drawpic.application.routing import ProviderRouter
 
     class _StubConfig:
+        class modelscope:
+            enabled = False
+            models: list[str] = []
+
         class openai:
             enabled = True
             models = ["gpt-image-2"]
@@ -1216,6 +1224,10 @@ def test_provider_router_fallback_model_resolution() -> None:
     from maimai_drawpic_pkg.src.maimai_drawpic.application.routing import ProviderRouter
 
     class _StubConfig:
+        class modelscope:
+            enabled = False
+            models: list[str] = []
+
         class agnes:
             enabled = False
             models = []
@@ -1307,6 +1319,7 @@ def test_style_negative_prompt_routing() -> None:
             self.supports_negative = supports_negative
             self.provider = _Provider()
             self.received_negative = ""
+            self.config = DrawpicConfig(style={"auto_style_prompt": ""})
 
         def supports_separate_negative_prompt(self, model: str, task_type: str) -> bool:
             del model, task_type
@@ -1642,6 +1655,59 @@ def test_tool_runtime_context_uses_llm_user_id_only_as_compat_fallback() -> None
     print("[OK] plugin: LLM user_id 仅作兼容兜底且保持 QQ 校验")
 
 
+def test_character_completion_handles_mascot_and_multi_subject() -> None:
+    """小星星吉祥物、多角色计数与背景星光的区分。"""
+
+    enhancer = CharacterPromptEnhancer()
+
+    # 双角色：吉祥物不能被算成第二个女孩，星瞳的 solo 必须去掉。
+    merged, matched = enhancer.enhance("星瞳和小星星穿着中式红色喜服, 面对面磕头, 日系插画风格")
+    assert matched == ["星瞳", "小星星"], matched
+    assert "1girl, 1other, multiple characters," in merged, merged
+    assert "solo" not in merged, merged
+    assert "five-pointed star head" in merged, merged
+    assert "T-shirt" in merged, merged
+
+    # 背景里飘的「小星星」是星光，不是粉丝吉祥物。
+    merged, matched = enhancer.enhance("星瞳站在星空下, 周围漂浮发光的小星星与星尘")
+    assert matched == ["星瞳"], matched
+    assert "1girl, solo" in merged, merged
+
+    # 「拟人化的小星星」前面带「的」，但修饰词说明它是画面主体，必须命中。
+    merged, matched = enhancer.enhance("农场主星瞳笑着抽向一个拟人化的小星星")
+    assert matched == ["星瞳", "小星星"], matched
+    assert "1girl, 1other, multiple characters," in merged, merged
+
+    # 群友 ID 的括号说明里提到小星星（「宇宙咸（一个小星星的ID）」）也要命中。
+    merged, matched = enhancer.enhance("画一个农场主星瞳，拿着鞭子抽宇宙咸（一个小星星的ID）")
+    assert matched == ["星瞳", "小星星"], matched
+
+    # 画面里描述吉祥物的中文「明黄色」会把星瞳带偏（实测画成金发），
+    # 所以星瞳的发色/短发/瞳色标签必须带权重。
+    merged, matched = enhancer.enhance("农场主星瞳笑着抽向一个拟人化的小星星, 小星星是明黄色五角星形状")
+    assert matched == ["星瞳", "小星星"], matched
+    assert "(silver white short hair:1.4)" in merged, merged
+    assert "(bright blue eyes:1.3)" in merged, merged
+    assert "(big yellow five-pointed star head:1.4)" in merged, merged
+
+    # 单独画吉祥物。
+    merged, matched = enhancer.enhance("画一个小星星")
+    assert matched == ["小星星"], matched
+    assert merged.startswith("画一个小星星, 1other,"), merged
+
+    # 「小星星们」指粉丝群体，不是吉祥物。
+    _, matched = enhancer.enhance("小星星们来打卡")
+    assert matched == [], matched
+
+    # 两个人类角色：2girls，且不残留各自的 solo。
+    merged, matched = enhancer.enhance("画一个星瞳和嘉然一起跳舞")
+    assert matched == ["星瞳", "嘉然"], matched
+    assert "2girls, multiple characters," in merged, merged
+    assert "solo" not in merged, merged
+
+    print("[OK] character: 吉祥物计入 other、多角色去掉 solo、星光不误判")
+
+
 def test_quota_disabled_does_not_require_user_id() -> None:
     """额度关闭时，绘图工具不应强制要求 user_id。"""
 
@@ -1806,6 +1872,7 @@ def main() -> None:
     test_tool_runtime_context_reads_generic_message_info()
     test_tool_runtime_context_accepts_qq_official_openids()
     test_tool_runtime_context_uses_llm_user_id_only_as_compat_fallback()
+    test_character_completion_handles_mascot_and_multi_subject()
     test_quota_disabled_does_not_require_user_id()
     test_quota_reservation_is_atomic_and_refundable()
     test_task_store_update_task_model_provider()

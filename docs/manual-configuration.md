@@ -67,6 +67,7 @@
 - `kind` 支持 `openai`、`agnes`、`google`、`zhipu`、`aliyun`、`volcengine`、`siliconflow`、`novelai`、`comfyui`。
 - `config` 是该平台类型的字段，不能把另一种平台的参数混入。省略的已知字段会使用该平台默认值；已有文件通常已写出完整字段。
 - 模型列表仅填写真实模型 ID，不再使用 `别名=模型ID`；分辨率覆盖也使用真实模型 ID。
+- NovelAI 同样只维护一个 `models` 列表，可混合官方预设与兼容服务自定义 ID；旧 `custom_models` 加载时合并去重，保存后移除此旧字段。
 - 要在通用配置中指定模型，应使用工作台显示的完整名称，例如 `日常创作/gpt-image-2.5`。
 
 平台名称参与完整模型引用。已有默认或备选模型引用时，建议在 WebUI 重命名平台，让插件一起更新相关引用；手动改名则必须同步检查通用配置中的模型引用。
@@ -119,6 +120,7 @@
       "fallback_models": [],
       "request_retry_count": 1,
       "request_timeout_seconds": 150,
+      "skip_image_url_ip_check": false,
       "admin_user_ids": [],
       "prompt_review_enabled": false,
       "image_review_enabled": false
@@ -145,6 +147,7 @@
 - `fallback_models`：有顺序的模型名称列表，空列表表示不启用备选。
 - `request_retry_count`：每模型额外重试次数，默认 1，可选 0～5；不是遇到任何失败都重新绘图。审核配置在界面中独立成标签页，文件中的字段仍在 `general` 下。
 - `request_timeout_seconds`：单次平台尝试的超时预算，不是任务整体的永久等待时间。
+- `skip_image_url_ip_check`：默认 `false`。仅在可信内网图床或 TUN/Fake-IP 等特殊 DNS 环境需要时设为 `true`；手动/系统代理会自动保留域名交由代理解析，详见[图片下载说明](configuration.md#请求与安全边界)。
 - `admin_user_ids`：字符串列表，例如 `["12345678"]`；不同适配器的用户 ID 形式可能不同。
 - `image_edit_unsupported_models`、`text_to_image_unsupported_models`：人工限制的模型列表；优先使用工作台中的完整模型名称。
 - `presets`：风格模板列表。默认风格名称应对应一个已启用风格；保留 `{prompt}`、`{negative_prompt}` 来代入本次描述和反向词。

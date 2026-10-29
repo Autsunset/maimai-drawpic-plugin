@@ -181,14 +181,24 @@ class UnknownCharacterMixin:
         return prompt, []
 
     async def _recent_message_texts(self, stream_id: str) -> list[str]:
-        """读取最近若干条消息的纯文本，按时间正序返回。"""
+        """读取最近若干条消息的纯文本，按时间正序返回。
+
+        两个参数都按实测调过：
+
+        - limit：群聊刷屏很快，20:10 的绘图请求到 20:15 执行时中间已过了
+          二十多条消息，之前取 6 条会把真正的请求挤出窗口，角色名永远找不回。
+        - hours：只看最近半小时。窗口开太大时，几分钟前别人随口提过的角色
+          会把这次绘图的角色名顶掉——找回逻辑取的是「由新到旧第一条命中」的
+          消息，宁可找不到，也不能拿无关旧消息改写本次提示词。
+        """
 
         if not stream_id:
             return []
         result = await self.ctx.call_capability(
             "message.get_recent",
             chat_id=stream_id,
-            limit=6,
+            limit=60,
+            hours=0.5,
             include_binary_data=False,
         )
         messages = self._unwrap_messages(result)

@@ -19,7 +19,7 @@ class ModerationResult:
 
 
 class DrawpicModerationService:
-    """负责提示词与生成图片审核。"""
+    """负责提示词与生成图片审核，输出预算沿用宿主配置，避免截断最终结论。"""
 
     _REVIEW_CONCLUSION_PATTERN = re.compile(
         r"^\s*(?:结论|CONCLUSION)\s*[:：]\s*(PASS|REJECT)\s*$",
@@ -54,7 +54,6 @@ class DrawpicModerationService:
             rendered_prompt,
             model="replyer",
             temperature=0.0,
-            max_tokens=512,
         )
         return self._parse_review_response(self._extract_llm_response(response))
 
@@ -86,7 +85,6 @@ class DrawpicModerationService:
             ],
             model="vlm",
             temperature=0.0,
-            max_tokens=512,
         )
         return self._parse_review_response(self._extract_llm_response(response))
 

@@ -79,6 +79,10 @@ class _StubGeneralConfig:
 
 
 class _StubConfig:
+    class modelscope:
+        enabled = False
+        models: list[str] = []
+
     class agnes:
         enabled = False
         models = []

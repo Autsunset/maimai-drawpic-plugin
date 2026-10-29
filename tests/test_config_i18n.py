@@ -96,6 +96,7 @@ def test_all_config_classes_have_section_i18n() -> None:
         "SiliconFlowModelConfig",
         "NovelAIModelConfig",
         "ComfyUIModelConfig",
+        "ModelScopeModelConfig",
         "PromptModerationConfig",
         "ImageModerationConfig",
     )
