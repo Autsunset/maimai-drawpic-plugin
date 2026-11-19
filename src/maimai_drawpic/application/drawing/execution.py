@@ -1,11 +1,12 @@
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Optional
 import asyncio
 import inspect
 
 from ..chat import ImageDeliveryError, ImageDeliveryUnconfirmedError
 from ...infrastructure.storage.retention import CacheCapacityError
 from ...domain.errors import ProviderError
-from ...domain.task_errors import provider_task_error, task_error
+from ...domain.task_errors import TaskRequestError, delivery_unconfirmed_message, provider_task_error, task_error
+from ..references.service import ReferencePreparation
 from .admission import update_task_owned
 
 
@@ -23,6 +24,7 @@ class ImageExecutionMixin:
         novelai_mode: str = "",
         novelai_artist_tags: str = "",
         request_negative_prompt: str = "",
+        style_negative_prompt_template: str = "",
         source_image_bytes_list: list[bytes] | None = None,
         source_image_urls: list[str] | None = None,
         matched_message_id: str = "",
@@ -32,12 +34,14 @@ class ImageExecutionMixin:
         prompt_reviewed: bool = True,
         on_task_unsuccessful: Callable[[str, str, str], Awaitable[None] | None] | None = None,
         on_task_successful: Callable[[str, str, str], Awaitable[None] | None] | None = None,
+        reference_preparation: Optional[ReferencePreparation] = None,
     ) -> None:
         """后台执行绘图任务，源图为空时文生图，存在源图时图生图。"""
 
         self._started_task_ids.add(task_id)
         notified = False
         delivery_started = False
+        strict_reference_inputs = False
 
         async def _update_terminal(**changes) -> None:
             await self.persist_terminal(task_id, **changes)
@@ -93,8 +97,33 @@ class ImageExecutionMixin:
         running_message = "图片正在编辑中" if is_image_edit else "图片正在生成中"
         timeout_message = "图片编辑超时" if is_image_edit else "图片生成超时"
         try:
+            if reference_preparation is not None:
+                await update_task_owned(self.task_store, task_id, status="running", message="正在准备参考图片与预设")
+                try:
+                    async with asyncio.timeout(90):
+                        prepared = await reference_preparation.prepare(task_id)
+                except TimeoutError:
+                    raise TaskRequestError("MATERIAL_PREPARATION_TIMEOUT", "参考素材准备超过 90 秒，请直接提供素材后重试") from None
+                prompt = prepared.prompt
+                style_negative_prompt_template = prepared.negative_template
+                normalized_source_images, normalized_source_urls = prepared.images, prepared.urls
+                task_type = prepared.task_type
+                strict_reference_inputs = prepared.strict_reference_inputs
+                is_image_edit = task_type == "edit_image"
+                running_message = "图片正在编辑中" if is_image_edit else "图片正在生成中"
+                timeout_message = "图片编辑超时" if is_image_edit else "图片生成超时"
+                self.router.validate_source_image_count(resolved_model, len(normalized_source_images))
+                if normalized_source_images and any(not url for url in normalized_source_urls):
+                    self.router.validate_local_source_images(resolved_model)
+                await update_task_owned(self.task_store, task_id, status="running", message=running_message, task_type=task_type)
             if not prompt_reviewed:
-                await self.review_prompt_or_raise(prompt)
+                review_record = await update_task_owned(
+                    self.task_store, task_id, status="running", message="正在审核提示词",
+                )
+                if review_record is None:
+                    await _notify_task_unsuccessful("failed", "绘图任务已失效")
+                    return
+                await self.review_prompt_or_raise(prompt, task_id=task_id)
             running_record = await update_task_owned(
                 self.task_store,
                 task_id,
@@ -136,6 +165,10 @@ class ImageExecutionMixin:
                 matched_message_id=matched_message_id,
                 request_negative_prompt=request_negative_prompt,
                 stream_id=stream_id,
+                style_negative_prompt_template=style_negative_prompt_template,
+                strict_reference_inputs=strict_reference_inputs,
+                validate_reference_usage=(reference_preparation.validate_self_reference_usage
+                                          if reference_preparation is not None else None),
             )
 
             if successful_attempt is None:
@@ -163,7 +196,7 @@ class ImageExecutionMixin:
                 message="图片已生成，正在审核结果",
                 generated_count=len(image_bytes_list),
             )
-            reviewed_images, rejected_reasons = await self.filter_reviewed_images(prompt, image_bytes_list)
+            reviewed_images, rejected_reasons = await self.filter_reviewed_images(prompt, image_bytes_list, task_id=task_id)
             if not reviewed_images:
                 review_reason_text = "；".join(rejected_reasons) if rejected_reasons else "审核未通过"
                 if successful_attempt.is_fallback and attempt_errors:
@@ -221,8 +254,18 @@ class ImageExecutionMixin:
                     task_id=task_id,
                     provider=successful_attempt.provider_name,
                     model=successful_attempt.model,
+                    sync_to_maisaka_history=self.router.config.general.sync_generated_images_to_history,
+                    task_type=task_type,
+                    source_image_count=len(normalized_source_images),
                 )
                 delivery_started = False
+            elif self.router.config.general.sync_generated_images_to_history:
+                self.ctx.logger.debug(
+                    "生成结果未投递，跳过会话历史同步: task_id=%s task_type=%s provider=%s model=%s "
+                    "source_image_count=%s history_sync_requested=False",
+                    task_id, task_type, successful_attempt.provider_name, successful_attempt.model,
+                    len(normalized_source_images),
+                )
             success_message = (
                 f"图片已发送，数量={sent_count}" if stream_id else f"图片已生成，数量={len(reviewed_images)}"
             )
@@ -253,7 +296,9 @@ class ImageExecutionMixin:
             if settled is not None and settled.status in {"completed", "failed", "rejected"}:
                 # An owned terminal write can win the cancellation race. Preserve
                 # the recorded outcome and settle according to that outcome.
-                if settled.status == "completed":
+                if settled.status == "completed" and settled.delivery_unconfirmed and not settled.sent_count:
+                    await _notify_task_successful("delivery_unconfirmed", settled.message)
+                elif settled.status == "completed":
                     await _notify_task_successful(settled.status, settled.message)
                 else:
                     await _notify_task_unsuccessful(settled.status, settled.message)
@@ -269,6 +314,12 @@ class ImageExecutionMixin:
                 "绘图任务收到取消请求: task_id=%s task_type=%s model=%s", task_id, task_type, resolved_model
             )
             raise
+        except TaskRequestError as exc:
+            message = self.task_store.sanitize_message(str(exc))
+            await _update_terminal(status="failed", message=message, error=task_error(exc.code, message))
+            await _notify_task_unsuccessful("failed", message)
+            self.ctx.logger.warning("参考准备失败: task_id=%s task_type=%s model=%s code=%s reason=%s",
+                                    task_id, task_type, resolved_model, exc.code, message, exc_info=exc.__cause__ is not None)
         except ProviderError as exc:
             status = "rejected" if exc.rejected else "failed"
             message = self.task_store.sanitize_message(str(exc))
@@ -280,18 +331,13 @@ class ImageExecutionMixin:
             await _notify_task_unsuccessful(status, message)
             self.ctx.logger.warning("绘图请求已终止: task_id=%s status=%s reason=%s", task_id, status, message)
         except ImageDeliveryUnconfirmedError as exc:
-            # Keep v1 terminal semantics while retaining the independent unknown
-            # delivery outcome for v2, including partial confirmed sends.
-            status = "completed" if exc.sent_count > 0 else "failed"
+            message = delivery_unconfirmed_message(exc.sent_count)
             await _update_terminal(
-                status=status, message=str(exc), sent_count=exc.sent_count,
+                status="completed", message=message + cache_message, sent_count=exc.sent_count,
                 delivery_unconfirmed=True,
                 error=task_error("DELIVERY_UNCONFIRMED", str(exc)),
             )
-            if exc.sent_count > 0:
-                await _notify_task_successful(status, str(exc))
-            else:
-                await _notify_task_unsuccessful(status, str(exc))
+            await _notify_task_successful("completed" if exc.sent_count else "delivery_unconfirmed", message)
             self.ctx.logger.warning("绘图任务投递结果待确认: task_id=%s sent_count=%s", task_id, exc.sent_count)
         except ImageDeliveryError as exc:
             if exc.sent_count <= 0:

@@ -12,6 +12,7 @@ import re
 
 from .atomic import write_json_atomically
 from ..http import sanitize_provider_text
+from ...domain.task_errors import delivery_unconfirmed_message
 
 
 DrawTaskStatus = Literal["pending", "running", "completed", "failed", "rejected"]
@@ -309,6 +310,7 @@ class DrawTaskStore:
         generated_count: Optional[int] = None,
         expected_delivery_count: Optional[int] = None,
         delivery_unconfirmed: Optional[bool] = None,
+        task_type: Optional[str] = None,
     ) -> DrawTaskRecord | None:
         """更新任务状态；任务不存在时返回 None 而非抛出 KeyError。"""
 
@@ -323,6 +325,10 @@ class DrawTaskStore:
         record = replace(record)
         record.status = status
         record.message = self.sanitize_message(message)
+        if task_type is not None:
+            if task_type not in {"draw", "edit_image"} or record.generated_count and task_type != record.task_type:
+                raise ValueError("任务模式只能在生成前确定")
+            record.task_type = task_type
         if error is not None:
             record.error = {**error, "message": self.sanitize_message(error["message"])}
         if result_count is not None:
@@ -439,6 +445,11 @@ class DrawTaskStore:
                 if isinstance(last_status_query_raw, str) and last_status_query_raw.strip()
                 else None
             )
+            # 2.3.1 及以前把零回执记录为失败；读取时只纠正已明确标记的投递结果。
+            message = str(payload.get("message") or "")
+            if status == "failed" and payload.get("delivery_unconfirmed") and error and error["code"] == "DELIVERY_UNCONFIRMED":
+                status = "completed"
+                message = delivery_unconfirmed_message(payload.get("sent_count", 0))
             return DrawTaskRecord(
                 task_id=str(payload.get("task_id") or task_id).strip(),
                 session_key=str(payload.get("session_key") or "").strip(),
@@ -447,8 +458,8 @@ class DrawTaskStore:
                 prompt="",
                 model=str(payload.get("model") or "").strip(),
                 provider=str(payload.get("provider") or "").strip(),
-                status=str(payload.get("status") or "pending").strip(),  # type: ignore[arg-type]
-                message=str(payload.get("message") or ""),
+                status=status,
+                message=message,
                 sent_count=int(payload.get("sent_count") or 0),
                 result_count=int(payload.get("result_count") or 0),
                 generated_count=int(payload.get("generated_count") or 0),

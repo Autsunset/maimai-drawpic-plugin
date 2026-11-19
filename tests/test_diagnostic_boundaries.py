@@ -29,7 +29,7 @@ def test_url_diagnostics_redacted_at_host_log_and_task_disk(tmp_path, diagnostic
     logger.error('%s', error)
     store = module('infrastructure.storage.tasks').DrawTaskStore(tmp_path/'tasks.json', sanitize=redactor.redact)
     task = store.create_task(session_key='mock', stream_id='', task_type='draw', prompt='', model='mock', provider='mock', message=str(error))
-    for text in [str(error), task.message, store.path.read_text(), output.getvalue()]:
+    for text in [str(error), task.message, store.path.read_text(encoding="utf-8"), output.getvalue()]:
         assert 'FAKE_SIGNATURE' not in text
         assert 'example.invalid/object' in text
         assert 'HTTP 400' in text
@@ -51,7 +51,7 @@ def test_pre_admission_errors_are_safe_in_tools_and_chat(method, error_type, not
         def __init__(self):
             self._redactor = redactor
             self.ctx = SimpleNamespace(logger=logging.Logger('tool-test'))
-            self.config = SimpleNamespace(general=SimpleNamespace(failure_reason_enabled=notify))
+            self.config = SimpleNamespace(general=module('domain.configuration.models').GeneralConfig(failure_reason_enabled=notify))
             self.sent = []
         def _extract_invocation_context(self, **kwargs):
             return dict(stream_id='mock', user_id='mock', group_id='', platform='mock')
@@ -90,6 +90,23 @@ def test_failure_notice_uses_rotated_runtime_secrets():
     assert 'FAKE_' not in result
     encoded = r'\u004fLD_FAKE_CREDENTIAL \u004eEW_FAKE_CREDENTIAL'
     assert 'FAKE_' not in probe._summarize_failure_reason(encoded)
+
+
+def test_muted_failure_notice_keeps_safe_reason_in_log():
+    probe = module('interfaces.chat.replies').ReplyMixin()
+    probe.config = SimpleNamespace(general=module('domain.configuration.models').GeneralConfig(failure_reason_enabled=False))
+    probe._redactor = module('infrastructure.observability.redaction').SecretRedactor()
+    probe._redactor.add(['FAKE_CREDENTIAL'])
+    output = StringIO()
+    logger = logging.Logger('muted-failure-test', logging.INFO)
+    logger.addHandler(logging.StreamHandler(output))
+    probe.ctx = SimpleNamespace(logger=logger)
+    result = asyncio.run(probe._send_draw_failure_notice(
+        reason='mock validation error FAKE_CREDENTIAL', stream_id='mock-stream',
+    ))
+    assert result is False
+    assert 'mock validation error' in output.getvalue()
+    assert 'FAKE_CREDENTIAL' not in output.getvalue()
 
 
 def test_bounded_queue_drops_nonblocking_and_stops_when_full(tmp_path):
@@ -135,8 +152,8 @@ def test_bounded_queue_drops_nonblocking_and_stops_when_full(tmp_path):
         assert store.listener._thread is None
         assert store.dropped_records >= 44
         assert store.query()['dropped_records'] == store.dropped_records
-        assert 'FAKE_CONFIGURED_CREDENTIAL' not in store.path.read_text()
-        assert '已丢弃' in store.path.read_text()
+        assert 'FAKE_CONFIGURED_CREDENTIAL' not in store.path.read_text(encoding="utf-8")
+        assert '已丢弃' in store.path.read_text(encoding="utf-8")
     finally:
         release.set()
         if closer:

@@ -1,15 +1,16 @@
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
+from ...domain.configuration.platforms.common import NegativePromptConfig
 from ...infrastructure.providers.openai import OpenaiImage
 
 ProviderName = Literal[
-    "agnes", "aliyun", "openai", "google", "zhipu", "volcengine",
+    "agnes", "aliyun", "openai", "google", "zhipu", "minimax", "volcengine",
     "siliconflow", "novelai", "comfyui", "modelscope",
 ]
 
 
-_DOMESTIC_PROXY_BYPASS_PROVIDERS = {"aliyun", "volcengine", "siliconflow", "modelscope"}
+_DOMESTIC_PROXY_BYPASS_PROVIDERS = {"aliyun", "volcengine", "siliconflow", "minimax", "modelscope"}
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +42,7 @@ class OpenAIModelRoute:
     max_images: int
     extra_parameters: dict[str, Any]
     rewrite_prompt_to_english: bool
+    negative_prompt_config: NegativePromptConfig
 
 
 class ImageProvider(Protocol):

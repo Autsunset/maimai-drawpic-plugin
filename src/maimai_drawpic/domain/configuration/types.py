@@ -15,6 +15,10 @@ NovelAIModelId = Literal[
 
 QuotaPeriodMode = Literal["daily", "weekly", "monthly", "once"]
 
+AccessListMode = Literal["blacklist", "whitelist"]
+
+ReviewModelTask = Literal["replyer", "planner", "vlm"]
+
 ProxyScheme = Literal["http", "https"]
 
 CommandReplyMode = Literal["图片", "文本"]

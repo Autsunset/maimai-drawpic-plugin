@@ -72,23 +72,29 @@ class ReplyMixin:
         platform: str = "qq",
         task_id: str = "",
         status: str = "failed",
+        from_command: bool = False,
     ) -> bool:
         """不经 LLM，直接向原聊天流发送绘图失败状态。"""
 
-        if not self.config.general.failure_reason_enabled:
+        if not from_command and not self.config.general.failure_reason_enabled:
             self.ctx.logger.info(
-                "绘图失败主动通知已关闭: task_id=%s stream_id=%s status=%s",
+                "绘图失败主动通知已关闭: task_id=%s stream_id=%s status=%s reason=%s",
                 task_id,
                 stream_id,
                 status,
+                self._summarize_failure_reason(reason),
             )
             return False
 
-        title = "绘图未通过审核" if status == "rejected" else "绘图失败"
-        lines = [title]
+        if status == "delivery_unconfirmed":
+            lines = [self._summarize_failure_reason(reason)]
+        else:
+            title = "绘图未通过审核" if status == "rejected" else "绘图失败"
+            lines = [title]
         if task_id.strip():
             lines.append(f"任务 ID：{task_id.strip()}")
-        lines.append(f"原因：{self._summarize_failure_reason(reason)}")
+        if status != "delivery_unconfirmed":
+            lines.append(f"原因：{self._summarize_failure_reason(reason)}")
         try:
             return await self._require_stream_service().send_text_with_fallback(
                 text="\n".join(lines),

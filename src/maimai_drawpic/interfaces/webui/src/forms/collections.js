@@ -35,12 +35,15 @@
   }
   function parameterValue(type, value = "") {
     if (type === "boolean")
-      return `<select data-param-value aria-label="参数开关"><option value="true" ${value !== "false" ? "selected" : ""}>开启 · true</option><option value="false" ${value === "false" ? "selected" : ""}>关闭 · false</option></select>`;
+      return `<input type="checkbox" role="switch" class="toggle" data-param-value aria-label="参数开关" ${value !== "false" ? "checked" : ""}>`;
     if (type === "json")
       return `<textarea data-param-value aria-label="JSON 参数值" rows="3" spellcheck="false" placeholder='例如 {"enabled": true}…'>${e(value)}</textarea>`;
     return `<input data-param-value type="${type === "number" ? "number" : "text"}" ${type === "number" ? 'step="any"' : ""} aria-label="参数值" autocomplete="off" value="${e(value)}" placeholder="填写参数值…">`;
   }
   function row(key, value, options = {}) {
+    if (key === "self_reference_ids")
+      return `<div class="array-row" data-array-row><select data-value data-reference-picker="self" aria-label="自我参考图片">${U.referenceUI.options("self", value)}</select><button type="button" class="icon-button" data-remove aria-label="移除参考选择">×</button></div>`;
+
     if (key === "fallback_models" || key.endsWith("unsupported_models")) {
       const ordered = key === "fallback_models";
       const title = ordered ? "备选模型" : key === "image_edit_unsupported_models" ? "仅支持文生图的模型" : "仅支持图生图的模型";
@@ -58,7 +61,7 @@
           ? U.formControls.choice(
               raw,
               ["", ...U.formOptions.dimensions(options.kind)],
-              { label: "模型分辨率", size: true, kind: options.kind },
+              { label: "模型分辨率", size: true, kind: options.kind, labels: { "": "继承默认分辨率" } },
             )
           : `<input data-value aria-label="此模型的接口地址" value="${e(raw)}" placeholder="完整 URL 或接口路径…" autocomplete="off">`;
       return `<div class="model-override-row" data-array-row data-model-override><label>绘图模型<select data-model-key aria-label="覆盖配置的模型"><option value="${e(model)}" selected>${e(model || "请先选择模型")}</option></select></label><div><span class="control-caption">${key === "model_size_overrides" ? "输出尺寸" : "接口地址"}</span>${valueControl}</div>${remove}</div>`;
@@ -95,6 +98,7 @@
       const value = control
         ? U.formControls.read(control)
         : $("[data-value]", node).value.trim();
+      if (key === "model_size_overrides" && !value) return "";
       if (!model && !value) return "";
       if (!model || !value)
         invalid(
@@ -114,7 +118,8 @@
         );
       const type = $("[data-param-type]", node).value;
       let value = input.value;
-      if (type === "text") value = JSON.stringify(value);
+      if (type === "boolean") value = String(input.checked);
+      else if (type === "text") value = JSON.stringify(value);
       else if (type === "number") {
         if (!value.trim() || !Number.isFinite(Number(value)))
           invalid(input, "数字参数请填写有效数值");

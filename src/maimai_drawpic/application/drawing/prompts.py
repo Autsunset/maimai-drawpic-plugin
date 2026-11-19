@@ -1,28 +1,30 @@
+from typing import Optional
 import re
 import unicodedata
 
 from ..moderation import DrawpicModerationService
 from ...domain.errors import ProviderRequestError
+from ...domain.styles import deduplicate_negative_prompt
 
 
 class PromptReviewMixin:
     """PromptReviewMixin 的独立绘图职责。"""
 
-    async def review_prompt_or_raise(self, prompt: str) -> None:
+    async def review_prompt_or_raise(self, prompt: str, *, task_id: str = "") -> None:
         """在提交绘图请求前审核提示词。"""
 
         if not self.moderation_service.is_prompt_review_enabled():
             return
 
         try:
-            review_result = await self.moderation_service.review_prompt(prompt)
+            review_result = await self.moderation_service.review_prompt(prompt, task_id=task_id)
         except Exception as exc:
-            self.ctx.logger.warning("提示词审核报错: %s", exc)
+            self.ctx.logger.warning("提示词审核终止: task_id=%s error_type=%s", task_id, type(exc).__name__)
             raise
         if review_result.passed:
-            self.ctx.logger.info("提示词审核通过")
+            self.ctx.logger.info("提示词审核通过: task_id=%s", task_id)
         else:
-            self.ctx.logger.info("提示词审核未通过")
+            self.ctx.logger.info("提示词审核未通过: task_id=%s", task_id)
         if not review_result.passed:
             reason_suffix = f"原因：{review_result.reason}" if review_result.reason else "原因：审核模型判定为不通过"
             raise ProviderRequestError(
@@ -74,6 +76,37 @@ class PromptReviewMixin:
 
         raise RuntimeError(f"英文提示词改写失败：{validation_error or '改写结果为空'}")
 
+    async def _rewrite_negative_prompt(
+        self,
+        prompt: str,
+        provider_name: str,
+        model: str,
+        *,
+        task_id: str,
+        role_index: Optional[int] = None,
+    ) -> str:
+        """全图与单个角色分别去重、改写，空角色占位不发起 LLM 调用。"""
+
+        normalized_prompt = deduplicate_negative_prompt(prompt)
+        if not normalized_prompt:
+            return ""
+        self.ctx.logger.debug(
+            "准备反向提示词英文改写: task_id=%s provider=%s model=%s role_index=%s rewrite_enabled=%s negative_len=%s",
+            task_id, provider_name, model, role_index,
+            self.router.should_rewrite_prompt_to_english(provider_name, model), len(normalized_prompt),
+        )
+        try:
+            return deduplicate_negative_prompt(
+                await self.rewrite_prompt_to_english_if_needed(normalized_prompt, provider_name, model)
+            )
+        except Exception as exc:
+            self.ctx.logger.error(
+                "反向提示词英文改写失败: task_id=%s provider=%s model=%s role_index=%s error_type=%s",
+                task_id, provider_name, model, role_index, type(exc).__name__, exc_info=True,
+            )
+            role_description = "" if role_index is None else f"第 {role_index} 个角色"
+            raise RuntimeError(f"{role_description}反向提示词英文改写失败：{exc}") from exc
+
     @classmethod
     def _normalize_rewritten_prompt(cls, prompt: str) -> str:
         """清理 LLM 可能包裹在结果外侧的格式符。"""
@@ -117,6 +150,8 @@ class PromptReviewMixin:
         self,
         prompt: str,
         image_bytes_list: list[bytes],
+        *,
+        task_id: str = "",
     ) -> tuple[list[bytes], list[str]]:
         """审核生成图片，并返回通过审核的图片列表。"""
 
@@ -127,17 +162,21 @@ class PromptReviewMixin:
         rejected_reasons: list[str] = []
         for index, image_bytes in enumerate(image_bytes_list, start=1):
             try:
-                review_result = await self.moderation_service.review_image(prompt, image_bytes)
+                review_result = await self.moderation_service.review_image(
+                    prompt, image_bytes, task_id=task_id, image_index=index,
+                )
             except Exception as exc:
-                self.ctx.logger.warning("图片审核报错: index=%s error=%s", index, exc)
+                self.ctx.logger.warning(
+                    "图片审核终止: task_id=%s image_index=%s error_type=%s", task_id, index, type(exc).__name__,
+                )
                 raise
             if review_result.passed:
-                self.ctx.logger.info("图片审核通过")
+                self.ctx.logger.info("图片审核通过: task_id=%s image_index=%s", task_id, index)
                 approved_images.append(image_bytes)
                 continue
 
             rejected_reason = review_result.reason or "审核模型判定为不通过"
-            self.ctx.logger.info("图片审核未通过")
+            self.ctx.logger.info("图片审核未通过: task_id=%s image_index=%s", task_id, index)
             rejected_reasons.append(f"第 {index} 张：{rejected_reason}")
 
         return approved_images, rejected_reasons

@@ -1,4 +1,4 @@
-"""v2 与独立客户端的隔离回归：全部使用模拟生成器、发送器与 RPC。"""
+"""统一接口与独立客户端的隔离回归：全部使用模拟生成器、发送器与 RPC。"""
 
 import asyncio
 from copy import deepcopy
@@ -35,7 +35,7 @@ class ReplyAPI:
 
     async def call(self, api_name, **kwargs):
         self.calls.append((api_name, kwargs))
-        return {"success": True, "result": deepcopy(self.reply)}
+        return deepcopy(self.reply)
 
 
 @pytest.mark.parametrize("limit", ["total", "single"])
@@ -60,12 +60,12 @@ def test_client_capacity_failure_preserves_accepted_result(make_plugin, monkeypa
             assert result.error.code == "RESULT_TOO_LARGE" and not result.error.retry_submit
             assert (result.error.task_id, result.error.request_id) == (result.task_id, result.request_id)
             if limit == "total":
-                assert not any(name.endswith("drawpic_image_v2") for name, _, _ in api.calls)
+                assert not any(name.endswith("drawpic_image") for name, _, _ in api.calls)
             recovered = await client.wait(result.task_id, wait_seconds=1, read_images=False)
             assert recovered.status == "completed" and recovered.error is None
             assert recovered.request_id == result.request_id and recovered.image_references
             assert len(generated) == 1
-            assert sum(name.endswith("drawpic_submit_v2") for name, _, _ in api.calls) == 1
+            assert sum(name.endswith("drawpic_submit") for name, _, _ in api.calls) == 1
         finally:
             await plugin.on_unload()
 
@@ -73,7 +73,8 @@ def test_client_capacity_failure_preserves_accepted_result(make_plugin, monkeypa
 
 
 @pytest.mark.parametrize("sent_before_unknown", [0, 1])
-def test_v2_delivery_unknown_overrides_confirmed_partial_count(make_plugin, monkeypatch, sent_before_unknown):
+@pytest.mark.parametrize("cache_available", [True, False])
+def test_api_delivery_unknown_overrides_confirmed_partial_count(make_plugin, monkeypatch, sent_before_unknown, cache_available):
     async def run():
         plugin = make_plugin()
         await plugin.on_load()
@@ -94,29 +95,32 @@ def test_v2_delivery_unknown_overrides_confirmed_partial_count(make_plugin, monk
             monkeypatch.setattr(service, "_run_image_request_attempt", generate)
             monkeypatch.setattr(service.stream_service, "resolve_live_stream_id", target)
             monkeypatch.setattr(plugin.ctx.send, "image", send)
+            if not cache_available:
+                plugin._result_store.retention.RESULT_MAX_BYTES = 1
             receipt = await service.start_background_image_request(
                 prompt="cat", stream_id="fixture-stream", resolved_model=service.resolve_model_name(),
                 resolved_openai_mode="", provider_name="openai",
             )
             await asyncio.gather(*tuple(service.background_tasks))
-            state = await plugin.drawpic_task_v2(receipt["task_id"])
-            assert state["generation_completed"] and state["results_readable"]
+            state = await plugin.drawpic_task(receipt["task_id"])
+            assert state["generation_completed"] and state["results_readable"] == cache_available
             assert state["delivery"] == {
                 "requested": True, "status": "unconfirmed", "sent_count": sent_before_unknown,
             }
             assert len(sends) == sent_before_unknown + 1
-            expected_v1_status = "completed" if sent_before_unknown else "failed"
-            assert (await plugin.drawpic_task(receipt["task_id"]))["status"] == expected_v1_status
+            assert state["status"] == "completed" and "送达状态未确认" in state["message"]
             client_result = await DrawingClient(LocalAPI(plugin)).wait(
-                receipt["task_id"], wait_seconds=0.5, read_images=False,
+                receipt["task_id"], wait_seconds=1, read_images=True,
             )
-            assert not client_result.wait_expired and client_result.status == expected_v1_status
+            assert not client_result.wait_expired and client_result.status == "completed"
+            assert bool(client_result.images) == cache_available
             assert client_result.delivery["status"] == "unconfirmed"
             assert client_result.error.code == "DELIVERY_UNCONFIRMED"
             saved = module("infrastructure.storage.tasks").DrawTaskStore(plugin._task_store.path)
             saved.load()
             record = saved.get_task(receipt["task_id"])
             assert record.delivery_unconfirmed and record.sent_count == sent_before_unknown
+            assert record.status == "completed" and "送达状态未确认" in service.build_task_status_message(record)
         finally:
             await plugin.on_unload()
 
@@ -135,7 +139,8 @@ def test_all_approved_images_delivered_are_sent_even_if_cache_fails(make_plugin,
             async def generate(**kwargs):
                 return [image_bytes(), image_bytes()]
 
-            async def review(prompt, images):
+            async def review(prompt, images, *, task_id):
+                assert task_id
                 return images[:1], ["second image rejected"]
 
             async def deliver(**kwargs):
@@ -152,7 +157,7 @@ def test_all_approved_images_delivered_are_sent_even_if_cache_fails(make_plugin,
                 resolved_openai_mode="", provider_name="openai",
             )
             await asyncio.gather(*tuple(service.background_tasks))
-            state = await plugin.drawpic_task_v2(receipt["task_id"])
+            state = await plugin.drawpic_task(receipt["task_id"])
             assert state["status"] == "completed" and state["generated_count"] == 2
             assert state["result_count"] == int(cache_available) and len(delivered) == 1
             assert state["delivery"] == {"requested": True, "status": "sent", "sent_count": 1}
@@ -174,7 +179,7 @@ def test_known_invalid_stream_is_rejected_before_admission(make_plugin, monkeypa
                 return []
 
             monkeypatch.setattr(plugin.ctx.chat, "get_all_streams", no_streams)
-            result = await plugin.drawpic_submit_v2(
+            result = await plugin.drawpic_submit(
                 "cat", stream_id="no-such-stream", request_id=REQUEST_ID,
             )
             assert result["accepted"] is False and result["task_id"] is None
@@ -218,7 +223,7 @@ def test_incomplete_task_response_retries_only_queries_within_budget():
             TASK_ID, request_id=REQUEST_ID, wait_seconds=0.02,
         )
         assert result.wait_expired and (result.task_id, result.request_id) == (TASK_ID, REQUEST_ID)
-        assert api.calls and all(name.endswith("drawpic_task_v2") for name, _ in api.calls)
+        assert api.calls and all(name.endswith("drawpic_task") for name, _ in api.calls)
 
     asyncio.run(run())
 
@@ -282,7 +287,7 @@ def test_image_error_retains_server_and_client_handles(make_plugin, monkeypatch)
             monkeypatch.setattr(plugin._require_draw_service(), "_run_image_request_attempt", generate)
             client = DrawingClient(LocalAPI(plugin), poll_interval=0.001)
             result = await client.generate("cat", request_id=REQUEST_ID, read_images=False, wait_seconds=5)
-            error = await plugin.drawpic_image_v2(result.task_id, index=-1)
+            error = await plugin.drawpic_image(result.task_id, index=-1)
             assert (error["task_id"], error["request_id"]) == (result.task_id, REQUEST_ID)
             assert error["error"]["code"] == "INVALID_REQUEST"
             with pytest.raises(DrawingError) as raised:
@@ -308,7 +313,7 @@ def test_delivery_uses_approved_count_and_treats_legacy_counts_conservatively(ma
                 record.task_id, status="completed", generated_count=3, sent_count=1,
                 expected_delivery_count=expected, message="fixture completed",
             )
-            state = await plugin.drawpic_task_v2(record.task_id)
+            state = await plugin.drawpic_task(record.task_id)
             assert state["delivery"] == {"requested": True, "status": status, "sent_count": 1}
             assert state["generation_completed"] and not state["results_readable"]
         finally:

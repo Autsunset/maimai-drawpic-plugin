@@ -83,6 +83,10 @@ class _StubConfig:
         enabled = False
         models: list[str] = []
 
+    class minimax:
+        enabled = False
+        models = []
+
     class agnes:
         enabled = False
         models = []

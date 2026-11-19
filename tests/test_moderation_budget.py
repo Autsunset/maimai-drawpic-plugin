@@ -1,7 +1,7 @@
 """Moderation inherits Host budgets without weakening verdict validation."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 import asyncio
 import base64
 import importlib
@@ -22,9 +22,12 @@ def make_service(response, *, enabled=True):
         "image_review_enabled": enabled,
         "prompt_review_prompt": "Text policy: {user_prompt}",
         "image_review_prompt": "Image policy: {user_prompt}",
+        "prompt_review_model": "replyer",
+        "prompt_review_retry_count": 0,
+        "image_review_retry_count": 0,
     })
     bridge = SimpleNamespace(call_capability=AsyncMock(return_value=response))
-    return moderation.DrawpicModerationService(config, SimpleNamespace(llm=LLMCapability(bridge))), bridge
+    return moderation.DrawpicModerationService(config, SimpleNamespace(llm=LLMCapability(bridge), logger=Mock())), bridge
 
 
 async def review(service, kind):

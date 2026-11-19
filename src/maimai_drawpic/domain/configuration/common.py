@@ -1,9 +1,11 @@
 """configuration/common.py 的强类型配置定义。"""
 
 from maibot_sdk import Field, PluginConfigBase
+from pydantic import field_validator
 from typing import List
 
-from .types import CommandReplyMode, ProxyScheme, QuotaPeriodMode
+from .types import AccessListMode, CommandReplyMode, ProxyScheme, QuotaPeriodMode, ReviewModelTask
+from .references import ReferenceConfig
 
 
 class PluginSectionConfig(PluginConfigBase):
@@ -21,7 +23,7 @@ class PluginSectionConfig(PluginConfigBase):
         },
     )
     config_version: str = Field(
-        default="2.40.0",
+        default="2.52.0",
         description="配置版本",
         json_schema_extra={
             "hint": "配置版本",
@@ -63,8 +65,68 @@ class PluginSectionConfig(PluginConfigBase):
 class GeneralConfig(PluginConfigBase):
     """通用配置。"""
 
+    references: ReferenceConfig = Field(default_factory=ReferenceConfig, description="自我参考与素材来源", json_schema_extra={"label": "参考素材"})
+
     __ui_label__ = "通用配置"
     __ui_order__ = 1
+
+    integration_api_enabled: bool = Field(
+        default=True,
+        description="是否允许其他插件调用公开联动 API",
+        json_schema_extra={
+            "label": "插件联动 API",
+            "hint": "默认开启。关闭后拒绝其他插件调用所有公开绘图 API；工作台、聊天命令和 AI 工具仍可使用。已受理任务继续执行。",
+            "order": -1,
+        },
+    )
+    group_access_mode: AccessListMode = Field(
+        default="blacklist",
+        description="群聊访问规则：黑名单拒绝列表中的群聊，白名单仅允许列表中的群聊",
+        json_schema_extra={
+            "label": "群聊名单模式",
+            "hint": "默认黑名单，空列表允许所有群聊；白名单空列表禁止所有群聊。管理员同样受此规则限制。",
+            "order": 0,
+        },
+    )
+    group_access_ids: List[str] = Field(
+        default=[], max_length=2000,
+        description="群聊访问名单，填写群号或 QQ 官方群 OpenID",
+        json_schema_extra={
+            "label": "群聊名单",
+            "hint": "每项填写一个群号；QQ 官方适配器填写群 OpenID。无需填写 stream_id 或会话哈希，不填写群内成员 QQ 号。",
+            "order": 1,
+        },
+    )
+    private_access_mode: AccessListMode = Field(
+        default="blacklist",
+        description="私聊访问规则：黑名单拒绝列表中的用户，白名单仅允许列表中的用户",
+        json_schema_extra={
+            "label": "私聊名单模式",
+            "hint": "默认黑名单，空列表允许所有私聊；白名单空列表禁止所有私聊。只影响私聊，不限制该用户在群聊中使用。",
+            "order": 2,
+        },
+    )
+    private_access_ids: List[str] = Field(
+        default=[], max_length=2000,
+        description="私聊访问名单，填写 QQ 号或 QQ 官方用户 OpenID",
+        json_schema_extra={
+            "label": "私聊名单",
+            "hint": "每项填写一个 QQ 号；QQ 官方适配器填写用户 OpenID。无需填写 stream_id 或会话哈希，OpenID 按原样匹配。",
+            "order": 3,
+        },
+    )
+
+    @field_validator("group_access_ids", "private_access_ids")
+    @classmethod
+    def normalize_access_ids(cls, values: List[str]) -> List[str]:
+        result: List[str] = []
+        for value in values:
+            identifier = value.strip()
+            if not identifier or len(identifier) > 200 or any(char.isspace() for char in identifier):
+                raise ValueError("名单项应为 1～200 个字符的群号、QQ 号或 OpenID，不能包含空白字符")
+            if identifier not in result:
+                result.append(identifier)
+        return result
 
     default_model: str = Field(
         default="",
@@ -134,12 +196,21 @@ class GeneralConfig(PluginConfigBase):
             "order": 3,
         },
     )
+    sync_generated_images_to_history: bool = Field(
+        default=False,
+        description="成功投递生成图片后，通过 Host 同步到当前会话的 MaiSaka 历史",
+        json_schema_extra={
+            "label": "生成图片同步到会话历史",
+            "hint": "默认关闭。开启后视觉 Planner 可查看已发送的生成图，文本 Planner 使用图片描述，可能增加视觉上下文和后台识图开销。仅生成不投递的任务与命令回复卡片不受影响。",
+            "order": 3.25,
+        },
+    )
     failure_reason_enabled: bool = Field(
         default=True,
-        description="是否由插件主动发送绘图失败状态和简要原因。关闭后仅保留日志、任务状态和工具返回，不主动发送通知",
+        description="是否主动向会话发送非命令绘图的失败状态和简要原因。关闭后报错记入日志，不发送失败通知；聊天命令始终即时通知",
         json_schema_extra={
             "label": "失败通知附带原因",
-            "hint": "开启后，工具和指令失败时会主动发送状态及截断、脱敏后的简要原因；关闭后仅通知 LLM、保留日志和任务状态，不主动发送消息",
+            "hint": "关闭时不向聊天发送工具绘图的报错，错误保留在日志；开启时发送简短原因。聊天命令的错误始终即时通知。",
             "order": 3.5,
         },
     )
@@ -235,11 +306,38 @@ class GeneralConfig(PluginConfigBase):
     )
     prompt_review_enabled: bool = Field(
         default=False,
-        description="是否启用提示词审核。启用后会调用 MaiBot 当前配置的 replyer 模型进行识别",
+        description="是否启用提示词审核。启用后使用所选宿主模型任务审核",
         json_schema_extra={
             "label": "启用提示词审核",
-            "hint": "启用后，文生图和图生图的提示词会先交给 MaiBot 的 replyer 模型审核",
+            "hint": "启用后，文生图和图生图的提示词会先交给所选模型审核，通过后才提交生图",
             "order": 13,
+        },
+    )
+    prompt_review_model: ReviewModelTask = Field(
+        default="replyer",
+        description="提示词审核使用的宿主模型任务",
+        json_schema_extra={
+            "label": "提示词审核模型",
+            "hint": "默认 replyer；沿用 MaiBot 中对应任务组的模型配置，可选 replyer、planner 或 vlm。",
+            "order": 13.1,
+        },
+    )
+    prompt_review_timeout_seconds: int = Field(
+        default=60, ge=5, le=600,
+        description="提示词审核最长等待时间（秒）",
+        json_schema_extra={
+            "label": "提示词审核等待时间（秒）",
+            "hint": "单次默认 60 秒，可设 5～600 秒，重试另计；审核提前完成即继续，失败不会绕过审核。",
+            "order": 13.2,
+        },
+    )
+    prompt_review_retry_count: int = Field(
+        default=2, ge=0, le=5,
+        description="提示词审核失败后额外重试的次数",
+        json_schema_extra={
+            "label": "提示词审核重试次数",
+            "hint": "默认额外重试 2 次，最多调用 3 次；可设 0～5 次，0 表示关闭。明确拒绝和取消不重试。",
+            "order": 13.3,
         },
     )
     prompt_review_prompt: str = Field(
@@ -266,11 +364,38 @@ class GeneralConfig(PluginConfigBase):
     )
     image_review_enabled: bool = Field(
         default=False,
-        description="是否启用生成图片审核。启用后会调用 MaiBot 当前配置的 vlm 模型进行识别",
+        description="是否启用生成图片审核。启用后使用所选宿主模型任务审核",
         json_schema_extra={
             "label": "启用生成图片审核",
-            "hint": "启用后，生成完成的图片会先交给 MaiBot 的 vlm 模型审核，再决定是否发送",
+            "hint": "启用后，生成完成的图片会先交给所选模型审核，通过后才发送",
             "order": 15,
+        },
+    )
+    image_review_model: ReviewModelTask = Field(
+        default="vlm",
+        description="生成图片审核使用的宿主模型任务",
+        json_schema_extra={
+            "label": "图片审核模型",
+            "hint": "默认 vlm；也可选择 replyer 或 planner，但该任务组中的模型必须支持图片输入，否则审核会失败。",
+            "order": 15.1,
+        },
+    )
+    image_review_timeout_seconds: int = Field(
+        default=60, ge=5, le=600,
+        description="每张生成图片审核的最长等待时间（秒）",
+        json_schema_extra={
+            "label": "图片审核等待时间（秒）",
+            "hint": "每张图片单次默认 60 秒，可设 5～600 秒，重试另计；与生图及提示词审核分别设置。失败不发送、不重绘。",
+            "order": 15.2,
+        },
+    )
+    image_review_retry_count: int = Field(
+        default=2, ge=0, le=5,
+        description="每张图片审核失败后额外重试的次数",
+        json_schema_extra={
+            "label": "图片审核重试次数",
+            "hint": "默认额外重试 2 次，最多调用 3 次；可设 0～5 次，0 表示关闭。只重试同一图片的审核，明确拒绝和取消不重试。",
+            "order": 15.3,
         },
     )
     image_review_prompt: str = Field(

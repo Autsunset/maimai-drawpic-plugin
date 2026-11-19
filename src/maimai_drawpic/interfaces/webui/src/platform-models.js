@@ -18,7 +18,7 @@
       <p class="hint">${fromPreset ? "从官方模型预设选择，勾选后加入同一模型列表；保存平台后生效。" : "从接口读取模型，勾选后加入草稿；保存平台后生效。"}</p>
       <div class="model-picker-filters">
         <input type="search" data-search aria-label="搜索模型" placeholder="搜索模型 ID 或名称…">
-        <label class="inline-choice"${fromPreset ? " hidden" : ""}><input type="checkbox" data-images-only>仅显示可能的绘图模型</label>
+        <label class="inline-choice"${fromPreset ? " hidden" : ""}><input type="checkbox" role="switch" class="toggle" data-images-only>仅显示可能的绘图模型</label>
       </div>
       <div class="model-picker-results">
         <div class="model-picker-summary">
@@ -170,6 +170,12 @@
         if (input.value) pending = false;
         update();
       });
+      form.addEventListener("fieldreset", (event) => {
+        if (event.detail.key !== "api_key") return;
+        pending = false;
+        previousInput = "";
+        update();
+      });
       update();
     }
     const field = $('[data-field="models"]', form);
@@ -182,7 +188,7 @@
         button.className = "button secondary compact";
         button.innerHTML = catalog.model_discovery
           ? `${icon("refresh")}从接口获取模型`
-          : `${icon("plus")}从预设添加模型`;
+          : `${icon("plus")}从官方预设添加`;
         button.onclick = () => picker(form, { kind, record, catalog, clearApiKey });
         toolbar.append(button);
       } else {
